@@ -8,29 +8,38 @@ a second, independent signal.
 
 ## Current status
 
-The POST /v1/prefect-webhook endpoint is live on deejay-marvel-api.
-Automation is not yet configured in Prefect Cloud.
+Configured and live. The automation covers all flows in the workspace
+by default — no changes needed when new processors are added.
 
-## How to configure
+## Configuration
 
-1. Go to app.prefect.cloud → Automations → Create
-2. Choose the **Custom** template
-3. Trigger:
-   - Type: Flow run state change
-   - Flows: process-new-csv-files, update-dj-set-collection
-   - States: Failed, Crashed
-4. Action:
-   - Type: Trigger a webhook
-   - URL: {KAIANO_API_BASE_URL}/v1/prefect-webhook
-5. Save the automation
+- **Trigger:** Flow run enters Failed, Crashed, Cancelled, or TimedOut
+- **Flows:** All flows in the workspace
+- **Action:** Call webhook block `evaluator-cog`
+- **URL:** `https://courteous-purpose-production.up.railway.app/v1/prefect-webhook`
+- **Method:** POST
 
-The webhook payload is received by POST /v1/prefect-webhook on
+## Payload sent to the webhook
+```json
+{
+  "flow_run_id": "{{ flow_run.id }}",
+  "flow_name": "{{ flow.name }}",
+  "state_name": "{{ flow_run.state.name }}",
+  "state_type": "{{ flow_run.state.type }}",
+  "start_time": "{{ flow_run.start_time }}",
+  "end_time": "{{ flow_run.end_time }}"
+}
+```
+
+## How it works
+
+The payload is received by `POST /v1/prefect-webhook` on
 deejay-marvel-api, which maps state to severity (CRASHED → ERROR,
-FAILED → WARN) and writes a finding directly to the pipeline_evaluations
-table without calling Claude.
+FAILED → WARN, all others → INFO) and writes a finding directly
+to the pipeline_evaluations table without calling Claude.
 
 ## No authentication required
 
 The endpoint is public. Prefect calls it with no credentials.
 If you want to add a shared secret later, check it as an
-X-Prefect-Webhook-Secret header on the endpoint.
+`X-Prefect-Webhook-Secret` header on the endpoint.
