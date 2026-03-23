@@ -79,6 +79,7 @@ def handle_prefect_flow_run_event(payload: dict[str, Any]) -> None:
                 collection_update=collection_update,
                 direct_finding_text=f"Flow {flow_name} entered {state_name} state",
                 direct_severity=_state_to_severity(state_type),
+                source="prefect_webhook",
             )
             return
 
@@ -93,6 +94,7 @@ def handle_prefect_flow_run_event(payload: dict[str, Any]) -> None:
             api_ingest_success=True,
             sets_attempted=0,
             collection_update=collection_update,
+            source="prefect_webhook",
         )
     except Exception:
         log.exception("evaluation_webhook: failed to handle flow run event")

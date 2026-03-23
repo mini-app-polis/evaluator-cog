@@ -231,6 +231,39 @@ def test_evaluate_pipeline_run_posts_findings(monkeypatch) -> None:
     assert body["severity"] == "INFO"
     assert body["run_id"] == "r3"
     assert body["finding"] == "ok"
+    assert body["source"] == "flow_inline"
+
+
+def test_evaluate_pipeline_run_uses_flow_hook_source(monkeypatch) -> None:
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://x")
+
+    posted: list[tuple[str, dict]] = []
+
+    def _post(path: str, p: dict) -> dict:
+        posted.append((path, p))
+        return {}
+
+    api = SimpleNamespace(post=_post)
+
+    with patch("kaiano.api.KaianoApiClient") as m_client:
+        m_client.from_env.return_value = api
+        evaluate_pipeline_run(
+            run_id="r-flow-hook",
+            repo="deejay-set-processor-dev",
+            sets_imported=0,
+            sets_failed=0,
+            sets_skipped=0,
+            total_tracks=0,
+            failed_set_labels=[],
+            api_ingest_success=True,
+            sets_attempted=0,
+            direct_finding_text="Flow process-new-csv-files entered Failed state",
+            direct_severity="WARN",
+        )
+
+    assert len(posted) == 1
+    _, body = posted[0]
+    assert body["source"] == "flow_hook"
 
 
 def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:

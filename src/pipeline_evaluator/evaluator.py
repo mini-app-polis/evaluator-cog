@@ -235,6 +235,7 @@ def evaluate_pipeline_run(
     total_sets: int = 0,
     json_snapshot_written: bool = False,
     folder_names: list[str] | None = None,
+    source: str = "flow_inline",
 ) -> None:
     """
     Call Claude, then POST each finding to KAIANO_API_BASE_URL /v1/evaluations.
@@ -344,6 +345,7 @@ def evaluate_pipeline_run(
             "finding": finding_text,
             "suggestion": f.get("suggestion") or None,
             "standards_version": standards_version,
+            "source": "flow_hook" if direct_finding_text else source,
         }
         latest = _get_latest_stored_finding(
             api_client=api_client,
