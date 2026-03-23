@@ -69,6 +69,7 @@ def handle_prefect_flow_run_event(payload: dict[str, Any]) -> None:
             evaluate_pipeline_run(
                 run_id=flow_run_id,
                 repo="deejay-set-processor-dev",
+                flow_name=flow_name,
                 sets_imported=0,
                 sets_failed=0,
                 sets_skipped=0,
@@ -86,6 +87,7 @@ def handle_prefect_flow_run_event(payload: dict[str, Any]) -> None:
         evaluate_pipeline_run(
             run_id=flow_run_id,
             repo="deejay-set-processor-dev",
+            flow_name=flow_name,
             sets_imported=0,
             sets_failed=0,
             sets_skipped=0,

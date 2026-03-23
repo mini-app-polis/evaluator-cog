@@ -20,6 +20,7 @@ def test_crashed_flow_posts_error_finding() -> None:
     kw = mock_eval.call_args.kwargs
     assert kw["run_id"] == "run-1"
     assert kw["repo"] == "deejay-set-processor-dev"
+    assert kw["flow_name"] == "process-new-csv-files"
     assert kw["collection_update"] is False
     assert kw["direct_severity"] == "ERROR"
     assert "entered Crashed state" in kw["direct_finding_text"]
@@ -42,6 +43,7 @@ def test_failed_flow_posts_warn_finding() -> None:
     mock_eval.assert_called_once()
     kw = mock_eval.call_args.kwargs
     assert kw["run_id"] == "run-2"
+    assert kw["flow_name"] == "update-dj-set-collection"
     assert kw["collection_update"] is True
     assert kw["direct_severity"] == "WARN"
     assert "entered Failed state" in kw["direct_finding_text"]
@@ -64,6 +66,7 @@ def test_completed_flow_calls_evaluator_normally() -> None:
     mock_eval.assert_called_once()
     kw = mock_eval.call_args.kwargs
     assert kw["run_id"] == "run-3"
+    assert kw["flow_name"] == "update-dj-set-collection"
     assert kw["collection_update"] is True
     assert kw.get("direct_finding_text") is None
     assert kw.get("direct_severity") is None

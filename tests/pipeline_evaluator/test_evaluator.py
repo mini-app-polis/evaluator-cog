@@ -215,6 +215,7 @@ def test_evaluate_pipeline_run_posts_findings(monkeypatch) -> None:
         evaluate_pipeline_run(
             run_id="r3",
             repo="deejay-set-processor-dev",
+            flow_name="test-flow",
             sets_imported=0,
             sets_failed=0,
             sets_skipped=0,
@@ -230,8 +231,57 @@ def test_evaluate_pipeline_run_posts_findings(monkeypatch) -> None:
     assert body["repo"] == "deejay-set-processor-dev"
     assert body["severity"] == "INFO"
     assert body["run_id"] == "r3"
+    assert body["flow_name"] == "test-flow"
     assert body["finding"] == "ok"
     assert body["source"] == "flow_inline"
+
+
+def test_evaluate_pipeline_run_flow_name_defaults_to_none(monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://x")
+
+    payload = {
+        "findings": [
+            {
+                "dimension": "pipeline_consistency",
+                "severity": "INFO",
+                "finding": "ok",
+                "suggestion": "",
+            }
+        ]
+    }
+    posted: list[tuple[str, dict]] = []
+
+    def _post(path: str, p: dict) -> dict:
+        posted.append((path, p))
+        return {}
+
+    api = SimpleNamespace(post=_post)
+
+    with (
+        patch.object(
+            pe,
+            "_anthropic_messages_create",
+            return_value=json.dumps(payload),
+        ),
+        patch("kaiano.api.KaianoApiClient") as m_client,
+    ):
+        m_client.from_env.return_value = api
+        evaluate_pipeline_run(
+            run_id="r3-default-flow",
+            repo="deejay-set-processor-dev",
+            sets_imported=0,
+            sets_failed=0,
+            sets_skipped=0,
+            total_tracks=0,
+            failed_set_labels=[],
+            api_ingest_success=True,
+            sets_attempted=0,
+        )
+
+    assert len(posted) == 1
+    _, body = posted[0]
+    assert body["flow_name"] is None
 
 
 def test_evaluate_pipeline_run_uses_flow_hook_source(monkeypatch) -> None:

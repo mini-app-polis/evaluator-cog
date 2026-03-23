@@ -235,6 +235,7 @@ def evaluate_pipeline_run(
     total_sets: int = 0,
     json_snapshot_written: bool = False,
     folder_names: list[str] | None = None,
+    flow_name: str | None = None,
     source: str = "flow_inline",
 ) -> None:
     """
@@ -340,6 +341,7 @@ def evaluate_pipeline_run(
         payload = {
             "run_id": run_id,
             "repo": repo,
+            "flow_name": flow_name,
             "dimension": f.get("dimension") or "pipeline_consistency",
             "severity": sev,
             "finding": finding_text,
