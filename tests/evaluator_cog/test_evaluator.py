@@ -3,8 +3,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pipeline_evaluator.evaluator as pe
-from pipeline_evaluator.evaluator import (
+import evaluator_cog.evaluator as pe
+from evaluator_cog.evaluator import (
     build_collection_evaluation_prompt,
     build_csv_evaluation_prompt,
     evaluate_pipeline_run,
@@ -123,7 +123,7 @@ def test_evaluate_pipeline_run_uses_csv_prompt_when_collection_update_false(
 
     with (
         patch.object(pe, "_anthropic_messages_create", side_effect=_capture),
-        patch("common_python_utils.api.CommonPythonApiClient") as m_client,
+        patch("mini_app_polis.api.KaianoApiClient") as m_client,
     ):
         m_client.from_env.return_value = api
         evaluate_pipeline_run(
@@ -157,7 +157,7 @@ def test_evaluate_pipeline_run_uses_collection_prompt_when_collection_update_tru
 
     with (
         patch.object(pe, "_anthropic_messages_create", side_effect=_capture),
-        patch("common_python_utils.api.CommonPythonApiClient") as m_client,
+        patch("mini_app_polis.api.KaianoApiClient") as m_client,
     ):
         m_client.from_env.return_value = api
         evaluate_pipeline_run(
@@ -209,7 +209,7 @@ def test_evaluate_pipeline_run_posts_findings(monkeypatch) -> None:
             "_anthropic_messages_create",
             return_value=json.dumps(payload),
         ),
-        patch("common_python_utils.api.CommonPythonApiClient") as m_client,
+        patch("mini_app_polis.api.KaianoApiClient") as m_client,
     ):
         m_client.from_env.return_value = api
         evaluate_pipeline_run(
@@ -264,7 +264,7 @@ def test_evaluate_pipeline_run_flow_name_defaults_to_none(monkeypatch) -> None:
             "_anthropic_messages_create",
             return_value=json.dumps(payload),
         ),
-        patch("common_python_utils.api.CommonPythonApiClient") as m_client,
+        patch("mini_app_polis.api.KaianoApiClient") as m_client,
     ):
         m_client.from_env.return_value = api
         evaluate_pipeline_run(
@@ -295,7 +295,7 @@ def test_evaluate_pipeline_run_uses_flow_hook_source(monkeypatch) -> None:
 
     api = SimpleNamespace(post=_post)
 
-    with patch("common_python_utils.api.CommonPythonApiClient") as m_client:
+    with patch("mini_app_polis.api.KaianoApiClient") as m_client:
         m_client.from_env.return_value = api
         evaluate_pipeline_run(
             run_id="r-flow-hook",
@@ -352,7 +352,7 @@ def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:
             "_anthropic_messages_create",
             return_value=json.dumps(payload),
         ),
-        patch("common_python_utils.api.CommonPythonApiClient") as m_client,
+        patch("mini_app_polis.api.KaianoApiClient") as m_client,
         patch.object(pe.log, "info") as mock_info,
     ):
         m_client.from_env.return_value = api

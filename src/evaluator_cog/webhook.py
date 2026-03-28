@@ -8,9 +8,9 @@ import sys
 from typing import Any
 
 import sentry_sdk
+from mini_app_polis import logger as logger_mod
 
-from common_python_utils import logger as logger_mod
-from pipeline_evaluator.evaluator import evaluate_pipeline_run
+from evaluator_cog.evaluator import evaluate_pipeline_run
 
 sentry_sdk.init(dsn=os.environ.get("SENTRY_DSN", ""))
 
