@@ -1,20 +1,35 @@
 # evaluator-cog
 
-Standalone pipeline evaluation package for the Kaiano ecosystem.
-Calls Claude against the engineering standards document after every
-pipeline run and posts structured findings to deejay-marvel-api.
+Post-pipeline AI evaluation cog for the MiniAppPolis ecosystem. Evaluates
+pipeline runs against the ecosystem standards document and posts structured
+findings to api-kaianolevine-com.
 
-## Adding to a processor
+## Overview
 
-In pyproject.toml [tool.uv.sources]:
-  pipeline_evaluator = { git = "https://github.com/kaianolevine/evaluator-cog.git", rev = "main" }
+Two modules:
+- `evaluator_cog.evaluator` — builds prompts, calls Claude, posts findings
+- `evaluator_cog.webhook` — handles Prefect flow-run state events
 
-In dependencies:
-  "pipeline_evaluator"
+Findings are written to the `pipeline_evaluations` table via
+`api-kaianolevine-com` with `source=flow_inline` (normal runs) or
+`source=flow_hook` (failure/crash hooks) or `source=prefect_webhook`
+(Prefect Cloud automation).
+
+## Running locally
+
+Prerequisites: Python 3.11+, uv
+```bash
+uv sync --all-extras
+pre-commit install
+pre-commit run --all-files
+uv run pytest
+```
+
+Copy `.env.example` to `.env` and fill in values before running.
 
 ## Wiring into a Prefect flow
-
-from pipeline_evaluator.evaluator import evaluate_pipeline_run
+```python
+from evaluator_cog.evaluator import evaluate_pipeline_run
 
 # At the end of your flow:
 evaluate_pipeline_run(
@@ -40,8 +55,14 @@ def _handle_flow_failure(flow, flow_run, state) -> None:
 )
 def your_flow():
     ...
+```
 
 ## Prefect automation setup
 
-See docs/PREFECT_AUTOMATION.md for setting up the Prefect Cloud
-automation that triggers evaluation on FAILED and CRASHED state changes.
+See `docs/PREFECT_AUTOMATION.md` for setting up the Prefect Cloud automation
+that triggers evaluation on FAILED and CRASHED state changes.
+
+## Versioning
+
+Managed by semantic-release. Never manually edit `version` in `pyproject.toml`
+or `CHANGELOG.md`.
