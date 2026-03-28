@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.3.0...v1.4.0) (2026-03-28)
+
+
+### Features
+
+* complete migration of evaluator with new spec ([3720cc6](https://github.com/mini-app-polis/evaluator-cog/commit/3720cc6d1669f0643e6abf0cdaca2fca104499cc))
+
 # [1.3.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.2.0...v1.3.0) (2026-03-28)
 
 
