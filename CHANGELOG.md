@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.0.0...v1.1.0) (2026-03-28)
+
+
+### Features
+
+* migration part 2 ([342b6ae](https://github.com/mini-app-polis/evaluator-cog/commit/342b6ae5603a53a1bff652f1f82974b86fc7031d))
+
 # 1.0.0 (2026-03-28)
 
 
