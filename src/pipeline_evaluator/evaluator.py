@@ -8,7 +8,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from kaiano import logger as logger_mod
+from common_python_utils import logger as logger_mod
 
 log = logger_mod.get_logger()
 
@@ -310,12 +310,14 @@ def evaluate_pipeline_run(
     err_ct = warn_ct = info_ct = 0
 
     try:
-        from kaiano.api import KaianoApiClient  # type: ignore[attr-defined]
+        from common_python_utils.api import (
+            CommonPythonApiClient,  # type: ignore[attr-defined]
+        )
     except Exception:
         log.exception("pipeline evaluation: Kaiano API client not available")
         return
 
-    api_client = KaianoApiClient.from_env()
+    api_client = CommonPythonApiClient.from_env()
     findings_posted = 0
     evaluator_failed = False
 

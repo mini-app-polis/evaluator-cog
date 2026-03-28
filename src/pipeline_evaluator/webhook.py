@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
-from kaiano import logger as logger_mod
+import sentry_sdk
 
+from common_python_utils import logger as logger_mod
 from pipeline_evaluator.evaluator import evaluate_pipeline_run
+
+sentry_sdk.init(dsn=os.environ.get("SENTRY_DSN", ""))
 
 log = logger_mod.get_logger()
 
