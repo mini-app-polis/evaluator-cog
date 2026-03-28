@@ -1,4 +1,4 @@
-"""Best-effort Claude evaluation of pipeline runs; posts findings to deejay-marvel-api."""
+"""Best-effort Claude evaluation of pipeline runs; posts findings to api-kaianolevine-com."""
 
 from __future__ import annotations
 

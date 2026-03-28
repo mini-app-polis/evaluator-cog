@@ -34,7 +34,7 @@ by default — no changes needed when new processors are added.
 ## How it works
 
 The payload is received by `POST /v1/prefect-webhook` on
-deejay-marvel-api, which maps state to severity (CRASHED → ERROR,
+api-kaianolevine-com, which maps state to severity (CRASHED → ERROR,
 FAILED → WARN, all others → INFO) and writes a finding directly
 to the pipeline_evaluations table without calling Claude.
 
