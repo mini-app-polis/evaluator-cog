@@ -3,8 +3,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import evaluator_cog.evaluator as pe
-from evaluator_cog.evaluator import (
+import evaluator_cog.flows.pipeline_eval as pe
+from evaluator_cog.flows.pipeline_eval import (
     build_collection_evaluation_prompt,
     build_csv_evaluation_prompt,
     evaluate_pipeline_run,
@@ -122,7 +122,9 @@ def test_evaluate_pipeline_run_uses_csv_prompt_when_collection_update_false(
     api = SimpleNamespace(post=MagicMock(return_value={}))
 
     with (
-        patch.object(pe, "_anthropic_messages_create", side_effect=_capture),
+        patch(
+            "evaluator_cog.engine.llm._anthropic_messages_create", side_effect=_capture
+        ),
         patch("mini_app_polis.api.KaianoApiClient") as m_client,
     ):
         m_client.from_env.return_value = api
@@ -156,7 +158,9 @@ def test_evaluate_pipeline_run_uses_collection_prompt_when_collection_update_tru
     api = SimpleNamespace(post=MagicMock(return_value={}))
 
     with (
-        patch.object(pe, "_anthropic_messages_create", side_effect=_capture),
+        patch(
+            "evaluator_cog.engine.llm._anthropic_messages_create", side_effect=_capture
+        ),
         patch("mini_app_polis.api.KaianoApiClient") as m_client,
     ):
         m_client.from_env.return_value = api
@@ -204,9 +208,8 @@ def test_evaluate_pipeline_run_posts_findings(monkeypatch) -> None:
     api = SimpleNamespace(post=_post)
 
     with (
-        patch.object(
-            pe,
-            "_anthropic_messages_create",
+        patch(
+            "evaluator_cog.engine.llm._anthropic_messages_create",
             return_value=json.dumps(payload),
         ),
         patch("mini_app_polis.api.KaianoApiClient") as m_client,
@@ -259,9 +262,8 @@ def test_evaluate_pipeline_run_flow_name_defaults_to_none(monkeypatch) -> None:
     api = SimpleNamespace(post=_post)
 
     with (
-        patch.object(
-            pe,
-            "_anthropic_messages_create",
+        patch(
+            "evaluator_cog.engine.llm._anthropic_messages_create",
             return_value=json.dumps(payload),
         ),
         patch("mini_app_polis.api.KaianoApiClient") as m_client,
@@ -347,9 +349,8 @@ def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:
     )
 
     with (
-        patch.object(
-            pe,
-            "_anthropic_messages_create",
+        patch(
+            "evaluator_cog.engine.llm._anthropic_messages_create",
             return_value=json.dumps(payload),
         ),
         patch("mini_app_polis.api.KaianoApiClient") as m_client,

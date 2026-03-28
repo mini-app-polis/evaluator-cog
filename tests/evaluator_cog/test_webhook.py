@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from evaluator_cog.webhook import handle_prefect_flow_run_event
+from evaluator_cog.flows.pipeline_eval import handle_prefect_flow_run_event
 
 
 def test_crashed_flow_posts_error_finding() -> None:
@@ -13,7 +13,7 @@ def test_crashed_flow_posts_error_finding() -> None:
         "end_time": "2026-03-19T10:01:00Z",
     }
 
-    with patch("evaluator_cog.webhook.evaluate_pipeline_run") as mock_eval:
+    with patch("evaluator_cog.flows.pipeline_eval.evaluate_pipeline_run") as mock_eval:
         handle_prefect_flow_run_event(payload)
 
     mock_eval.assert_called_once()
@@ -37,7 +37,7 @@ def test_failed_flow_posts_warn_finding() -> None:
         "end_time": "2026-03-19T10:01:00Z",
     }
 
-    with patch("evaluator_cog.webhook.evaluate_pipeline_run") as mock_eval:
+    with patch("evaluator_cog.flows.pipeline_eval.evaluate_pipeline_run") as mock_eval:
         handle_prefect_flow_run_event(payload)
 
     mock_eval.assert_called_once()
@@ -60,7 +60,7 @@ def test_completed_flow_calls_evaluator_normally() -> None:
         "end_time": "2026-03-19T10:01:00Z",
     }
 
-    with patch("evaluator_cog.webhook.evaluate_pipeline_run") as mock_eval:
+    with patch("evaluator_cog.flows.pipeline_eval.evaluate_pipeline_run") as mock_eval:
         handle_prefect_flow_run_event(payload)
 
     mock_eval.assert_called_once()
