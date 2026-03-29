@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.6.0...v1.7.0) (2026-03-29)
+
+
+### Features
+
+* always post status finding on clean conformance check ([6b58b85](https://github.com/mini-app-polis/evaluator-cog/commit/6b58b85a90a8a4a11320fc40a8033d61eedf8621))
+
 # [1.6.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.5.1...v1.6.0) (2026-03-29)
 
 
