@@ -201,8 +201,15 @@ def run_conformance_check(
     all_findings = deterministic_findings + llm_findings
 
     if not all_findings:
-        prefect_log.info("conformance: no findings for %s", repo_id)
-        return []
+        all_findings = [
+            {
+                "rule_id": "STATUS",
+                "dimension": "structural_conformance",
+                "severity": "INFO",
+                "finding": f"{repo_id} passed all conformance checks for standards v{standards_version}.",
+                "suggestion": "",
+            }
+        ]
 
     post_findings(
         findings=all_findings,
