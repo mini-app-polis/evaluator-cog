@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/mini-app-polis/evaluator-cog/compare/v1.5.0...v1.5.1) (2026-03-29)
+
+
+### Bug Fixes
+
+* install git in Railway build image ([f317d86](https://github.com/mini-app-polis/evaluator-cog/commit/f317d8630d2993d7daf7635544ab9a931119c2e4))
+
 # [1.5.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.4.0...v1.5.0) (2026-03-29)
 
 
