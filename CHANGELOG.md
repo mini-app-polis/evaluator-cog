@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.5.1...v1.6.0) (2026-03-29)
+
+
+### Features
+
+* pass service metadata and live standards to conformance LLM ([973f310](https://github.com/mini-app-polis/evaluator-cog/commit/973f310f5659096cd9adee239acd46bac1a71b06))
+
 ## [1.5.1](https://github.com/mini-app-polis/evaluator-cog/compare/v1.5.0...v1.5.1) (2026-03-29)
 
 
