@@ -167,3 +167,46 @@ Respond with ONLY valid JSON (no markdown) in this exact shape:
 Rules:
 - severity must be INFO, WARN, or ERROR (uppercase).
 """
+
+
+def build_conformance_prompt(
+    *,
+    repo_id: str,
+    standards_version: str,
+    deterministic_findings: list[dict],
+) -> str:
+    """Build the LLM prompt for soft-rule conformance assessment."""
+    findings_summary = (
+        "\n".join(
+            f"- [{f.get('severity', 'INFO')}] {f.get('rule_id', '?')}: {f.get('finding', '')}"
+            for f in deterministic_findings
+        )
+        or "(none)"
+    )
+
+    return f"""You are reviewing a MiniAppPolis ecosystem repo against engineering standards v{standards_version}.
+
+Repo: {repo_id}
+
+Deterministic checks have already been run and produced these findings:
+{findings_summary}
+
+Your job is to assess soft rules that deterministic checks cannot fully evaluate,
+and to add narrative and actionable suggestions to the overall report.
+
+Assess the following soft rules for this repo based on the findings above and
+your knowledge of the MiniAppPolis ecosystem standards:
+- DOC-006: Do the findings suggest missing docstrings on public functions?
+- DOC-008: Any indication of dead or commented-out code patterns?
+- PRIN-002: Is there evidence of pipeline resilience (per-item error handling)?
+- EVAL-006: Is this repo being evaluated against a current standards version?
+
+Respond with ONLY valid JSON (no markdown) in this exact shape:
+{{"findings":[{{"rule_id":"...","dimension":"structural_conformance","severity":"INFO|WARN|ERROR","finding":"...","suggestion":"..."}}]}}
+
+Rules:
+- severity must be INFO, WARN, or ERROR (uppercase).
+- Only include findings where you have genuine signal from the deterministic results.
+- Keep findings specific and actionable.
+- If deterministic findings are all clear, emit a single INFO finding summarising repo health.
+"""
