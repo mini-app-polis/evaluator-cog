@@ -35,6 +35,21 @@ log = logger_mod.get_logger()
 
 _ECOSYSTEM_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/ecosystem.yaml"
 _INDEX_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml"
+_STANDARDS_BASE_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/standards"
+
+_DOMAINS_BY_TYPE = {
+    "worker": [
+        "python",
+        "testing",
+        "pipeline",
+        "delivery",
+        "documentation",
+        "principles",
+    ],
+    "api": ["python", "testing", "api", "delivery", "documentation", "principles"],
+    "library": ["python", "testing", "delivery", "documentation"],
+    "site": ["frontend", "delivery", "documentation"],
+}
 
 
 def _fetch_yaml(url: str) -> dict:
@@ -58,6 +73,30 @@ def _get_active_repos(ecosystem: dict) -> list[dict]:
     """Return all active services from ecosystem.yaml."""
     services = ecosystem.get("services", [])
     return [s for s in services if s.get("status") == "active"]
+
+
+def _fetch_standards_for_type(service_type: str) -> list[dict]:
+    """
+    Fetch checkable rules from relevant standards domains for this service type.
+    Returns a list of rule dicts with id, title, severity, check_notes.
+    Never raises — returns [] on failure.
+    """
+    domains = _DOMAINS_BY_TYPE.get(service_type, _DOMAINS_BY_TYPE["worker"])
+    rules = []
+    for domain in domains:
+        url = f"{_STANDARDS_BASE_URL}/{domain}.yaml"
+        data = _fetch_yaml(url)
+        for rule in data.get("standards", []):
+            if rule.get("checkable"):
+                rules.append(
+                    {
+                        "id": rule.get("id", ""),
+                        "title": rule.get("title", ""),
+                        "severity": rule.get("severity", "INFO"),
+                        "check_notes": rule.get("check_notes", "").strip(),
+                    }
+                )
+    return rules
 
 
 def _download_repo(repo_id: str, tmp_dir: str) -> Path | None:
@@ -105,6 +144,8 @@ def run_conformance_check(
     repo_id: str,
     repo_path: Path,
     standards_version: str,
+    service_type: str = "worker",
+    standards_rules: list[dict] | None = None,
     run_id: str = "conformance",
 ) -> list[dict[str, Any]]:
     """
@@ -133,8 +174,10 @@ def run_conformance_check(
         try:
             prompt = build_conformance_prompt(
                 repo_id=repo_id,
+                service_type=service_type,
                 standards_version=standards_version,
                 deterministic_findings=deterministic_findings,
+                standards_rules=standards_rules or [],
             )
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
             raw = _anthropic_messages_create(
@@ -212,11 +255,16 @@ def conformance_check_flow() -> None:
                 )
                 continue
 
+            service_type = service.get("type", "worker")
+            standards_rules = _fetch_standards_for_type(service_type)
+
             try:
                 findings = run_conformance_check(
                     repo_id=repo_id,
                     repo_path=repo_path,
                     standards_version=standards_version,
+                    service_type=service_type,
+                    standards_rules=standards_rules,
                     run_id=run_id,
                 )
                 prefect_log.info(

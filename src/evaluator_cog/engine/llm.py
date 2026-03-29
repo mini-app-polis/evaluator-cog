@@ -172,8 +172,10 @@ Rules:
 def build_conformance_prompt(
     *,
     repo_id: str,
+    service_type: str,
     standards_version: str,
     deterministic_findings: list[dict],
+    standards_rules: list[dict],
 ) -> str:
     """Build the LLM prompt for soft-rule conformance assessment."""
     findings_summary = (
@@ -184,29 +186,46 @@ def build_conformance_prompt(
         or "(none)"
     )
 
+    rules_text = (
+        "\n".join(
+            f"- {r['id']} [{r['severity']}]: {r['title']}\n  How to check: {r['check_notes']}"
+            for r in standards_rules
+            if r.get("check_notes")
+        )
+        or "(none)"
+    )
+
     return f"""You are reviewing a MiniAppPolis ecosystem repo against engineering standards v{standards_version}.
 
 Repo: {repo_id}
+Service type: {service_type}
 
-Deterministic checks have already been run and produced these findings:
+STANDARDS RULES FOR THIS SERVICE TYPE:
+The following are the checkable rules that apply to this repo type, with
+instructions for how to evaluate them:
+
+{rules_text}
+
+DETERMINISTIC CHECK RESULTS:
+These checks have already been run automatically:
+
 {findings_summary}
 
-Your job is to assess soft rules that deterministic checks cannot fully evaluate,
-and to add narrative and actionable suggestions to the overall report.
+YOUR TASK:
+Evaluate the soft rules that deterministic checks cannot fully assess.
+Focus on rules where the check_notes describe qualitative or interpretive
+checks — docstrings, dead code, narrative quality, resilience patterns.
 
-Assess the following soft rules for this repo based on the findings above and
-your knowledge of the MiniAppPolis ecosystem standards:
-- DOC-006: Do the findings suggest missing docstrings on public functions?
-- DOC-008: Any indication of dead or commented-out code patterns?
-- PRIN-002: Is there evidence of pipeline resilience (per-item error handling)?
-- EVAL-006: Is this repo being evaluated against a current standards version?
+Do NOT re-report findings already covered by the deterministic results above.
+Only add findings where you have genuine signal and the rule is relevant to
+this service type.
 
 Respond with ONLY valid JSON (no markdown) in this exact shape:
 {{"findings":[{{"rule_id":"...","dimension":"structural_conformance","severity":"INFO|WARN|ERROR","finding":"...","suggestion":"..."}}]}}
 
 Rules:
 - severity must be INFO, WARN, or ERROR (uppercase).
-- Only include findings where you have genuine signal from the deterministic results.
+- Reference the rule ID from the standards list above.
 - Keep findings specific and actionable.
-- If deterministic findings are all clear, emit a single INFO finding summarising repo health.
+- If all soft rules appear clean, emit a single INFO finding summarising repo health.
 """
