@@ -10,14 +10,16 @@ Triggered by Prefect schedule (daily) or manually via Prefect Cloud.
 
 from __future__ import annotations
 
+import io
 import os
+import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
 import httpx
 import yaml
-from git import Repo
 from mini_app_polis import logger as logger_mod
 from prefect import flow, get_run_logger
 
@@ -58,24 +60,43 @@ def _get_active_repos(ecosystem: dict) -> list[dict]:
     return [s for s in services if s.get("status") == "active"]
 
 
-def _clone_repo(repo_id: str, tmp_dir: str) -> Path | None:
+def _download_repo(repo_id: str, tmp_dir: str) -> Path | None:
     """
-    Clone a repo from the mini-app-polis GitHub org into tmp_dir.
-    Returns the cloned path or None on failure.
+    Download a repo from GitHub as a zip archive and extract it.
+    Returns the extracted repo path or None on failure.
     """
     github_token = os.environ.get("GITHUB_TOKEN", "")
+    headers = {"Accept": "application/vnd.github+json"}
     if github_token:
-        url = f"https://{github_token}@github.com/mini-app-polis/{repo_id}.git"
-    else:
-        url = f"https://github.com/mini-app-polis/{repo_id}.git"
+        headers["Authorization"] = f"Bearer {github_token}"
 
+    url = f"https://api.github.com/repos/mini-app-polis/{repo_id}/zipball/main"
     dest = Path(tmp_dir) / repo_id
+
     try:
-        Repo.clone_from(url, str(dest), depth=1)
-        log.info("conformance: cloned %s", repo_id)
+        with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+            r = client.get(url, headers=headers)
+            r.raise_for_status()
+
+        with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+            zf.extractall(tmp_dir)
+            top_level = next(
+                (
+                    p
+                    for p in [Path(tmp_dir) / n.split("/")[0] for n in zf.namelist()]
+                    if p.is_dir()
+                ),
+                None,
+            )
+            if top_level:
+                if dest.exists():
+                    shutil.rmtree(dest)
+                top_level.rename(dest)
+
+        log.info("conformance: downloaded %s", repo_id)
         return dest
     except Exception as exc:
-        log.warning("conformance: failed to clone %s: %s", repo_id, exc)
+        log.warning("conformance: failed to download %s: %s", repo_id, exc)
         return None
 
 
@@ -184,7 +205,7 @@ def conformance_check_flow() -> None:
             # but still check if they have a GitHub repo
             prefect_log.info("conformance: processing %s", repo_id)
 
-            repo_path = _clone_repo(repo_id, tmp_dir)
+            repo_path = _download_repo(repo_id, tmp_dir)
             if repo_path is None:
                 prefect_log.warning(
                     "conformance: skipping %s — could not clone", repo_id
