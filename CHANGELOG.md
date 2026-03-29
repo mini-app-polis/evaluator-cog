@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.4.0...v1.5.0) (2026-03-29)
+
+
+### Features
+
+* conformance flow, main.py entrypoint, fix mini_app_polis imports ([2ad1646](https://github.com/mini-app-polis/evaluator-cog/commit/2ad1646037e28aa4e6ca2eaff8283b5def0201c7))
+
 # [1.4.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.3.0...v1.4.0) (2026-03-28)
 
 
