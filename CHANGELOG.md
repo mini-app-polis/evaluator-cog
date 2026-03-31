@@ -1,3 +1,10 @@
+## [1.8.8](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.7...v1.8.8) (2026-03-31)
+
+
+### Bug Fixes
+
+* **llm:** tighten conformance prompt to reduce hallucinated findings ([cc8d229](https://github.com/mini-app-polis/evaluator-cog/commit/cc8d229e8087f496c119d5ee80a415f014eb6ae2))
+
 ## [1.8.7](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.6...v1.8.7) (2026-03-31)
 
 
