@@ -1,3 +1,10 @@
+## [1.8.3](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.2...v1.8.3) (2026-03-31)
+
+
+### Bug Fixes
+
+* uv lock ([28c7479](https://github.com/mini-app-polis/evaluator-cog/commit/28c7479c3b8ad96e62223c8c42166d578c8d129f))
+
 ## [1.8.2](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.1...v1.8.2) (2026-03-31)
 
 
