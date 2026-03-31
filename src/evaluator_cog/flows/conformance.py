@@ -248,6 +248,7 @@ def conformance_check_flow() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         for service in active_repos:
             repo_id = service.get("id", "")
+            repo_name = service.get("repo") or repo_id
             if not repo_id:
                 continue
 
@@ -255,7 +256,7 @@ def conformance_check_flow() -> None:
             # but still check if they have a GitHub repo
             prefect_log.info("conformance: processing %s", repo_id)
 
-            repo_path = _download_repo(repo_id, tmp_dir)
+            repo_path = _download_repo(repo_name, tmp_dir)
             if repo_path is None:
                 prefect_log.warning(
                     "conformance: skipping %s — could not clone", repo_id
