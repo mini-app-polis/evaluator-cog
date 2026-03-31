@@ -701,7 +701,7 @@ wheels = [
 
 [[package]]
 name = "evaluator-cog"
-version = "1.8.5"
+version = "1.8.6"
 source = { editable = "." }
 dependencies = [
     { name = "common-python-utils" },
