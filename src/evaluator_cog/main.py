@@ -39,7 +39,6 @@ def main() -> None:
         conformance.to_deployment(
             name="conformance-check",
             cron="0 9 * * 0",
-            is_schedule_active=True,
         )
     )
 
