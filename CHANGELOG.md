@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.7.2...v1.8.0) (2026-03-31)
+
+
+### Features
+
+* service-type-aware deterministic checks and check_exceptions support ([306e429](https://github.com/mini-app-polis/evaluator-cog/commit/306e42902183a4a72169358deb19fdbf0575fa0c))
+
 ## [1.7.2](https://github.com/mini-app-polis/evaluator-cog/compare/v1.7.1...v1.7.2) (2026-03-31)
 
 
