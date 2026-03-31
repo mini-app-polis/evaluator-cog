@@ -10,6 +10,7 @@ Triggered by Prefect schedule (daily) or manually via Prefect Cloud.
 
 from __future__ import annotations
 
+import datetime
 import io
 import os
 import shutil
@@ -223,6 +224,22 @@ def run_conformance_check(
     return all_findings
 
 
+def _build_conformance_run_id(standards_version: str) -> str:
+    """Build a per-execution run_id for conformance findings."""
+    flow_run_id = ""
+    try:
+        from prefect.runtime import flow_run
+
+        flow_run_id = str(flow_run.id or "").strip()
+    except Exception:
+        flow_run_id = ""
+
+    unique_suffix = flow_run_id or datetime.datetime.now(datetime.UTC).strftime(
+        "%Y%m%dT%H%M%S"
+    )
+    return f"conformance-{standards_version}-{unique_suffix}"
+
+
 @flow(name="conformance-check", log_prints=True)
 def conformance_check_flow() -> None:
     """
@@ -243,7 +260,7 @@ def conformance_check_flow() -> None:
 
     prefect_log.info("conformance: checking %d active repos", len(active_repos))
 
-    run_id = f"conformance-{standards_version}"
+    run_id = _build_conformance_run_id(standards_version)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         for service in active_repos:
