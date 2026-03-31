@@ -38,8 +38,9 @@ def main() -> None:
     serve(
         conformance.to_deployment(
             name="conformance-check",
-            cron="0 6 * * *",  # daily at 06:00 UTC
-        ),
+            cron="0 9 * * 0",
+            is_schedule_active=True,
+        )
     )
 
 
