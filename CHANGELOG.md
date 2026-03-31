@@ -1,3 +1,10 @@
+## [1.8.2](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.1...v1.8.2) (2026-03-31)
+
+
+### Bug Fixes
+
+* updating deploy for weekly deploys ([3a5c4eb](https://github.com/mini-app-polis/evaluator-cog/commit/3a5c4ebfd5c9aa85d91056197e7cf1ee20e12b27))
+
 ## [1.8.1](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.0...v1.8.1) (2026-03-31)
 
 
