@@ -218,13 +218,31 @@ These checks have already been run automatically:
 {findings_summary}
 
 YOUR TASK:
-Evaluate the soft rules that deterministic checks cannot fully assess.
-Focus on rules where the check_notes describe qualitative or interpretive
-checks — docstrings, dead code, narrative quality, resilience patterns.
+Evaluate ONLY the soft rules that deterministic checks cannot fully assess.
+These are qualitative rules requiring interpretation:
 
-Do NOT re-report findings already covered by the deterministic results above.
-Only add findings where you have genuine signal and the rule is relevant to
-this service type.
+DOC-006: missing docstrings on public functions/classes
+DOC-008: dead or commented-out code blocks
+PIPE-006: dual logger pattern in Prefect flows
+PRIN-002: per-item error handling in pipeline loops
+DOC-013: README 'Running locally' section completeness
+
+STRICT CONSTRAINTS — failure to follow these will corrupt the report:
+
+NEVER report a finding about something you cannot directly observe in
+the deterministic results. If the deterministic checks did not flag
+PY-006 (missing dependency), CD-002 (missing sentry-sdk), VER-003
+(missing releaserc), or any other checkable rule, assume those things
+ARE present and correct. Do not second-guess the deterministic checker.
+NEVER report findings for rule IDs listed in check_exceptions.
+NEVER report findings for rules already present in the deterministic
+results above — they are already captured.
+ONLY report findings for the five soft rules listed above, and only
+when you have genuine signal from the deterministic findings or from
+the service context provided.
+If the deterministic findings are all clear and you have no genuine
+soft-rule signal, emit a single INFO finding summarising repo health.
+Keep it brief and specific to this service type.
 
 Respond with ONLY valid JSON (no markdown) in this exact shape:
 {{"findings":[{{"rule_id":"...","dimension":"structural_conformance","severity":"INFO|WARN|ERROR","finding":"...","suggestion":"..."}}]}}
