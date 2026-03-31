@@ -1,3 +1,10 @@
+## [1.7.1](https://github.com/mini-app-polis/evaluator-cog/compare/v1.7.0...v1.7.1) (2026-03-31)
+
+
+### Bug Fixes
+
+* prefer service repo field for conformance download ([2ef42da](https://github.com/mini-app-polis/evaluator-cog/commit/2ef42da152486084b32ad6d038eca1963d11d8a8))
+
 # [1.7.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.6.0...v1.7.0) (2026-03-29)
 
 
