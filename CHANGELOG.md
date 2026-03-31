@@ -1,3 +1,11 @@
+## [1.7.2](https://github.com/mini-app-polis/evaluator-cog/compare/v1.7.1...v1.7.2) (2026-03-31)
+
+
+### Bug Fixes
+
+* update uv lock ([7f5d2c0](https://github.com/mini-app-polis/evaluator-cog/commit/7f5d2c0bf824e681cf3e40aa6da3e577c86d2154))
+* updating run id for uniqueness and filtering ([7c79e0b](https://github.com/mini-app-polis/evaluator-cog/commit/7c79e0bf2b5cd21ac01fa117cf32caffe19246e7))
+
 ## [1.7.1](https://github.com/mini-app-polis/evaluator-cog/compare/v1.7.0...v1.7.1) (2026-03-31)
 
 
