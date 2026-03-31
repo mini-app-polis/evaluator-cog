@@ -147,6 +147,7 @@ def run_conformance_check(
     standards_version: str,
     service_type: str = "worker",
     language: str = "python",
+    cog_subtype: str | None = None,
     check_exceptions: list[str] | None = None,
     standards_rules: list[dict] | None = None,
     run_id: str = "conformance",
@@ -163,6 +164,7 @@ def run_conformance_check(
             repo_path,
             language=language,
             service_type=service_type,
+            cog_subtype=cog_subtype,
             check_exceptions=check_exceptions,
         )
     except Exception as exc:
@@ -291,6 +293,7 @@ def conformance_check_flow() -> None:
 
             service_type = service.get("type", "worker")
             language = str(service.get("language") or "python")
+            cog_subtype = str(service.get("cog_subtype") or "").strip() or None
             raw_exc = service.get("check_exceptions") or []
             check_exceptions = (
                 [str(x) for x in raw_exc] if isinstance(raw_exc, list) else []
@@ -304,6 +307,7 @@ def conformance_check_flow() -> None:
                     standards_version=standards_version,
                     service_type=service_type,
                     language=language,
+                    cog_subtype=cog_subtype,
                     check_exceptions=check_exceptions,
                     standards_rules=standards_rules,
                     run_id=run_id,

@@ -173,12 +173,16 @@ def check_common_python_utils_dep(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_pyproject(repo_path: Path) -> list[Finding]:
+def check_pyproject(
+    repo_path: Path,
+    exceptions: frozenset[str] | None = None,
+) -> list[Finding]:
     """
     Runs all pyproject.toml checks in one pass.
     Covers: PY-001, PY-002, PY-003, PY-009, PY-010, CD-002.
     """
     findings = []
+    _exc = exceptions or frozenset()
     pyproject = repo_path / "pyproject.toml"
     if not pyproject.exists():
         findings.append(
@@ -194,7 +198,7 @@ def check_pyproject(repo_path: Path) -> list[Finding]:
 
     content = pyproject.read_text()
 
-    if (
+    if "PY-001" not in _exc and (
         "uv.lock" not in [p.name for p in repo_path.iterdir()]
         and "[tool.uv]" not in content
     ):
@@ -208,7 +212,7 @@ def check_pyproject(repo_path: Path) -> list[Finding]:
             )
         )
 
-    if "[tool.ruff]" not in content:
+    if "PY-002" not in _exc and "[tool.ruff]" not in content:
         findings.append(
             _finding(
                 "PY-002",
@@ -219,7 +223,11 @@ def check_pyproject(repo_path: Path) -> list[Finding]:
             )
         )
 
-    if 'requires-python = ">=3.11"' not in content and ">=3.12" not in content:
+    if (
+        "PY-003" not in _exc
+        and 'requires-python = ">=3.11"' not in content
+        and ">=3.12" not in content
+    ):
         findings.append(
             _finding(
                 "PY-003",
@@ -230,7 +238,7 @@ def check_pyproject(repo_path: Path) -> list[Finding]:
             )
         )
 
-    if "hatchling" not in content:
+    if "PY-009" not in _exc and "hatchling" not in content:
         findings.append(
             _finding(
                 "PY-009",
@@ -241,7 +249,7 @@ def check_pyproject(repo_path: Path) -> list[Finding]:
             )
         )
 
-    if "line-length = 88" not in content:
+    if "PY-010" not in _exc and "line-length = 88" not in content:
         findings.append(
             _finding(
                 "PY-010",
@@ -252,7 +260,7 @@ def check_pyproject(repo_path: Path) -> list[Finding]:
             )
         )
 
-    if "sentry-sdk" not in content:
+    if "CD-002" not in _exc and "sentry-sdk" not in content:
         findings.append(
             _finding(
                 "CD-002",
@@ -289,12 +297,16 @@ def check_pytest_coverage_in_ci(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_ci(repo_path: Path) -> list[Finding]:
+def check_ci(
+    repo_path: Path,
+    exceptions: frozenset[str] | None = None,
+) -> list[Finding]:
     """
     Runs all CI checks in one pass.
     Covers: VER-003, VER-005, VER-006.
     """
     findings = []
+    _exc = exceptions or frozenset()
     ci = repo_path / ".github" / "workflows" / "ci.yml"
     if not ci.exists():
         findings.append(
@@ -310,7 +322,7 @@ def check_ci(repo_path: Path) -> list[Finding]:
 
     content = ci.read_text()
 
-    if "semantic-release" not in content:
+    if "VER-003" not in _exc and "semantic-release" not in content:
         findings.append(
             _finding(
                 "VER-003",
@@ -321,7 +333,7 @@ def check_ci(repo_path: Path) -> list[Finding]:
             )
         )
 
-    if "fetch-depth: 0" not in content:
+    if "VER-005" not in _exc and "fetch-depth: 0" not in content:
         findings.append(
             _finding(
                 "VER-005",
@@ -332,7 +344,7 @@ def check_ci(repo_path: Path) -> list[Finding]:
             )
         )
 
-    if "npm install --no-save" not in content:
+    if "VER-006" not in _exc and "npm install --no-save" not in content:
         findings.append(
             _finding(
                 "VER-006",
@@ -504,14 +516,17 @@ def run_all_checks(
     repo_path: Path,
     language: str = "python",
     service_type: str = "worker",
+    cog_subtype: str | None = None,
     check_exceptions: list[str] | None = None,
 ) -> list[Finding]:
     """Run deterministic checks against a repo and return combined findings."""
     is_python = language == "python"
     is_library = service_type == "library"
-    is_pipeline_cog = is_python and service_type == "worker"
+    is_pipeline_cog = (
+        is_python and service_type == "worker" and cog_subtype == "pipeline"
+    )
 
-    _exceptions = set(check_exceptions or [])
+    _exceptions = frozenset(check_exceptions or [])
 
     def _run(check_fn, rule_id: str | None = None) -> None:
         if rule_id and rule_id in _exceptions:
@@ -542,7 +557,18 @@ def run_all_checks(
         _run(check_pre_commit, "PY-008")
         _run(check_src_layout, "PY-005")
         _run(check_no_setup_py, "PY-007")
-        _run(check_pyproject, None)
+        try:
+            findings.extend(check_pyproject(repo_path, exceptions=_exceptions))
+        except Exception as exc:
+            findings.append(
+                _finding(
+                    "CHECKER",
+                    "WARN",
+                    "structural_conformance",
+                    f"check_pyproject raised an unexpected error: {exc}",
+                    "",
+                )
+            )
         _run(check_no_print_statements, "CD-003")
 
     if is_python and not is_library:
@@ -550,7 +576,18 @@ def run_all_checks(
 
     _run(check_no_hardcoded_urls, "FE-007")
 
-    _run(check_ci, None)
+    try:
+        findings.extend(check_ci(repo_path, exceptions=_exceptions))
+    except Exception as exc:
+        findings.append(
+            _finding(
+                "CHECKER",
+                "WARN",
+                "structural_conformance",
+                f"check_ci raised an unexpected error: {exc}",
+                "",
+            )
+        )
 
     if is_python:
         _run(check_pytest_coverage_in_ci, "TEST-006")

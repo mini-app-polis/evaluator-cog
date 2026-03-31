@@ -76,6 +76,15 @@ def test_check_pyproject_missing_common_utils_not_emitted_by_check_pyproject() -
     assert not any(f["rule_id"] == "PY-006" for f in findings)
 
 
+def test_check_pyproject_respects_exceptions_for_subrules() -> None:
+    repo = _make_repo({"pyproject.toml": '[project]\nname = "my-cog"\n'})
+    findings = check_pyproject(repo, exceptions=frozenset({"CD-002", "PY-001"}))
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "CD-002" not in rule_ids
+    assert "PY-001" not in rule_ids
+    assert "PY-002" in rule_ids
+
+
 def test_check_ci_missing_semantic_release() -> None:
     repo = _make_repo(
         {
@@ -84,6 +93,19 @@ def test_check_ci_missing_semantic_release() -> None:
     )
     findings = check_ci(repo)
     assert any(f["rule_id"] == "VER-003" for f in findings)
+
+
+def test_check_ci_respects_exceptions_for_subrules() -> None:
+    repo = _make_repo(
+        {
+            ".github/workflows/ci.yml": "name: CI\njobs:\n  test:\n    runs-on: ubuntu-latest\n",
+        }
+    )
+    findings = check_ci(repo, exceptions=frozenset({"VER-005"}))
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "VER-005" not in rule_ids
+    assert "VER-003" in rule_ids
+    assert "VER-006" in rule_ids
 
 
 def test_run_all_checks_empty_repo() -> None:
@@ -122,3 +144,19 @@ def test_run_all_checks_library_skips_env_example() -> None:
     findings = run_all_checks(repo, service_type="library")
     rule_ids = [f["rule_id"] for f in findings]
     assert "DOC-004" not in rule_ids
+
+
+def test_run_all_checks_pipeline_tests_require_pipeline_subtype() -> None:
+    repo = _make_repo({"tests/test_basic.py": "def test_ok():\n    assert True\n"})
+    findings = run_all_checks(repo, service_type="worker", language="python")
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "TEST-001" not in rule_ids
+
+    findings_pipeline = run_all_checks(
+        repo,
+        service_type="worker",
+        language="python",
+        cog_subtype="pipeline",
+    )
+    pipeline_rule_ids = [f["rule_id"] for f in findings_pipeline]
+    assert "TEST-001" in pipeline_rule_ids
