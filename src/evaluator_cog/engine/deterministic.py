@@ -154,10 +154,29 @@ def check_no_setup_py(repo_path: Path) -> list[Finding]:
 # -- pyproject.toml checks ----------------------------------------------------
 
 
+def check_common_python_utils_dep(repo_path: Path) -> list[Finding]:
+    """PY-006: common-python-utils declared as dependency."""
+    findings = []
+    pyproject = repo_path / "pyproject.toml"
+    if not pyproject.exists():
+        return findings
+    if "common-python-utils" not in pyproject.read_text():
+        findings.append(
+            _finding(
+                "PY-006",
+                "ERROR",
+                "structural_conformance",
+                "common-python-utils not declared as a dependency.",
+                "Add common-python-utils to [project].dependencies.",
+            )
+        )
+    return findings
+
+
 def check_pyproject(repo_path: Path) -> list[Finding]:
     """
     Runs all pyproject.toml checks in one pass.
-    Covers: PY-001, PY-002, PY-003, PY-006, PY-009, PY-010, CD-002, XSTACK-001.
+    Covers: PY-001, PY-002, PY-003, PY-009, PY-010, CD-002.
     """
     findings = []
     pyproject = repo_path / "pyproject.toml"
@@ -211,17 +230,6 @@ def check_pyproject(repo_path: Path) -> list[Finding]:
             )
         )
 
-    if "common-python-utils" not in content:
-        findings.append(
-            _finding(
-                "PY-006",
-                "ERROR",
-                "structural_conformance",
-                "common-python-utils not declared as a dependency.",
-                "Add common-python-utils to [project].dependencies.",
-            )
-        )
-
     if "hatchling" not in content:
         findings.append(
             _finding(
@@ -261,10 +269,30 @@ def check_pyproject(repo_path: Path) -> list[Finding]:
 # -- CI checks ----------------------------------------------------------------
 
 
+def check_pytest_coverage_in_ci(repo_path: Path) -> list[Finding]:
+    """TEST-006: pytest coverage measured in CI."""
+    findings = []
+    ci = repo_path / ".github" / "workflows" / "ci.yml"
+    if not ci.exists():
+        return findings
+    content = ci.read_text()
+    if "pytest --cov" not in content and "pytest-cov" not in content:
+        findings.append(
+            _finding(
+                "TEST-006",
+                "WARN",
+                "testing_coverage",
+                "Coverage not measured in CI — pytest --cov not found in ci.yml.",
+                "Add --cov flag to pytest invocation in CI.",
+            )
+        )
+    return findings
+
+
 def check_ci(repo_path: Path) -> list[Finding]:
     """
     Runs all CI checks in one pass.
-    Covers: VER-003, VER-005, VER-006, TEST-006.
+    Covers: VER-003, VER-005, VER-006.
     """
     findings = []
     ci = repo_path / ".github" / "workflows" / "ci.yml"
@@ -312,17 +340,6 @@ def check_ci(repo_path: Path) -> list[Finding]:
                 "cd_readiness",
                 "npm install --no-save step absent from release job.",
                 "Add explicit npm install --no-save before npx semantic-release.",
-            )
-        )
-
-    if "pytest --cov" not in content and "pytest-cov" not in content:
-        findings.append(
-            _finding(
-                "TEST-006",
-                "WARN",
-                "testing_coverage",
-                "Coverage not measured in CI — pytest --cov not found in ci.yml.",
-                "Add --cov flag to pytest invocation in CI.",
             )
         )
 
@@ -393,27 +410,14 @@ def check_no_hardcoded_urls(repo_path: Path) -> list[Finding]:
 # -- Test checks --------------------------------------------------------------
 
 
-def check_test_structure(repo_path: Path) -> list[Finding]:
-    """
-    TEST-001, TEST-002, TEST-003, TEST-004, TEST-005: test directory checks.
-    """
+def check_pipeline_cog_tests(repo_path: Path) -> list[Finding]:
+    """TEST-001, TEST-002, TEST-004: pipeline cog critical path tests."""
     findings = []
     tests_dir = repo_path / "tests"
     if not tests_dir.is_dir():
-        findings.append(
-            _finding(
-                "TEST-003",
-                "ERROR",
-                "testing_coverage",
-                "tests/ directory is absent.",
-                "Add a tests/ directory with critical path tests.",
-            )
-        )
         return findings
-
     test_files = list(tests_dir.rglob("test_*.py"))
     all_content = "\n".join(f.read_text() for f in test_files)
-
     checks = [
         (
             "TEST-001",
@@ -432,14 +436,6 @@ def check_test_structure(repo_path: Path) -> list[Finding]:
             "Add a test covering duplicate detection logic.",
         ),
         (
-            "TEST-003",
-            "ERROR",
-            "testing_coverage",
-            "malform",
-            "No failure path test found.",
-            "Add a test passing malformed input and asserting the cog continues.",
-        ),
-        (
             "TEST-004",
             "WARN",
             "testing_coverage",
@@ -453,6 +449,38 @@ def check_test_structure(repo_path: Path) -> list[Finding]:
             findings.append(
                 _finding(rule_id, severity, dimension, finding_text, suggestion)
             )
+    return findings
+
+
+def check_test_structure(repo_path: Path) -> list[Finding]:
+    """TEST-003, TEST-005: test directory checks."""
+    findings = []
+    tests_dir = repo_path / "tests"
+    if not tests_dir.is_dir():
+        findings.append(
+            _finding(
+                "TEST-003",
+                "ERROR",
+                "testing_coverage",
+                "tests/ directory is absent.",
+                "Add a tests/ directory with critical path tests.",
+            )
+        )
+        return findings
+
+    test_files = list(tests_dir.rglob("test_*.py"))
+    all_content = "\n".join(f.read_text() for f in test_files)
+
+    if "malform" not in all_content.lower():
+        findings.append(
+            _finding(
+                "TEST-003",
+                "ERROR",
+                "testing_coverage",
+                "No failure path test found.",
+                "Add a test passing malformed input and asserting the cog continues.",
+            )
+        )
 
     pyproject = repo_path / "pyproject.toml"
     if pyproject.exists() and "[tool.pytest.ini_options]" not in pyproject.read_text():
@@ -472,34 +500,65 @@ def check_test_structure(repo_path: Path) -> list[Finding]:
 # -- Runner -------------------------------------------------------------------
 
 
-def run_all_checks(repo_path: Path) -> list[Finding]:
-    """Run all deterministic checks against a repo and return combined findings."""
-    checks = [
-        check_readme,
-        check_changelog,
-        check_env_example,
-        check_pre_commit,
-        check_releaserc,
-        check_src_layout,
-        check_no_setup_py,
-        check_pyproject,
-        check_ci,
-        check_no_print_statements,
-        check_no_hardcoded_urls,
-        check_test_structure,
-    ]
-    findings: list[Finding] = []
-    for check in checks:
+def run_all_checks(
+    repo_path: Path,
+    language: str = "python",
+    service_type: str = "worker",
+    check_exceptions: list[str] | None = None,
+) -> list[Finding]:
+    """Run deterministic checks against a repo and return combined findings."""
+    is_python = language == "python"
+    is_library = service_type == "library"
+    is_pipeline_cog = is_python and service_type == "worker"
+
+    _exceptions = set(check_exceptions or [])
+
+    def _run(check_fn, rule_id: str | None = None) -> None:
+        if rule_id and rule_id in _exceptions:
+            return
         try:
-            findings.extend(check(repo_path))
+            findings.extend(check_fn(repo_path))
         except Exception as exc:
             findings.append(
                 _finding(
                     "CHECKER",
                     "WARN",
                     "structural_conformance",
-                    f"Check {check.__name__} raised an unexpected error: {exc}",
+                    f"Check {check_fn.__name__} raised an unexpected error: {exc}",
                     "Investigate the checker itself.",
                 )
             )
+
+    findings: list[Finding] = []
+
+    _run(check_readme, "DOC-001")
+    _run(check_changelog, "DOC-003")
+    _run(check_releaserc, "VER-003")
+
+    if not is_library:
+        _run(check_env_example, "DOC-004")
+
+    if is_python:
+        _run(check_pre_commit, "PY-008")
+        _run(check_src_layout, "PY-005")
+        _run(check_no_setup_py, "PY-007")
+        _run(check_pyproject, None)
+        _run(check_no_print_statements, "CD-003")
+
+    if is_python and not is_library:
+        _run(check_common_python_utils_dep, "PY-006")
+
+    _run(check_no_hardcoded_urls, "FE-007")
+
+    _run(check_ci, None)
+
+    if is_python:
+        _run(check_pytest_coverage_in_ci, "TEST-006")
+
+    if is_python:
+        _run(check_test_structure, None)
+
+    if is_pipeline_cog:
+        _run(check_pipeline_cog_tests, None)
+
     return findings

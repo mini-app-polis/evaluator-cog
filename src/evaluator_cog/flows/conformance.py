@@ -146,6 +146,8 @@ def run_conformance_check(
     repo_path: Path,
     standards_version: str,
     service_type: str = "worker",
+    language: str = "python",
+    check_exceptions: list[str] | None = None,
     standards_rules: list[dict] | None = None,
     run_id: str = "conformance",
 ) -> list[dict[str, Any]]:
@@ -157,7 +159,12 @@ def run_conformance_check(
 
     # Deterministic checks
     try:
-        deterministic_findings = run_all_checks(repo_path)
+        deterministic_findings = run_all_checks(
+            repo_path,
+            language=language,
+            service_type=service_type,
+            check_exceptions=check_exceptions,
+        )
     except Exception as exc:
         log.exception("conformance: run_all_checks failed for %s: %s", repo_id, exc)
         deterministic_findings = []
@@ -176,9 +183,11 @@ def run_conformance_check(
             prompt = build_conformance_prompt(
                 repo_id=repo_id,
                 service_type=service_type,
+                language=language,
                 standards_version=standards_version,
                 deterministic_findings=deterministic_findings,
                 standards_rules=standards_rules or [],
+                check_exceptions=check_exceptions,
             )
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
             raw = _anthropic_messages_create(
@@ -281,6 +290,11 @@ def conformance_check_flow() -> None:
                 continue
 
             service_type = service.get("type", "worker")
+            language = str(service.get("language") or "python")
+            raw_exc = service.get("check_exceptions") or []
+            check_exceptions = (
+                [str(x) for x in raw_exc] if isinstance(raw_exc, list) else []
+            )
             standards_rules = _fetch_standards_for_type(service_type)
 
             try:
@@ -289,6 +303,8 @@ def conformance_check_flow() -> None:
                     repo_path=repo_path,
                     standards_version=standards_version,
                     service_type=service_type,
+                    language=language,
+                    check_exceptions=check_exceptions,
                     standards_rules=standards_rules,
                     run_id=run_id,
                 )
