@@ -1,3 +1,11 @@
+## [1.8.1](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.0...v1.8.1) (2026-03-31)
+
+
+### Bug Fixes
+
+* exception filtering for multi-rule checks, wire cog_subtype to pipeline check gating ([1da609d](https://github.com/mini-app-polis/evaluator-cog/commit/1da609d3d42f3b589aaf8972b5a56c1ca11e8880))
+* uv lock ([3e2b20e](https://github.com/mini-app-polis/evaluator-cog/commit/3e2b20edf0e45b636f41071b65a771d660987999))
+
 # [1.8.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.7.2...v1.8.0) (2026-03-31)
 
 
