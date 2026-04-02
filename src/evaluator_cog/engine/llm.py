@@ -240,9 +240,13 @@ results above — they are already captured.
 ONLY report findings for the five soft rules listed above, and only
 when you have genuine signal from the deterministic findings or from
 the service context provided.
-If the deterministic findings are all clear and you have no genuine
-soft-rule signal, emit a single INFO finding summarising repo health.
-Keep it brief and specific to this service type.
+RESPONSE COUNT RULE: Emit the MINIMUM number of findings needed.
+
+If you have genuine signal for a soft rule: emit ONE finding for it.
+If you have NO signal for a soft rule: do NOT emit anything for it.
+Never emit an INFO finding just to note the absence of a problem.
+When all soft rules are clean: emit exactly ONE INFO summarising
+overall repo health. Do not emit one finding per rule.
 
 Respond with ONLY valid JSON (no markdown) in this exact shape:
 {{"findings":[{{"rule_id":"...","dimension":"structural_conformance","severity":"INFO|WARN|ERROR","finding":"...","suggestion":"..."}}]}}

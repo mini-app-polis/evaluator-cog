@@ -436,8 +436,12 @@ def check_no_hardcoded_urls(repo_path: Path) -> list[Finding]:
 # -- Test checks --------------------------------------------------------------
 
 
-def check_pipeline_cog_tests(repo_path: Path) -> list[Finding]:
+def check_pipeline_cog_tests(
+    repo_path: Path,
+    exceptions: frozenset[str] | None = None,
+) -> list[Finding]:
     """TEST-001, TEST-002, TEST-004: pipeline cog critical path tests."""
+    _exc = exceptions or frozenset()
     findings = []
     tests_dir = repo_path / "tests"
     if not tests_dir.is_dir():
@@ -471,33 +475,38 @@ def check_pipeline_cog_tests(repo_path: Path) -> list[Finding]:
         ),
     ]
     for rule_id, severity, dimension, keyword, finding_text, suggestion in checks:
-        if keyword not in all_content.lower():
+        if rule_id not in _exc and keyword not in all_content.lower():
             findings.append(
                 _finding(rule_id, severity, dimension, finding_text, suggestion)
             )
     return findings
 
 
-def check_test_structure(repo_path: Path) -> list[Finding]:
+def check_test_structure(
+    repo_path: Path,
+    exceptions: frozenset[str] | None = None,
+) -> list[Finding]:
     """TEST-003, TEST-005: test directory checks."""
+    _exc = exceptions or frozenset()
     findings = []
     tests_dir = repo_path / "tests"
     if not tests_dir.is_dir():
-        findings.append(
-            _finding(
-                "TEST-003",
-                "ERROR",
-                "testing_coverage",
-                "tests/ directory is absent.",
-                "Add a tests/ directory with critical path tests.",
+        if "TEST-003" not in _exc:
+            findings.append(
+                _finding(
+                    "TEST-003",
+                    "ERROR",
+                    "testing_coverage",
+                    "tests/ directory is absent.",
+                    "Add a tests/ directory with critical path tests.",
+                )
             )
-        )
         return findings
 
     test_files = list(tests_dir.rglob("test_*.py"))
     all_content = "\n".join(f.read_text() for f in test_files)
 
-    if "malform" not in all_content.lower():
+    if "TEST-003" not in _exc and "malform" not in all_content.lower():
         findings.append(
             _finding(
                 "TEST-003",
@@ -509,7 +518,11 @@ def check_test_structure(repo_path: Path) -> list[Finding]:
         )
 
     pyproject = repo_path / "pyproject.toml"
-    if pyproject.exists() and "[tool.pytest.ini_options]" not in pyproject.read_text():
+    if (
+        "TEST-005" not in _exc
+        and pyproject.exists()
+        and "[tool.pytest.ini_options]" not in pyproject.read_text()
+    ):
         findings.append(
             _finding(
                 "TEST-005",
@@ -607,9 +620,31 @@ def run_all_checks(
         _run(check_pytest_coverage_in_ci, "TEST-006")
 
     if is_python:
-        _run(check_test_structure, None)
+        try:
+            findings.extend(check_test_structure(repo_path, exceptions=_exceptions))
+        except Exception as exc:
+            findings.append(
+                _finding(
+                    "CHECKER",
+                    "WARN",
+                    "structural_conformance",
+                    f"check_test_structure raised an unexpected error: {exc}",
+                    "",
+                )
+            )
 
     if is_pipeline_cog:
-        _run(check_pipeline_cog_tests, None)
+        try:
+            findings.extend(check_pipeline_cog_tests(repo_path, exceptions=_exceptions))
+        except Exception as exc:
+            findings.append(
+                _finding(
+                    "CHECKER",
+                    "WARN",
+                    "structural_conformance",
+                    f"check_pipeline_cog_tests raised an unexpected error: {exc}",
+                    "",
+                )
+            )
 
     return findings
