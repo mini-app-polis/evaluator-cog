@@ -19,7 +19,7 @@ from evaluator_cog.engine.llm import (
     _parse_findings_from_claude,
 )
 
-sentry_sdk.init(dsn=os.environ.get("SENTRY_DSN", ""))
+sentry_sdk.init(dsn=os.environ.get("SENTRY_DSN_EVALUATOR", ""))
 
 log = logger_mod.get_logger()
 
