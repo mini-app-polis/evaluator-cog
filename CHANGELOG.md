@@ -1,3 +1,10 @@
+## [1.8.14](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.13...v1.8.14) (2026-04-02)
+
+
+### Bug Fixes
+
+* changing failure detection path handling ([b158e45](https://github.com/mini-app-polis/evaluator-cog/commit/b158e4540cf293d27e6c57e4c45585b6b2b90a3e))
+
 ## [1.8.13](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.12...v1.8.13) (2026-04-02)
 
 
