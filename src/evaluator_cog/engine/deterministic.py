@@ -73,7 +73,16 @@ def check_changelog(repo_path: Path) -> list[Finding]:
 def check_env_example(repo_path: Path) -> list[Finding]:
     """DOC-004: .env.example is required."""
     findings = []
-    if not (repo_path / ".env.example").exists():
+    # Check root first, then common monorepo locations
+    candidates = [
+        repo_path / ".env.example",
+        repo_path / "apps" / "api" / ".env.example",
+        repo_path / "apps" / "app" / ".env.example",
+        repo_path / "app" / ".env.example",
+        repo_path / "backend" / ".env.example",
+        repo_path / "server" / ".env.example",
+    ]
+    if not any(p.exists() for p in candidates):
         findings.append(
             _finding(
                 "DOC-004",
@@ -344,14 +353,19 @@ def check_ci(
             )
         )
 
-    if "VER-006" not in _exc and "npm install --no-save" not in content:
+    if "VER-006" not in _exc and (
+        "npm install --no-save" not in content
+        and "pnpm exec semantic-release" not in content
+        and "pnpm run semantic-release" not in content
+    ):
         findings.append(
             _finding(
                 "VER-006",
                 "ERROR",
                 "cd_readiness",
                 "npm install --no-save step absent from release job.",
-                "Add explicit npm install --no-save before npx semantic-release.",
+                "Add explicit npm install --no-save before npx semantic-release, "
+                "or use pnpm exec semantic-release with plugins in devDependencies.",
             )
         )
 

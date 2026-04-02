@@ -7,6 +7,7 @@ from evaluator_cog.engine.deterministic import (
     check_changelog,
     check_ci,
     check_common_python_utils_dep,
+    check_env_example,
     check_pyproject,
     check_readme,
     check_src_layout,
@@ -106,6 +107,32 @@ def test_check_ci_respects_exceptions_for_subrules() -> None:
     assert "VER-005" not in rule_ids
     assert "VER-003" in rule_ids
     assert "VER-006" in rule_ids
+
+
+def test_check_ci_accepts_pnpm_exec_semantic_release(tmp_path: Path) -> None:
+    """VER-006 should not fire when pnpm exec semantic-release is present."""
+    ci = tmp_path / ".github" / "workflows"
+    ci.mkdir(parents=True)
+    (ci / "ci.yml").write_text(
+        "semantic-release\nfetch-depth: 0\npnpm exec semantic-release\n"
+    )
+    findings = check_ci(tmp_path)
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "VER-006" not in rule_ids
+
+
+def test_check_env_example_finds_monorepo_location(tmp_path: Path) -> None:
+    """DOC-004 should not fire when .env.example is in apps/api/."""
+    (tmp_path / "apps" / "api").mkdir(parents=True)
+    (tmp_path / "apps" / "api" / ".env.example").write_text("DATABASE_URL=\n")
+    findings = check_env_example(tmp_path)
+    assert findings == []
+
+
+def test_check_env_example_fires_when_absent_everywhere(tmp_path: Path) -> None:
+    """DOC-004 should fire when .env.example is absent in all locations."""
+    findings = check_env_example(tmp_path)
+    assert any(f["rule_id"] == "DOC-004" for f in findings)
 
 
 def test_run_all_checks_empty_repo() -> None:
