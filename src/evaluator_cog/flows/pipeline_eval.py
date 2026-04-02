@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections.abc import Iterable
 from typing import Any
 
 import sentry_sdk
@@ -222,38 +223,16 @@ def _state_to_severity(state_type: str) -> str:
     return "INFO"
 
 
-def handle_prefect_flow_run_event(payload: dict[str, Any]) -> None:
-    """
-    Best-effort handler for Prefect flow run state events.
-    Never raises; logs and returns on failure.
-    """
-    try:
-        fields = _extract_flow_run_event_fields(payload)
-        flow_run_id = fields["flow_run_id"] or "prefect-unknown-run"
-        flow_name = fields["flow_name"] or "unknown-flow"
-        state_name = fields["state_name"] or "UNKNOWN"
-        state_type = fields["state_type"] or "UNKNOWN"
-        collection_update = flow_name == "update-dj-set-collection"
+def _apply_prefect_flow_run_event(payload: dict[str, Any]) -> None:
+    """Map a single webhook payload to ``evaluate_pipeline_run``. May raise."""
+    fields = _extract_flow_run_event_fields(payload)
+    flow_run_id = fields["flow_run_id"] or "prefect-unknown-run"
+    flow_name = fields["flow_name"] or "unknown-flow"
+    state_name = fields["state_name"] or "UNKNOWN"
+    state_type = fields["state_type"] or "UNKNOWN"
+    collection_update = flow_name == "update-dj-set-collection"
 
-        if state_type in {"FAILED", "CRASHED"}:
-            evaluate_pipeline_run(
-                run_id=flow_run_id,
-                repo="deejay-cog",
-                flow_name=flow_name,
-                sets_imported=0,
-                sets_failed=0,
-                sets_skipped=0,
-                total_tracks=0,
-                failed_set_labels=[],
-                api_ingest_success=True,
-                sets_attempted=0,
-                collection_update=collection_update,
-                direct_finding_text=f"Flow {flow_name} entered {state_name} state",
-                direct_severity=_state_to_severity(state_type),
-                source="prefect_webhook",
-            )
-            return
-
+    if state_type in {"FAILED", "CRASHED"}:
         evaluate_pipeline_run(
             run_id=flow_run_id,
             repo="deejay-cog",
@@ -266,10 +245,49 @@ def handle_prefect_flow_run_event(payload: dict[str, Any]) -> None:
             api_ingest_success=True,
             sets_attempted=0,
             collection_update=collection_update,
+            direct_finding_text=f"Flow {flow_name} entered {state_name} state",
+            direct_severity=_state_to_severity(state_type),
             source="prefect_webhook",
         )
+        return
+
+    evaluate_pipeline_run(
+        run_id=flow_run_id,
+        repo="deejay-cog",
+        flow_name=flow_name,
+        sets_imported=0,
+        sets_failed=0,
+        sets_skipped=0,
+        total_tracks=0,
+        failed_set_labels=[],
+        api_ingest_success=True,
+        sets_attempted=0,
+        collection_update=collection_update,
+        source="prefect_webhook",
+    )
+
+
+def handle_prefect_flow_run_event(payload: dict[str, Any]) -> None:
+    """
+    Best-effort handler for Prefect flow run state events.
+    Never raises; logs and returns on failure.
+    """
+    try:
+        _apply_prefect_flow_run_event(payload)
     except Exception:
         log.exception("evaluation_webhook: failed to handle flow run event")
+
+
+def handle_prefect_flow_run_events(payloads: Iterable[dict[str, Any]]) -> None:
+    """
+    Process multiple flow-run events in sequence. Logs each failure and continues
+    with the remaining payloads.
+    """
+    for payload in payloads:
+        try:
+            _apply_prefect_flow_run_event(payload)
+        except Exception:
+            log.exception("evaluation_webhook: failed to handle flow run event")
 
 
 def main() -> None:
