@@ -1,3 +1,10 @@
+## [1.8.10](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.9...v1.8.10) (2026-04-02)
+
+
+### Bug Fixes
+
+* fail loudly when standards version fetch fails, remove STANDARDS_VERSION env var ([cd15d97](https://github.com/mini-app-polis/evaluator-cog/commit/cd15d97d944cd8def12a10270c9e1dbffcd04cac))
+
 ## [1.8.9](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.8...v1.8.9) (2026-04-02)
 
 
