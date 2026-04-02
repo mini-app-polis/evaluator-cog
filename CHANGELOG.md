@@ -1,3 +1,10 @@
+## [1.8.13](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.12...v1.8.13) (2026-04-02)
+
+
+### Bug Fixes
+
+* per requirements and health feedback ([297f478](https://github.com/mini-app-polis/evaluator-cog/commit/297f478cf665d7b7eac92f726bac1159554902be))
+
 ## [1.8.12](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.11...v1.8.12) (2026-04-02)
 
 
