@@ -1,3 +1,10 @@
+## [1.8.12](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.11...v1.8.12) (2026-04-02)
+
+
+### Bug Fixes
+
+* exception-aware test checks, collapse no-signal LLM findings ([a65d1a2](https://github.com/mini-app-polis/evaluator-cog/commit/a65d1a2095160a79e32f279c54b61bc38adb3acc))
+
 ## [1.8.11](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.10...v1.8.11) (2026-04-02)
 
 
