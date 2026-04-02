@@ -1,3 +1,10 @@
+## [1.8.11](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.10...v1.8.11) (2026-04-02)
+
+
+### Bug Fixes
+
+* use SENTRY_DSN_EVALUATOR env var for shared Doppler config ([580b15a](https://github.com/mini-app-polis/evaluator-cog/commit/580b15ab61b94e20ace836342b139ce3a20d2009))
+
 ## [1.8.10](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.9...v1.8.10) (2026-04-02)
 
 
