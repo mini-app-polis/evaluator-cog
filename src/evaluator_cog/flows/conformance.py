@@ -65,9 +65,22 @@ def _fetch_yaml(url: str) -> dict:
 
 
 def _get_standards_version() -> str:
-    """Fetch current standards version from live index.yaml."""
-    data = _fetch_yaml(_INDEX_YAML_URL)
-    return str(data.get("version") or os.environ.get("STANDARDS_VERSION", "1.2.5"))
+    """Fetch current standards version from live index.yaml. Raises on failure."""
+    try:
+        r = httpx.get(_INDEX_YAML_URL, timeout=20.0)
+        r.raise_for_status()
+        data = yaml.safe_load(r.text) or {}
+        version = data.get("version")
+        if not version:
+            raise ValueError("version field absent from index.yaml")
+        return str(version)
+    except Exception as exc:
+        log.error(
+            "conformance: failed to fetch standards version from index.yaml: %s", exc
+        )
+        raise RuntimeError(
+            f"Cannot determine standards version — index.yaml fetch failed: {exc}"
+        ) from exc
 
 
 def _get_active_repos(ecosystem: dict) -> list[dict]:
