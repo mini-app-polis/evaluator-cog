@@ -11,6 +11,7 @@ from evaluator_cog.engine.deterministic import (
     check_pyproject,
     check_readme,
     check_src_layout,
+    check_test_structure,
     run_all_checks,
 )
 
@@ -187,3 +188,45 @@ def test_run_all_checks_pipeline_tests_require_pipeline_subtype() -> None:
     )
     pipeline_rule_ids = [f["rule_id"] for f in findings_pipeline]
     assert "TEST-001" in pipeline_rule_ids
+
+
+def test_check_test_structure_no_test003_when_tests_mention_error(
+    tmp_path: Path,
+) -> None:
+    """TEST-003 must not require the literal word 'malform'; 'error' is enough."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_cog.py").write_text(
+        "def test_poll_error_caught_and_loop_continues():\n"
+        '    """First poll errors; loop logs the error and continues."""\n'
+        "    assert True\n"
+    )
+    findings = check_test_structure(tmp_path)
+    assert not any(f["rule_id"] == "TEST-003" for f in findings)
+
+
+def test_check_test_structure_no_test003_when_tests_mention_exception(
+    tmp_path: Path,
+) -> None:
+    """Tests that reference exception handling satisfy TEST-003."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_cog.py").write_text(
+        "def test_handles_exception():\n"
+        "    try:\n"
+        "        raise RuntimeError('x')\n"
+        "    except Exception:\n"
+        "        pass\n"
+    )
+    findings = check_test_structure(tmp_path)
+    assert not any(f["rule_id"] == "TEST-003" for f in findings)
+
+
+def test_check_test_structure_emits_test003_without_failure_signals(
+    tmp_path: Path,
+) -> None:
+    """Happy-path-only tests must still trigger TEST-003."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_cog.py").write_text(
+        "def test_happy_path():\n    assert 1 + 1 == 2\n"
+    )
+    findings = check_test_structure(tmp_path)
+    assert any(f["rule_id"] == "TEST-003" for f in findings)

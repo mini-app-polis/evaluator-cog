@@ -482,6 +482,24 @@ def check_pipeline_cog_tests(
     return findings
 
 
+# Substrings in test sources that indicate a failure-path test (TEST-003).
+FAILURE_PATH_SIGNALS = (
+    "malform",
+    "failure",
+    "fail",
+    "error",
+    "exception",
+    "invalid",
+    "raises",
+    "bad_input",
+    "boom",
+    "continues",
+    "loop_continues",
+    "does_not_abort",
+    "does_not_raise",
+)
+
+
 def check_test_structure(
     repo_path: Path,
     exceptions: frozenset[str] | None = None,
@@ -506,14 +524,17 @@ def check_test_structure(
     test_files = list(tests_dir.rglob("test_*.py"))
     all_content = "\n".join(f.read_text() for f in test_files)
 
-    if "TEST-003" not in _exc and "malform" not in all_content.lower():
+    lowered = all_content.lower()
+    has_failure_path = any(signal in lowered for signal in FAILURE_PATH_SIGNALS)
+
+    if "TEST-003" not in _exc and not has_failure_path:
         findings.append(
             _finding(
                 "TEST-003",
                 "ERROR",
                 "testing_coverage",
                 "No failure path test found.",
-                "Add a test passing malformed input and asserting the cog continues.",
+                "Add a failure-path test (e.g. invalid input or simulated error) asserting the cog handles it and continues.",
             )
         )
 
