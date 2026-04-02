@@ -1,3 +1,10 @@
+## [1.8.9](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.8...v1.8.9) (2026-04-02)
+
+
+### Bug Fixes
+
+* VER-006 accepts pnpm exec semantic-release, DOC-004 checks monorepo paths ([fd9c7b8](https://github.com/mini-app-polis/evaluator-cog/commit/fd9c7b8642efce7d9946868f41f1644406c5ae81))
+
 ## [1.8.8](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.7...v1.8.8) (2026-03-31)
 
 
