@@ -4,14 +4,32 @@ import tempfile
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic import (
+    check_astro_framework,
     check_changelog,
     check_ci,
     check_common_python_utils_dep,
+    check_duplicate_prefix,
     check_env_example,
+    check_evaluation_step,
+    check_failed_prefix,
+    check_healthchecks_integration,
+    check_mypy_in_ci,
+    check_naming_conventions,
+    check_no_hardcoded_secrets,
+    check_no_manual_changelog,
     check_pyproject,
+    check_react_hook_form_zod,
     check_readme,
+    check_readme_io,
+    check_respx_for_http_mocking,
+    check_retry_logic,
+    check_shadcn,
+    check_shared_library_used,
     check_src_layout,
+    check_structured_logging,
+    check_tailwind,
     check_test_structure,
+    check_vite_react_ts,
     run_all_checks,
 )
 
@@ -255,3 +273,309 @@ def test_check_test_structure_emits_test003_without_failure_signals(
     )
     findings = check_test_structure(tmp_path)
     assert any(f["rule_id"] == "TEST-003" for f in findings)
+
+
+def test_check_naming_conventions_flags_camel_case_module() -> None:
+    repo = _make_repo(
+        {
+            "pyproject.toml": '[project]\nname = "my-package"\n',
+            "src/myPackage/ProcessFiles.py": "x = 1\n",
+        }
+    )
+    findings = check_naming_conventions(repo)
+    assert any(f["rule_id"] == "PY-011" for f in findings)
+
+
+def test_check_naming_conventions_passes_snake_case(tmp_path: Path) -> None:
+    repo = tmp_path / "my-package"
+    (repo / "src" / "my_package").mkdir(parents=True)
+    (repo / "src" / "my_package" / "process_files.py").write_text("x = 1\n")
+    (repo / "pyproject.toml").write_text('[project]\nname = "my-package"\n')
+    findings = check_naming_conventions(repo)
+    assert findings == []
+
+
+def test_check_failed_prefix_flags_missing() -> None:
+    repo = _make_repo(
+        {
+            "src/my_pkg/worker.py": (
+                "import shutil\nfrom pathlib import Path\n"
+                "def go(p: Path):\n"
+                "    try:\n"
+                "        shutil.move(str(p), 'ok.csv')\n"
+                "    except Exception:\n"
+                "        shutil.move(str(p), 'failed.csv')\n"
+            )
+        }
+    )
+    findings = check_failed_prefix(repo)
+    assert any(f["rule_id"] == "PY-012" for f in findings)
+
+
+def test_check_failed_prefix_passes_when_present() -> None:
+    repo = _make_repo(
+        {
+            "src/my_pkg/worker.py": (
+                "import shutil\nfrom pathlib import Path\n"
+                "def go(p: Path):\n"
+                "    try:\n"
+                "        shutil.move(str(p), 'ok.csv')\n"
+                "    except Exception:\n"
+                "        shutil.move(str(p), f'FAILED_{p.name}')\n"
+            )
+        }
+    )
+    findings = check_failed_prefix(repo)
+    assert findings == []
+
+
+def test_check_duplicate_prefix_flags_and_passes() -> None:
+    failing = _make_repo(
+        {"src/my_pkg/dedup.py": "def x():\n    # duplicate file\n    return 'dup'\n"}
+    )
+    assert any(f["rule_id"] == "PY-013" for f in check_duplicate_prefix(failing))
+    passing = _make_repo(
+        {
+            "src/my_pkg/dedup.py": "possible_duplicate_ = True\ndef x():\n    return 'duplicate'\n"
+        }
+    )
+    assert check_duplicate_prefix(passing) == []
+
+
+def test_check_readme_io_flags_and_passes() -> None:
+    bad = _make_repo({"README.md": "# Title\nminimal\n"})
+    assert any(f["rule_id"] == "DOC-002" for f in check_readme_io(bad))
+    good = _make_repo(
+        {
+            "README.md": "# Service\nInput from source folder.\nProduces output to /v1/results endpoint.\n"
+        }
+    )
+    assert check_readme_io(good) == []
+
+
+def test_check_no_manual_changelog_flags_prose_section() -> None:
+    repo = _make_repo(
+        {"CHANGELOG.md": "# Changelog\n## 1.0.0 — 2026-03\nmanual notes\n"}
+    )
+    findings = check_no_manual_changelog(repo)
+    assert any(f["rule_id"] == "VER-004" for f in findings)
+
+
+def test_check_no_manual_changelog_passes_sr_format() -> None:
+    repo = _make_repo(
+        {"CHANGELOG.md": "# Changelog\n## [1.0.0](https://example.com) (2026-03-01)\n"}
+    )
+    findings = check_no_manual_changelog(repo)
+    assert findings == []
+
+
+def test_check_healthchecks_integration_skips_pipeline_cog() -> None:
+    repo = _make_repo({})
+    assert check_healthchecks_integration(repo, cog_subtype="pipeline") == []
+
+
+def test_check_healthchecks_integration_flags_trigger_cog_missing_url() -> None:
+    repo = _make_repo({"src/my_pkg/main.py": "def run():\n    pass\n"})
+    findings = check_healthchecks_integration(repo, cog_subtype="trigger")
+    assert any(f["rule_id"] == "CD-007" for f in findings)
+
+
+def test_check_structured_logging_flags_import_logging() -> None:
+    repo = _make_repo(
+        {"src/my_pkg/logs.py": "import logging\nlog = logging.getLogger(__name__)\n"}
+    )
+    findings = check_structured_logging(repo)
+    assert any(f["rule_id"] == "CD-009" for f in findings)
+
+
+def test_check_structured_logging_passes_shared_logger() -> None:
+    repo = _make_repo(
+        {
+            "src/my_pkg/logs.py": "from mini_app_polis import logger as logger_mod\nlog = logger_mod.get_logger()\n"
+        }
+    )
+    assert check_structured_logging(repo) == []
+
+
+def test_check_no_hardcoded_secrets_flags_committed_env() -> None:
+    repo = _make_repo({".env": "SECRET=abc\n"})
+    findings = check_no_hardcoded_secrets(repo)
+    assert any(f["rule_id"] == "CD-011" for f in findings)
+
+
+def test_check_no_hardcoded_secrets_passes_clean_repo() -> None:
+    repo = _make_repo({"src/my_pkg/main.py": "import os\nx = os.getenv('TOKEN')\n"})
+    assert check_no_hardcoded_secrets(repo) == []
+
+
+def test_check_respx_flags_missing_from_dev_deps() -> None:
+    repo = _make_repo({"pyproject.toml": "[project]\nname='x'\n"})
+    findings = check_respx_for_http_mocking(repo)
+    assert any(f["rule_id"] == "TEST-007" for f in findings)
+
+
+def test_check_respx_passes_when_present_and_mocked() -> None:
+    repo = _make_repo(
+        {
+            "pyproject.toml": "[project]\nname='x'\n[tool.uv]\n[dependency-groups]\ndev=['respx']\n",
+            "tests/test_http.py": "import httpx\nimport respx\n\ndef test_a():\n    with respx.mock:\n        httpx.get('https://x')\n",
+        }
+    )
+    assert check_respx_for_http_mocking(repo) == []
+
+
+def test_check_mypy_in_ci_skips_when_no_tool_mypy() -> None:
+    repo = _make_repo({"pyproject.toml": "[project]\nname='x'\n"})
+    assert check_mypy_in_ci(repo) == []
+
+
+def test_check_mypy_in_ci_flags_missing_ci_step() -> None:
+    repo = _make_repo(
+        {
+            "pyproject.toml": "[project]\nname='x'\n[tool.mypy]\npython_version='3.11'\n",
+            ".github/workflows/ci.yml": "name: CI\njobs:\n  test:\n    runs-on: ubuntu-latest\n",
+        }
+    )
+    findings = check_mypy_in_ci(repo)
+    assert any(f["rule_id"] == "TEST-012" for f in findings)
+
+
+def test_check_astro_framework_flags_missing_package() -> None:
+    repo = _make_repo({"package.json": '{"name":"site"}\n'})
+    findings = check_astro_framework(repo)
+    assert any(f["rule_id"] == "FE-001" for f in findings)
+
+
+def test_check_astro_framework_passes_when_present() -> None:
+    repo = _make_repo(
+        {
+            "package.json": '{"dependencies":{"astro":"^4"}}\n',
+            "astro.config.mjs": "export default {}\n",
+        }
+    )
+    assert check_astro_framework(repo) == []
+
+
+def test_check_vite_react_ts_flags_missing_typescript() -> None:
+    repo = _make_repo(
+        {
+            "package.json": '{"dependencies":{"vite":"1","react":"18"}}\n',
+            "tsconfig.json": "{}\n",
+        }
+    )
+    findings = check_vite_react_ts(repo)
+    assert any(f["rule_id"] == "FE-002" for f in findings)
+
+
+def test_check_vite_react_ts_passes() -> None:
+    repo = _make_repo(
+        {
+            "package.json": '{"dependencies":{"vite":"1","react":"18","typescript":"5"}}\n',
+            "tsconfig.json": "{}\n",
+        }
+    )
+    assert check_vite_react_ts(repo) == []
+
+
+def test_check_tailwind_and_shadcn_and_forms() -> None:
+    failing = _make_repo(
+        {
+            "package.json": '{"dependencies":{"react":"18"}}\n',
+            "src/app/page.tsx": "export const A = () => <form></form>\n",
+        }
+    )
+    assert any(f["rule_id"] == "FE-003" for f in check_tailwind(failing))
+    assert any(f["rule_id"] == "FE-004" for f in check_shadcn(failing))
+    assert any(f["rule_id"] == "FE-005" for f in check_react_hook_form_zod(failing))
+    passing = _make_repo(
+        {
+            "package.json": '{"dependencies":{"tailwindcss":"3","@radix-ui/react-slot":"1","react-hook-form":"7","zod":"3"}}\n',
+            "tailwind.config.ts": "export default {}\n",
+            "src/components/ui/button.tsx": "export const Button = () => null\n",
+            "src/app/page.tsx": "export const A = () => <form></form>\n",
+        }
+    )
+    assert check_tailwind(passing) == []
+    assert check_shadcn(passing) == []
+    assert check_react_hook_form_zod(passing) == []
+
+
+def test_check_retry_logic_flags_task_without_retries() -> None:
+    repo = _make_repo(
+        {
+            "src/my_pkg/flow.py": "from prefect import task\nimport httpx\n@task\ndef x():\n    return httpx.get('https://x')\n"
+        }
+    )
+    findings = check_retry_logic(repo)
+    assert any(f["rule_id"] == "PIPE-007" for f in findings)
+
+
+def test_check_retry_logic_passes_with_retries() -> None:
+    repo = _make_repo(
+        {
+            "src/my_pkg/flow.py": "from prefect import task\nimport httpx\n@task(retries=2)\ndef x():\n    return httpx.get('https://x')\n"
+        }
+    )
+    assert check_retry_logic(repo) == []
+
+
+def test_check_evaluation_step_flags_missing() -> None:
+    repo = _make_repo({"src/my_pkg/flow.py": "def run():\n    return 1\n"})
+    findings = check_evaluation_step(repo)
+    assert any(f["rule_id"] == "PIPE-009" for f in findings)
+
+
+def test_check_evaluation_step_passes_when_signal_present() -> None:
+    repo = _make_repo(
+        {
+            "src/my_pkg/flow.py": "def run():\n    url='/v1/evaluations'\n    return url\n"
+        }
+    )
+    assert check_evaluation_step(repo) == []
+
+
+def test_check_shared_library_python_flags_missing() -> None:
+    repo = _make_repo({"pyproject.toml": "[project]\nname='x'\n"})
+    findings = check_shared_library_used(repo, language="python")
+    assert any(f["rule_id"] == "XSTACK-001" for f in findings)
+
+
+def test_check_shared_library_python_passes_when_present() -> None:
+    repo = _make_repo(
+        {
+            "pyproject.toml": "[project]\nname='x'\ndependencies=['common-python-utils']\n",
+            "src/x/main.py": "from mini_app_polis import logger as logger_mod\n",
+        }
+    )
+    assert check_shared_library_used(repo, language="python") == []
+
+
+def test_check_shared_library_ts_flags_hand_rolled_logger() -> None:
+    repo = _make_repo(
+        {
+            "package.json": '{"name":"x","dependencies":{}}\n',
+            "src/index.ts": "function createLogger(){ return console }\n",
+        }
+    )
+    findings = check_shared_library_used(repo, language="typescript")
+    assert any(f["rule_id"] == "XSTACK-001" for f in findings)
+
+
+def test_check_shared_library_ts_passes_with_dependency_and_import() -> None:
+    repo = _make_repo(
+        {
+            "package.json": '{"name":"x","dependencies":{"kaiano-ts-utils":"1.0.0"}}\n',
+            "src/index.ts": "import { createLogger } from 'kaiano-ts-utils'\n",
+        }
+    )
+    assert check_shared_library_used(repo, language="typescript") == []
+
+
+def test_run_all_checks_frontend_wires_new_frontend_rules() -> None:
+    repo = _make_repo({"package.json": '{"dependencies":{"react":"18"}}\n'})
+    findings = run_all_checks(
+        repo, language="typescript", service_type="site", dod_type="new_frontend_site"
+    )
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "FE-001" in rule_ids
+    assert "FE-003" in rule_ids
