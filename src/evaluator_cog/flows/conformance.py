@@ -222,6 +222,11 @@ def run_conformance_check(
         len(deterministic_findings),
         repo_id,
     )
+    deterministic_rule_ids = {
+        str(f.get("rule_id") or "")
+        for f in deterministic_findings
+        if f.get("rule_id") != "CHECKER"
+    }
 
     # LLM soft-rule assessment
     llm_findings: list[dict[str, Any]] = []
@@ -236,6 +241,7 @@ def run_conformance_check(
                 standards_version=standards_version,
                 deterministic_findings=deterministic_findings,
                 standards_rules=standards_rules or [],
+                deterministic_rule_ids=deterministic_rule_ids,
                 check_exceptions=check_exceptions,
                 exception_reasons=exception_reasons,
             )

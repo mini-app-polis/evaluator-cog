@@ -178,6 +178,7 @@ def build_conformance_prompt(
     standards_version: str,
     deterministic_findings: list[dict],
     standards_rules: list[dict],
+    deterministic_rule_ids: set[str],
     check_exceptions: list[str] | None = None,
     exception_reasons: dict[str, str] | None = None,
 ) -> str:
@@ -197,6 +198,15 @@ def build_conformance_prompt(
             if r.get("check_notes")
         )
         or "(none)"
+    )
+    soft_rules = [r for r in standards_rules if r["id"] not in deterministic_rule_ids]
+    soft_rules_text = (
+        "\n".join(
+            f"- {r['id']} [{r['severity']}]: {r['title']}\n"
+            f"  How to check: {r['check_notes']}"
+            for r in soft_rules
+        )
+        or "(none — all checkable rules covered by deterministic checks)"
     )
 
     if check_exceptions:
@@ -229,28 +239,13 @@ These checks have already been run automatically:
 {findings_summary}
 
 YOUR TASK:
-Evaluate ONLY the soft rules that deterministic checks cannot fully assess.
-These are qualitative rules requiring interpretation:
+Evaluate ONLY the rules listed below:
 
-DOC-006: missing docstrings on public functions/classes
-DOC-008: dead or commented-out code blocks
-PIPE-006: dual logger pattern in Prefect flows
-PRIN-002: per-item error handling in pipeline loops
-DOC-013: README 'Running locally' section completeness
+{soft_rules_text}
 
-STRICT CONSTRAINTS — failure to follow these will corrupt the report:
-
-NEVER report a finding about something you cannot directly observe in
-the deterministic results. If the deterministic checks did not flag
-PY-006 (missing dependency), CD-002 (missing sentry-sdk), VER-003
-(missing releaserc), or any other checkable rule, assume those things
-ARE present and correct. Do not second-guess the deterministic checker.
-NEVER report findings for rule IDs listed in check_exceptions.
-NEVER report findings for rules already present in the deterministic
-results above — they are already captured.
-ONLY report findings for the five soft rules listed above, and only
-when you have genuine signal from the deterministic findings or from
-the service context provided.
+Do not re-report findings already present in the deterministic results.
+Do not invent findings for rules not in the list above.
+Do not report findings for rule IDs listed in check_exceptions.
 RESPONSE COUNT RULE: Emit the MINIMUM number of findings needed.
 
 If you have genuine signal for a soft rule: emit ONE finding for it.
