@@ -1,3 +1,10 @@
+## [2.1.1](https://github.com/mini-app-polis/evaluator-cog/compare/v2.1.0...v2.1.1) (2026-04-04)
+
+
+### Bug Fixes
+
+* eliminate LLM false positives — pass checked_rule_ids to gate soft-rule assessment ([3736a35](https://github.com/mini-app-polis/evaluator-cog/commit/3736a3572b55857de7df10e4525a632eb4147ea4))
+
 # [2.1.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.0.0...v2.1.0) (2026-04-04)
 
 
