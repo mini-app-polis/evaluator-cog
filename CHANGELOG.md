@@ -1,3 +1,15 @@
+# [2.1.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.0.0...v2.1.0) (2026-04-04)
+
+
+### Bug Fixes
+
+* follow up to last commit ([e092a20](https://github.com/mini-app-polis/evaluator-cog/commit/e092a201e27350a26a205e52da9e71d900f1a53f))
+
+
+### Features
+
+* implement 24 deterministic check functions — Phase 1 easy checks ([35f63ef](https://github.com/mini-app-polis/evaluator-cog/commit/35f63efde4e91c2e7c9c15575056174cd84b1c39))
+
 # [2.0.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.14...v2.0.0) (2026-04-04)
 
 
