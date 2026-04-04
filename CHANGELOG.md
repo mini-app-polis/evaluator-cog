@@ -1,3 +1,18 @@
+# [2.0.0](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.14...v2.0.0) (2026-04-04)
+
+
+* feat!: update conformance engine for ecosystem-standards v2.0.0 schema ([82ee534](https://github.com/mini-app-polis/evaluator-cog/commit/82ee534e3e5e19ab2921b17e08e86c2822cf2f22))
+
+
+### BREAKING CHANGES
+
+* conformance engine now reads dod_type from ecosystem.yaml
+for service-type-aware rule filtering via applies_to. check_exceptions
+supports both legacy string format and new {rule, reason} object format.
+Requires ecosystem-standards >= 2.0.0.
+
+Made-with: Cursor
+
 ## [1.8.14](https://github.com/mini-app-polis/evaluator-cog/compare/v1.8.13...v1.8.14) (2026-04-02)
 
 
