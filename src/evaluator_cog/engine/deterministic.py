@@ -13,10 +13,17 @@ Checks are grouped by what they inspect:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 Finding = dict[str, Any]
+
+
+@dataclass
+class CheckResult:
+    findings: list[Finding]
+    checked_rule_ids: set[str]
 
 
 def _finding(
@@ -1484,7 +1491,7 @@ def run_all_checks(
     dod_type: str | None = None,
     check_exceptions: list[str] | None = None,
     exception_reasons: dict[str, str] | None = None,
-) -> list[Finding]:
+) -> CheckResult:
     """Run deterministic checks against a repo and return combined findings."""
     is_python = language == "python" or dod_type in (
         "new_cog",
@@ -1500,7 +1507,14 @@ def run_all_checks(
     _exceptions = frozenset(check_exceptions or [])
     _exception_reasons = exception_reasons or {}
 
+    checked_rule_ids: set[str] = set()
+
+    def _mark_checked(*rule_ids: str) -> None:
+        checked_rule_ids.update(rule_ids)
+
     def _run(check_fn, rule_id: str | None = None) -> None:
+        if rule_id:
+            checked_rule_ids.add(rule_id)
         if rule_id and rule_id in _exceptions:
             reason = _exception_reasons.get(rule_id, "")
             if reason:
@@ -1543,6 +1557,7 @@ def run_all_checks(
         _run(check_pre_commit, "PY-008")
         _run(check_src_layout, "PY-005")
         _run(check_no_setup_py, "PY-007")
+        _mark_checked("PY-001", "PY-002", "PY-003", "PY-009", "PY-010", "CD-002")
         try:
             findings.extend(check_pyproject(repo_path, exceptions=_exceptions))
         except Exception as exc:
@@ -1564,17 +1579,20 @@ def run_all_checks(
     if (is_python or is_fastapi) and not is_library and not is_frontend:
         _run(check_common_python_utils_dep, "PY-006")
 
+    _mark_checked("CD-007")
     findings.extend(check_healthchecks_integration(repo_path, cog_subtype=cog_subtype))
     _run(check_structured_logging, "CD-009")
     _run(check_no_hardcoded_secrets, "CD-011")
     _run(check_no_manual_changelog, "VER-004")
 
+    _mark_checked("XSTACK-001")
     findings.extend(check_shared_library_used(repo_path, language=language))
     if dod_type is None:  # standards repo only
         _run(check_standards_freshness, "PRIN-009")
 
     _run(check_no_hardcoded_urls, "FE-007")
 
+    _mark_checked("VER-003", "VER-005", "VER-006")
     try:
         findings.extend(check_ci(repo_path, exceptions=_exceptions))
     except Exception as exc:
@@ -1594,6 +1612,7 @@ def run_all_checks(
         _run(check_mypy_in_ci, "TEST-012")
 
     if is_python:
+        _mark_checked("TEST-003", "TEST-005")
         try:
             findings.extend(check_test_structure(repo_path, exceptions=_exceptions))
         except Exception as exc:
@@ -1608,6 +1627,7 @@ def run_all_checks(
             )
 
     if "DOC-013" not in _exceptions:
+        _mark_checked("DOC-013")
         findings.extend(check_readme_running_locally(repo_path, dod_type=dod_type))
 
     if is_frontend:
@@ -1620,6 +1640,7 @@ def run_all_checks(
         _run(check_react_hook_form_zod, "FE-005")
 
     if is_pipeline_cog:
+        _mark_checked("TEST-001", "TEST-002", "TEST-004")
         try:
             findings.extend(check_pipeline_cog_tests(repo_path, exceptions=_exceptions))
         except Exception as exc:
@@ -1636,4 +1657,4 @@ def run_all_checks(
         _run(check_no_retired_trigger_patterns, "PIPE-008")
         _run(check_evaluation_step, "PIPE-009")
 
-    return findings
+    return CheckResult(findings=findings, checked_rule_ids=checked_rule_ids)

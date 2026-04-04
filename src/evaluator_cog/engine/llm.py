@@ -178,7 +178,7 @@ def build_conformance_prompt(
     standards_version: str,
     deterministic_findings: list[dict],
     standards_rules: list[dict],
-    deterministic_rule_ids: set[str],
+    checked_rule_ids: set[str] | None = None,
     check_exceptions: list[str] | None = None,
     exception_reasons: dict[str, str] | None = None,
 ) -> str:
@@ -199,7 +199,12 @@ def build_conformance_prompt(
         )
         or "(none)"
     )
-    soft_rules = [r for r in standards_rules if r["id"] not in deterministic_rule_ids]
+    all_checked = (checked_rule_ids or set()) | {
+        str(f.get("rule_id") or "")
+        for f in deterministic_findings
+        if f.get("rule_id") != "CHECKER"
+    }
+    soft_rules = [r for r in standards_rules if r["id"] not in all_checked]
     soft_rules_text = (
         "\n".join(
             f"- {r['id']} [{r['severity']}]: {r['title']}\n"
@@ -239,13 +244,32 @@ These checks have already been run automatically:
 {findings_summary}
 
 YOUR TASK:
-Evaluate ONLY the rules listed below:
+RULES TO ASSESS:
 
 {soft_rules_text}
 
-Do not re-report findings already present in the deterministic results.
-Do not invent findings for rules not in the list above.
-Do not report findings for rule IDs listed in check_exceptions.
+WHAT YOU ARE AND ARE NOT RESPONSIBLE FOR:
+
+The following rules were checked deterministically and either passed
+or produced findings already listed above. DO NOT assess these rules.
+DO NOT produce findings for them. Treat them as resolved:
+
+{chr(10).join(f"  - {rid}" for rid in sorted(all_checked)) or "  (none)"}
+
+You are ONLY responsible for assessing the soft rules listed in
+RULES TO ASSESS above — rules the deterministic checker cannot
+evaluate. These require qualitative judgment from you.
+
+ABSOLUTE CONSTRAINTS:
+- Never produce a finding for a rule in the resolved list above
+- Never produce a finding phrased as "no deterministic result
+  confirms X" — if you cannot observe something directly, do not
+  flag it
+- Never flag something as missing just because it was not mentioned
+  in the deterministic findings — absence of a finding means passing
+- Only flag rules where you have genuine positive signal of a problem
+- If soft_rules is empty, emit exactly one INFO finding confirming
+  the repo passed all assessed rules
 RESPONSE COUNT RULE: Emit the MINIMUM number of findings needed.
 
 If you have genuine signal for a soft rule: emit ONE finding for it.

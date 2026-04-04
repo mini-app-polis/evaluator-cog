@@ -156,7 +156,8 @@ def test_check_env_example_fires_when_absent_everywhere(tmp_path: Path) -> None:
 
 def test_run_all_checks_empty_repo() -> None:
     repo = _make_repo({})
-    findings = run_all_checks(repo)
+    result = run_all_checks(repo)
+    findings = result.findings
     rule_ids = [f["rule_id"] for f in findings]
     assert "DOC-001" in rule_ids
     assert "PY-005" in rule_ids
@@ -165,19 +166,21 @@ def test_run_all_checks_empty_repo() -> None:
 def test_run_all_checks_never_raises() -> None:
     # Should not raise even on a completely empty path
     repo = Path(tempfile.mkdtemp())
-    findings = run_all_checks(repo)
-    assert isinstance(findings, list)
+    result = run_all_checks(repo)
+    assert isinstance(result.findings, list)
+    assert isinstance(result.checked_rule_ids, set)
 
 
 def test_run_all_checks_structured_exception_emits_info() -> None:
     """Structured check_exceptions with reasons should emit INFO findings."""
     repo = _make_repo({})
-    findings = run_all_checks(
+    result = run_all_checks(
         repo,
         check_exceptions=["DOC-001"],
         exception_reasons={"DOC-001": "standards repo — no service entry point"},
         dod_type="new_cog",
     )
+    findings = result.findings
     assert "DOC-001" not in [f["rule_id"] for f in findings if f["severity"] != "INFO"]
     info_findings = [
         f for f in findings if f["rule_id"] == "DOC-001" and f["severity"] == "INFO"
@@ -188,7 +191,8 @@ def test_run_all_checks_structured_exception_emits_info() -> None:
 
 def test_run_all_checks_non_python_skips_python_rules() -> None:
     repo = _make_repo({})
-    findings = run_all_checks(repo, language="typescript", service_type="site")
+    result = run_all_checks(repo, language="typescript", service_type="site")
+    findings = result.findings
     rule_ids = [f["rule_id"] for f in findings]
     assert "PY-005" not in rule_ids
     assert "DOC-001" in rule_ids
@@ -196,37 +200,40 @@ def test_run_all_checks_non_python_skips_python_rules() -> None:
 
 def test_run_all_checks_library_skips_env_example() -> None:
     repo = _make_repo({})
-    findings = run_all_checks(repo, service_type="library")
+    result = run_all_checks(repo, service_type="library")
+    findings = result.findings
     rule_ids = [f["rule_id"] for f in findings]
     assert "DOC-004" not in rule_ids
 
 
 def test_run_all_checks_pipeline_tests_require_pipeline_subtype() -> None:
     repo = _make_repo({"tests/test_basic.py": "def test_ok():\n    assert True\n"})
-    findings = run_all_checks(repo, service_type="worker", language="python")
+    result = run_all_checks(repo, service_type="worker", language="python")
+    findings = result.findings
     rule_ids = [f["rule_id"] for f in findings]
     assert "TEST-001" not in rule_ids
 
-    findings_pipeline = run_all_checks(
+    result_pipeline = run_all_checks(
         repo,
         service_type="worker",
         language="python",
         cog_subtype="pipeline",
         dod_type="new_cog",
     )
-    pipeline_rule_ids = [f["rule_id"] for f in findings_pipeline]
+    pipeline_rule_ids = [f["rule_id"] for f in result_pipeline.findings]
     assert "TEST-001" in pipeline_rule_ids
 
 
 def test_run_all_checks_skips_python_checks_for_frontend() -> None:
     """Frontend dod_type should not trigger Python-specific checks."""
     repo = _make_repo({})
-    findings = run_all_checks(
+    result = run_all_checks(
         repo,
         language="typescript",
         service_type="site",
         dod_type="new_frontend_site",
     )
+    findings = result.findings
     rule_ids = [f["rule_id"] for f in findings]
     assert "PY-005" not in rule_ids
     assert "PY-006" not in rule_ids
@@ -573,9 +580,42 @@ def test_check_shared_library_ts_passes_with_dependency_and_import() -> None:
 
 def test_run_all_checks_frontend_wires_new_frontend_rules() -> None:
     repo = _make_repo({"package.json": '{"dependencies":{"react":"18"}}\n'})
-    findings = run_all_checks(
+    result = run_all_checks(
         repo, language="typescript", service_type="site", dod_type="new_frontend_site"
     )
+    findings = result.findings
     rule_ids = [f["rule_id"] for f in findings]
     assert "FE-001" in rule_ids
     assert "FE-003" in rule_ids
+
+
+def test_run_all_checks_returns_checked_rule_ids() -> None:
+    """checked_rule_ids includes rules that passed, not just findings."""
+    repo = _make_repo(
+        {
+            "README.md": "# My Repo",
+            "CHANGELOG.md": "",
+            ".releaserc.json": "{}",
+        }
+    )
+    result = run_all_checks(repo, dod_type="new_cog")
+    assert "DOC-001" in result.checked_rule_ids
+    assert not any(f["rule_id"] == "DOC-001" for f in result.findings)
+
+
+def test_checked_rule_ids_includes_pyproject_subrules() -> None:
+    """Rule IDs checked inside check_pyproject appear in checked_rule_ids."""
+    repo = _make_repo(
+        {
+            "pyproject.toml": (
+                '[project]\nname = "my-cog"\n'
+                "[tool.ruff]\nline-length = 88\n"
+                "[tool.uv]\n"
+                'requires-python = ">=3.11"\n'
+            ),
+            "uv.lock": "",
+        }
+    )
+    result = run_all_checks(repo, language="python", dod_type="new_cog")
+    assert "PY-001" in result.checked_rule_ids
+    assert "PY-002" in result.checked_rule_ids

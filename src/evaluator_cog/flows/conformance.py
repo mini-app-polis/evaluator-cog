@@ -204,7 +204,7 @@ def run_conformance_check(
 
     # Deterministic checks
     try:
-        deterministic_findings = run_all_checks(
+        result = run_all_checks(
             repo_path,
             language=language,
             service_type=service_type,
@@ -213,20 +213,18 @@ def run_conformance_check(
             check_exceptions=check_exceptions,
             exception_reasons=exception_reasons,
         )
+        deterministic_findings = result.findings
+        checked_rule_ids = result.checked_rule_ids
     except Exception as exc:
         log.exception("conformance: run_all_checks failed for %s: %s", repo_id, exc)
         deterministic_findings = []
+        checked_rule_ids = set()
 
     prefect_log.info(
         "conformance: %d deterministic findings for %s",
         len(deterministic_findings),
         repo_id,
     )
-    deterministic_rule_ids = {
-        str(f.get("rule_id") or "")
-        for f in deterministic_findings
-        if f.get("rule_id") != "CHECKER"
-    }
 
     # LLM soft-rule assessment
     llm_findings: list[dict[str, Any]] = []
@@ -241,7 +239,7 @@ def run_conformance_check(
                 standards_version=standards_version,
                 deterministic_findings=deterministic_findings,
                 standards_rules=standards_rules or [],
-                deterministic_rule_ids=deterministic_rule_ids,
+                checked_rule_ids=checked_rule_ids,
                 check_exceptions=check_exceptions,
                 exception_reasons=exception_reasons,
             )
