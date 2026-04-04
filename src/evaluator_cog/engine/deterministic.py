@@ -565,19 +565,38 @@ def run_all_checks(
     language: str = "python",
     service_type: str = "worker",
     cog_subtype: str | None = None,
+    dod_type: str | None = None,
     check_exceptions: list[str] | None = None,
+    exception_reasons: dict[str, str] | None = None,
 ) -> list[Finding]:
     """Run deterministic checks against a repo and return combined findings."""
-    is_python = language == "python"
-    is_library = service_type == "library"
-    is_pipeline_cog = (
+    is_python = language == "python" or dod_type in (
+        "new_cog",
+        "new_fastapi_service",
+    )
+    is_library = service_type == "library" or dod_type is None
+    is_pipeline_cog = dod_type == "new_cog" or (
         is_python and service_type == "worker" and cog_subtype == "pipeline"
     )
+    is_fastapi = dod_type == "new_fastapi_service"
+    is_frontend = dod_type in ("new_frontend_site", "new_react_app")
 
     _exceptions = frozenset(check_exceptions or [])
+    _exception_reasons = exception_reasons or {}
 
     def _run(check_fn, rule_id: str | None = None) -> None:
         if rule_id and rule_id in _exceptions:
+            reason = _exception_reasons.get(rule_id, "")
+            if reason:
+                findings.append(
+                    _finding(
+                        rule_id,
+                        "INFO",
+                        "structural_conformance",
+                        f"Skipped: {reason}",
+                        "",
+                    )
+                )
             return
         try:
             findings.extend(check_fn(repo_path))
@@ -601,7 +620,7 @@ def run_all_checks(
     if not is_library:
         _run(check_env_example, "DOC-004")
 
-    if is_python:
+    if is_python and not is_frontend:
         _run(check_pre_commit, "PY-008")
         _run(check_src_layout, "PY-005")
         _run(check_no_setup_py, "PY-007")
@@ -619,7 +638,7 @@ def run_all_checks(
             )
         _run(check_no_print_statements, "CD-003")
 
-    if is_python and not is_library:
+    if (is_python or is_fastapi) and not is_library and not is_frontend:
         _run(check_common_python_utils_dep, "PY-006")
 
     _run(check_no_hardcoded_urls, "FE-007")

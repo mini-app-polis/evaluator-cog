@@ -151,12 +151,21 @@ def test_run_all_checks_never_raises() -> None:
     assert isinstance(findings, list)
 
 
-def test_run_all_checks_respects_check_exceptions() -> None:
+def test_run_all_checks_structured_exception_emits_info() -> None:
+    """Structured check_exceptions with reasons should emit INFO findings."""
     repo = _make_repo({})
-    findings = run_all_checks(repo, check_exceptions=["DOC-001"])
-    rule_ids = [f["rule_id"] for f in findings]
-    assert "DOC-001" not in rule_ids
-    assert "DOC-003" in rule_ids
+    findings = run_all_checks(
+        repo,
+        check_exceptions=["DOC-001"],
+        exception_reasons={"DOC-001": "standards repo — no service entry point"},
+        dod_type="new_cog",
+    )
+    assert "DOC-001" not in [f["rule_id"] for f in findings if f["severity"] != "INFO"]
+    info_findings = [
+        f for f in findings if f["rule_id"] == "DOC-001" and f["severity"] == "INFO"
+    ]
+    assert len(info_findings) == 1
+    assert "standards repo" in info_findings[0]["finding"]
 
 
 def test_run_all_checks_non_python_skips_python_rules() -> None:
@@ -185,9 +194,25 @@ def test_run_all_checks_pipeline_tests_require_pipeline_subtype() -> None:
         service_type="worker",
         language="python",
         cog_subtype="pipeline",
+        dod_type="new_cog",
     )
     pipeline_rule_ids = [f["rule_id"] for f in findings_pipeline]
     assert "TEST-001" in pipeline_rule_ids
+
+
+def test_run_all_checks_skips_python_checks_for_frontend() -> None:
+    """Frontend dod_type should not trigger Python-specific checks."""
+    repo = _make_repo({})
+    findings = run_all_checks(
+        repo,
+        language="typescript",
+        service_type="site",
+        dod_type="new_frontend_site",
+    )
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "PY-005" not in rule_ids
+    assert "PY-006" not in rule_ids
+    assert "PY-008" not in rule_ids
 
 
 def test_check_test_structure_no_test003_when_tests_mention_error(

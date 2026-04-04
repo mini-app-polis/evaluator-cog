@@ -173,11 +173,13 @@ def build_conformance_prompt(
     *,
     repo_id: str,
     service_type: str,
+    dod_type: str | None = None,
     language: str,
     standards_version: str,
     deterministic_findings: list[dict],
     standards_rules: list[dict],
     check_exceptions: list[str] | None = None,
+    exception_reasons: dict[str, str] | None = None,
 ) -> str:
     """Build the LLM prompt for soft-rule conformance assessment."""
     findings_summary = (
@@ -197,14 +199,23 @@ def build_conformance_prompt(
         or "(none)"
     )
 
-    exc_line = ", ".join(check_exceptions or []) or "none"
+    if check_exceptions:
+        exc_lines = []
+        for rule_id in check_exceptions:
+            reason = (exception_reasons or {}).get(rule_id, "")
+            exc_lines.append(f"  - {rule_id}: {reason}" if reason else f"  - {rule_id}")
+        exc_block = "\n".join(exc_lines)
+    else:
+        exc_block = "  (none)"
 
     return f"""You are reviewing a MiniAppPolis ecosystem repo against engineering standards v{standards_version}.
 
 Repo: {repo_id}
 Service type: {service_type}
+DoD type: {dod_type or "unknown"}
 Language: {language}
-Check exceptions (do not flag these rule IDs): {exc_line}
+Check exceptions (do not flag these rule IDs):
+{exc_block}
 
 STANDARDS RULES FOR THIS SERVICE TYPE:
 The following are the checkable rules that apply to this repo type, with

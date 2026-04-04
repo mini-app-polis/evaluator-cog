@@ -38,20 +38,6 @@ _ECOSYSTEM_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosyste
 _INDEX_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml"
 _STANDARDS_BASE_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/standards"
 
-_DOMAINS_BY_TYPE = {
-    "worker": [
-        "python",
-        "testing",
-        "pipeline",
-        "delivery",
-        "documentation",
-        "principles",
-    ],
-    "api": ["python", "testing", "api", "delivery", "documentation", "principles"],
-    "library": ["python", "testing", "delivery", "documentation"],
-    "site": ["frontend", "delivery", "documentation"],
-}
-
 
 def _fetch_yaml(url: str) -> dict:
     """Fetch and parse a YAML file from a URL. Never raises — returns {} on failure."""
@@ -89,20 +75,37 @@ def _get_active_repos(ecosystem: dict) -> list[dict]:
     return [s for s in services if s.get("status") == "active"]
 
 
-def _fetch_standards_for_type(service_type: str) -> list[dict]:
+def _fetch_standards_for_service(service: dict) -> list[dict]:
     """
-    Fetch checkable rules from relevant standards domains for this service type.
+    Fetch checkable rules from all standards domains, filtered by
+    the service's dod_type using the applies_to field on each rule.
     Returns a list of rule dicts with id, title, severity, check_notes.
     Never raises — returns [] on failure.
     """
-    domains = _DOMAINS_BY_TYPE.get(service_type, _DOMAINS_BY_TYPE["worker"])
-    rules = []
+    dod_type = service.get("dod_type")
+    all_rules = []
+    domains = [
+        "python",
+        "testing",
+        "api",
+        "pipeline",
+        "frontend",
+        "delivery",
+        "documentation",
+        "evaluation",
+        "principles",
+        "cross-stack",
+    ]
     for domain in domains:
         url = f"{_STANDARDS_BASE_URL}/{domain}.yaml"
         data = _fetch_yaml(url)
         for rule in data.get("standards", []):
-            if rule.get("checkable"):
-                rules.append(
+            if not rule.get("checkable"):
+                continue
+            applies_to = rule.get("applies_to", [])
+            # "all" applies to every service type
+            if "all" in applies_to or dod_type in applies_to:
+                all_rules.append(
                     {
                         "id": rule.get("id", ""),
                         "title": rule.get("title", ""),
@@ -110,7 +113,33 @@ def _fetch_standards_for_type(service_type: str) -> list[dict]:
                         "check_notes": rule.get("check_notes", "").strip(),
                     }
                 )
-    return rules
+    return all_rules
+
+
+def _parse_check_exceptions(raw: list) -> tuple[list[str], dict[str, str]]:
+    """
+    Parse check_exceptions from ecosystem.yaml.
+    Supports both legacy flat strings and new structured {rule, reason} objects.
+    Returns:
+      - exception_ids: list of rule ID strings (for backwards-compat filtering)
+      - exception_reasons: dict of rule_id -> reason string (for finding output)
+    """
+    exception_ids = []
+    exception_reasons = {}
+    for item in raw or []:
+        if isinstance(item, str):
+            # Legacy format — plain rule ID string
+            rule_id = item.split("#")[0].strip()
+            exception_ids.append(rule_id)
+        elif isinstance(item, dict):
+            # New structured format
+            rule_id = item.get("rule", "").strip()
+            reason = item.get("reason", "").strip()
+            if rule_id:
+                exception_ids.append(rule_id)
+                if reason:
+                    exception_reasons[rule_id] = reason
+    return exception_ids, exception_reasons
 
 
 def _download_repo(repo_id: str, tmp_dir: str) -> Path | None:
@@ -159,9 +188,11 @@ def run_conformance_check(
     repo_path: Path,
     standards_version: str,
     service_type: str = "worker",
+    dod_type: str | None = None,
     language: str = "python",
     cog_subtype: str | None = None,
     check_exceptions: list[str] | None = None,
+    exception_reasons: dict[str, str] | None = None,
     standards_rules: list[dict] | None = None,
     run_id: str = "conformance",
 ) -> list[dict[str, Any]]:
@@ -177,8 +208,10 @@ def run_conformance_check(
             repo_path,
             language=language,
             service_type=service_type,
+            dod_type=dod_type,
             cog_subtype=cog_subtype,
             check_exceptions=check_exceptions,
+            exception_reasons=exception_reasons,
         )
     except Exception as exc:
         log.exception("conformance: run_all_checks failed for %s: %s", repo_id, exc)
@@ -198,11 +231,13 @@ def run_conformance_check(
             prompt = build_conformance_prompt(
                 repo_id=repo_id,
                 service_type=service_type,
+                dod_type=dod_type,
                 language=language,
                 standards_version=standards_version,
                 deterministic_findings=deterministic_findings,
                 standards_rules=standards_rules or [],
                 check_exceptions=check_exceptions,
+                exception_reasons=exception_reasons,
             )
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
             raw = _anthropic_messages_create(
@@ -307,11 +342,10 @@ def conformance_check_flow() -> None:
             service_type = service.get("type", "worker")
             language = str(service.get("language") or "python")
             cog_subtype = str(service.get("cog_subtype") or "").strip() or None
+            dod_type = service.get("dod_type")
             raw_exc = service.get("check_exceptions") or []
-            check_exceptions = (
-                [str(x) for x in raw_exc] if isinstance(raw_exc, list) else []
-            )
-            standards_rules = _fetch_standards_for_type(service_type)
+            check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
+            standards_rules = _fetch_standards_for_service(service)
 
             try:
                 findings = run_conformance_check(
@@ -319,9 +353,11 @@ def conformance_check_flow() -> None:
                     repo_path=repo_path,
                     standards_version=standards_version,
                     service_type=service_type,
+                    dod_type=dod_type,
                     language=language,
                     cog_subtype=cog_subtype,
                     check_exceptions=check_exceptions,
+                    exception_reasons=exception_reasons,
                     standards_rules=standards_rules,
                     run_id=run_id,
                 )
