@@ -47,6 +47,7 @@ def _finding(
 
 def check_readme(repo_path: Path) -> list[Finding]:
     """DOC-001: README.md is mandatory."""
+    CHECK_ID = "DOC-001"
     findings = []
     if not (repo_path / "README.md").exists():
         findings.append(
@@ -63,6 +64,7 @@ def check_readme(repo_path: Path) -> list[Finding]:
 
 def check_changelog(repo_path: Path) -> list[Finding]:
     """DOC-003: CHANGELOG.md required."""
+    CHECK_ID = "DOC-003"
     findings = []
     if not (repo_path / "CHANGELOG.md").exists():
         findings.append(
@@ -79,6 +81,7 @@ def check_changelog(repo_path: Path) -> list[Finding]:
 
 def check_env_example(repo_path: Path) -> list[Finding]:
     """DOC-004: .env.example is required."""
+    CHECK_ID = "DOC-004"
     findings = []
     # Check root first, then common monorepo locations
     candidates = [
@@ -104,6 +107,7 @@ def check_env_example(repo_path: Path) -> list[Finding]:
 
 def check_pre_commit(repo_path: Path) -> list[Finding]:
     """PY-008: pre-commit configured."""
+    CHECK_ID = "PY-008"
     findings = []
     if not (repo_path / ".pre-commit-config.yaml").exists():
         findings.append(
@@ -120,6 +124,7 @@ def check_pre_commit(repo_path: Path) -> list[Finding]:
 
 def check_releaserc(repo_path: Path) -> list[Finding]:
     """VER-003: semantic-release on all repos."""
+    CHECK_ID = "VER-003"
     findings = []
     if not (repo_path / ".releaserc.json").exists():
         findings.append(
@@ -136,6 +141,7 @@ def check_releaserc(repo_path: Path) -> list[Finding]:
 
 def check_src_layout(repo_path: Path) -> list[Finding]:
     """PY-005: src layout required."""
+    CHECK_ID = "PY-005"
     findings = []
     if not (repo_path / "src").is_dir():
         findings.append(
@@ -152,6 +158,7 @@ def check_src_layout(repo_path: Path) -> list[Finding]:
 
 def check_no_setup_py(repo_path: Path) -> list[Finding]:
     """PY-007: pyproject.toml as single source of truth."""
+    CHECK_ID = "PY-007"
     findings = []
     for bad in ("setup.py", "requirements.txt"):
         if (repo_path / bad).exists():
@@ -172,6 +179,7 @@ def check_no_setup_py(repo_path: Path) -> list[Finding]:
 
 def check_common_python_utils_dep(repo_path: Path) -> list[Finding]:
     """PY-006: common-python-utils declared as dependency."""
+    CHECK_ID = "PY-006"
     findings = []
     pyproject = repo_path / "pyproject.toml"
     if not pyproject.exists():
@@ -197,6 +205,7 @@ def check_pyproject(
     Runs all pyproject.toml checks in one pass.
     Covers: PY-001, PY-002, PY-003, PY-009, PY-010, CD-002.
     """
+    CHECK_ID = "PY-001"
     findings = []
     _exc = exceptions or frozenset()
     pyproject = repo_path / "pyproject.toml"
@@ -295,6 +304,7 @@ def check_pyproject(
 
 def check_pytest_coverage_in_ci(repo_path: Path) -> list[Finding]:
     """TEST-006: pytest coverage measured in CI."""
+    CHECK_ID = "TEST-006"
     findings = []
     ci = repo_path / ".github" / "workflows" / "ci.yml"
     if not ci.exists():
@@ -316,14 +326,17 @@ def check_pytest_coverage_in_ci(repo_path: Path) -> list[Finding]:
 def check_ci(
     repo_path: Path,
     exceptions: frozenset[str] | None = None,
+    monorepo_root: Path | None = None,
 ) -> list[Finding]:
     """
     Runs all CI checks in one pass.
     Covers: VER-003, VER-005, VER-006.
     """
+    CHECK_ID = "VER-003"
     findings = []
     _exc = exceptions or frozenset()
-    ci = repo_path / ".github" / "workflows" / "ci.yml"
+    ci_root = monorepo_root or repo_path
+    ci = ci_root / ".github" / "workflows" / "ci.yml"
     if not ci.exists():
         findings.append(
             _finding(
@@ -385,6 +398,7 @@ def check_ci(
 
 def check_no_print_statements(repo_path: Path) -> list[Finding]:
     """CD-003: No print() statements in production code paths."""
+    CHECK_ID = "CD-003"
     import ast
 
     findings = []
@@ -418,6 +432,7 @@ def check_no_print_statements(repo_path: Path) -> list[Finding]:
 
 def check_no_hardcoded_urls(repo_path: Path) -> list[Finding]:
     """FE-007: No hardcoded API URLs in source."""
+    CHECK_ID = "FE-007"
     import re
 
     findings = []
@@ -446,6 +461,7 @@ def check_no_hardcoded_urls(repo_path: Path) -> list[Finding]:
 
 def check_naming_conventions(repo_path: Path) -> list[Finding]:
     """PY-011: Naming conventions — Python."""
+    CHECK_ID = "PY-011"
     import re
 
     findings = []
@@ -507,6 +523,7 @@ def check_naming_conventions(repo_path: Path) -> list[Finding]:
 
 def check_failed_prefix(repo_path: Path) -> list[Finding]:
     """PY-012: FAILED_ prefix for failed inputs."""
+    CHECK_ID = "PY-012"
     findings = []
     src = repo_path / "src"
     if not src.is_dir():
@@ -533,6 +550,7 @@ def check_failed_prefix(repo_path: Path) -> list[Finding]:
 
 def check_duplicate_prefix(repo_path: Path) -> list[Finding]:
     """PY-013: possible_duplicate_ prefix for duplicates."""
+    CHECK_ID = "PY-013"
     findings = []
     src = repo_path / "src"
     if not src.is_dir():
@@ -558,6 +576,7 @@ def check_duplicate_prefix(repo_path: Path) -> list[Finding]:
 
 def check_finally_cleanup(repo_path: Path) -> list[Finding]:
     """PY-014: finally for temp file cleanup."""
+    CHECK_ID = "PY-014"
     import ast
 
     findings = []
@@ -615,6 +634,7 @@ def check_finally_cleanup(repo_path: Path) -> list[Finding]:
 
 def check_readme_io(repo_path: Path) -> list[Finding]:
     """DOC-002: README describes inputs and outputs."""
+    CHECK_ID = "DOC-002"
     findings = []
     readme = repo_path / "README.md"
     if not readme.exists():
@@ -647,6 +667,7 @@ def check_readme_io(repo_path: Path) -> list[Finding]:
 
 def check_no_dead_code(repo_path: Path) -> list[Finding]:
     """DOC-008: No dead code."""
+    CHECK_ID = "DOC-008"
     import re
 
     findings = []
@@ -690,6 +711,7 @@ def check_no_dead_code(repo_path: Path) -> list[Finding]:
 
 def check_split_package_identity(repo_path: Path) -> list[Finding]:
     """DOC-009: Split package identity documented at entry point."""
+    CHECK_ID = "DOC-009"
     import re
 
     findings = []
@@ -737,6 +759,7 @@ def check_readme_running_locally(
     dod_type: str | None = None,
 ) -> list[Finding]:
     """DOC-013: README Running locally section is complete."""
+    CHECK_ID = "DOC-013"
     findings = []
     readme = repo_path / "README.md"
     if not readme.exists():
@@ -784,6 +807,7 @@ def check_healthchecks_integration(
     cog_subtype: str | None = None,
 ) -> list[Finding]:
     """CD-007: Healthchecks.io for trigger cogs."""
+    CHECK_ID = "CD-007"
     findings = []
     if cog_subtype != "trigger":
         return findings
@@ -811,6 +835,7 @@ def check_healthchecks_integration(
 
 def check_structured_logging(repo_path: Path) -> list[Finding]:
     """CD-009: Structured logging via shared library."""
+    CHECK_ID = "CD-009"
     findings = []
     src = repo_path / "src"
     if not src.is_dir():
@@ -851,6 +876,7 @@ def check_structured_logging(repo_path: Path) -> list[Finding]:
 
 def check_no_hardcoded_secrets(repo_path: Path) -> list[Finding]:
     """CD-011: Doppler as canonical secret store."""
+    CHECK_ID = "CD-011"
     import re
 
     findings = []
@@ -907,6 +933,7 @@ def check_no_hardcoded_secrets(repo_path: Path) -> list[Finding]:
 
 def check_no_manual_changelog(repo_path: Path) -> list[Finding]:
     """VER-004: Never manually edit version files or CHANGELOG."""
+    CHECK_ID = "VER-004"
     import re
 
     findings = []
@@ -933,6 +960,7 @@ def check_no_manual_changelog(repo_path: Path) -> list[Finding]:
 
 def check_astro_framework(repo_path: Path) -> list[Finding]:
     """FE-001: Astro for all static sites."""
+    CHECK_ID = "FE-001"
     findings = []
     pkg = repo_path / "package.json"
     pkg_text = pkg.read_text().lower() if pkg.exists() else ""
@@ -954,6 +982,7 @@ def check_astro_framework(repo_path: Path) -> list[Finding]:
 
 def check_vite_react_ts(repo_path: Path) -> list[Finding]:
     """FE-002: Vite + React + TypeScript for web apps."""
+    CHECK_ID = "FE-002"
     findings = []
     pkg = repo_path / "package.json"
     pkg_text = pkg.read_text().lower() if pkg.exists() else ""
@@ -985,6 +1014,7 @@ def check_vite_react_ts(repo_path: Path) -> list[Finding]:
 
 def check_tailwind(repo_path: Path) -> list[Finding]:
     """FE-003: Tailwind CSS for styling."""
+    CHECK_ID = "FE-003"
     findings = []
     pkg = repo_path / "package.json"
     pkg_text = pkg.read_text().lower() if pkg.exists() else ""
@@ -1029,6 +1059,7 @@ def check_tailwind(repo_path: Path) -> list[Finding]:
 
 def check_shadcn(repo_path: Path) -> list[Finding]:
     """FE-004: shadcn/ui for components."""
+    CHECK_ID = "FE-004"
     findings = []
     pkg = repo_path / "package.json"
     pkg_text = pkg.read_text().lower() if pkg.exists() else ""
@@ -1049,6 +1080,7 @@ def check_shadcn(repo_path: Path) -> list[Finding]:
 
 def check_react_hook_form_zod(repo_path: Path) -> list[Finding]:
     """FE-005: React Hook Form + Zod for forms and validation."""
+    CHECK_ID = "FE-005"
     findings = []
     pkg = repo_path / "package.json"
     pkg_text = pkg.read_text().lower() if pkg.exists() else ""
@@ -1076,6 +1108,7 @@ def check_react_hook_form_zod(repo_path: Path) -> list[Finding]:
 
 def check_retry_logic(repo_path: Path) -> list[Finding]:
     """PIPE-007: Retry logic on external API calls."""
+    CHECK_ID = "PIPE-007"
     import ast
 
     findings = []
@@ -1135,6 +1168,7 @@ def check_retry_logic(repo_path: Path) -> list[Finding]:
 
 def check_no_retired_trigger_patterns(repo_path: Path) -> list[Finding]:
     """PIPE-008: watcher-cog as canonical Drive trigger."""
+    CHECK_ID = "PIPE-008"
     findings = []
     retired_patterns = (
         "repository_dispatch",
@@ -1166,6 +1200,7 @@ def check_no_retired_trigger_patterns(repo_path: Path) -> list[Finding]:
 
 def check_evaluation_step(repo_path: Path) -> list[Finding]:
     """PIPE-009: AI evaluation step as final pipeline task."""
+    CHECK_ID = "PIPE-009"
     findings = []
     if repo_path.name == "evaluator-cog":
         return findings
@@ -1194,6 +1229,7 @@ def check_evaluation_step(repo_path: Path) -> list[Finding]:
 
 def check_respx_for_http_mocking(repo_path: Path) -> list[Finding]:
     """TEST-007: respx/httpx for HTTP mocking — no real external calls."""
+    CHECK_ID = "TEST-007"
     findings = []
     pyproject = repo_path / "pyproject.toml"
     py_text = pyproject.read_text().lower() if pyproject.exists() else ""
@@ -1238,6 +1274,7 @@ def check_respx_for_http_mocking(repo_path: Path) -> list[Finding]:
 
 def check_mypy_in_ci(repo_path: Path) -> list[Finding]:
     """TEST-012: mypy must run in CI if [tool.mypy] is declared."""
+    CHECK_ID = "TEST-012"
     findings = []
     pyproject = repo_path / "pyproject.toml"
     if not pyproject.exists():
@@ -1265,9 +1302,12 @@ def check_mypy_in_ci(repo_path: Path) -> list[Finding]:
 
 
 def check_shared_library_used(
-    repo_path: Path, language: str = "python"
+    repo_path: Path,
+    language: str = "python",
+    workspace_package_json_text: str | None = None,
 ) -> list[Finding]:
     """XSTACK-001: Use shared library — do not reimplement shared behaviors."""
+    CHECK_ID = "XSTACK-001"
     findings = []
     if language == "python":
         pyproject = repo_path / "pyproject.toml"
@@ -1304,7 +1344,9 @@ def check_shared_library_used(
             )
     else:
         pkg = repo_path / "package.json"
-        pkg_text = pkg.read_text().lower() if pkg.exists() else ""
+        per_app_text = pkg.read_text().lower() if pkg.exists() else ""
+        # Workspace deps satisfy XSTACK-001 per MONO-001
+        pkg_text = per_app_text + (workspace_package_json_text or "").lower()
         src = repo_path / "src"
         src_text = (
             "\n".join(
@@ -1342,6 +1384,7 @@ def check_shared_library_used(
 
 def check_standards_freshness(repo_path: Path) -> list[Finding]:
     """PRIN-009: Standards are a living document."""
+    CHECK_ID = "PRIN-009"
     import datetime
 
     findings = []
@@ -1386,6 +1429,7 @@ def check_pipeline_cog_tests(
     exceptions: frozenset[str] | None = None,
 ) -> list[Finding]:
     """TEST-001, TEST-002, TEST-004: pipeline cog critical path tests."""
+    CHECK_ID = "TEST-001"
     _exc = exceptions or frozenset()
     findings = []
     tests_dir = repo_path / "tests"
@@ -1450,6 +1494,7 @@ def check_test_structure(
     exceptions: frozenset[str] | None = None,
 ) -> list[Finding]:
     """TEST-003, TEST-005: test directory checks."""
+    CHECK_ID = "TEST-003"
     _exc = exceptions or frozenset()
     findings = []
     tests_dir = repo_path / "tests"
@@ -1504,6 +1549,7 @@ def check_test_structure(
 
 def check_prefect_serve_pattern(repo_path: Path) -> list[Finding]:
     """CD-015: Prefect serve() — no work pool."""
+    CHECK_ID = "CD-015"
     findings = []
     src = repo_path / "src"
     if not src.is_dir():
@@ -1545,6 +1591,7 @@ def check_prefect_serve_pattern(repo_path: Path) -> list[Finding]:
 
 def check_releaserc_assets(repo_path: Path) -> list[Finding]:
     """VER-008: .releaserc.json assets must include all version-managed files."""
+    CHECK_ID = "VER-008"
     import json as _json
 
     findings = []
@@ -1599,10 +1646,15 @@ def check_releaserc_assets(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_pnpm_lockfile(repo_path: Path) -> list[Finding]:
+def check_pnpm_lockfile(
+    repo_path: Path,
+    monorepo_root: Path | None = None,
+) -> list[Finding]:
     """XSTACK-003: pnpm for all TypeScript projects."""
+    CHECK_ID = "XSTACK-003"
     findings = []
-    if (repo_path / "package-lock.json").exists():
+    check_root = monorepo_root or repo_path
+    if (check_root / "package-lock.json").exists():
         findings.append(
             _finding(
                 "XSTACK-003",
@@ -1612,7 +1664,7 @@ def check_pnpm_lockfile(repo_path: Path) -> list[Finding]:
                 "Migrate to pnpm: remove package-lock.json, run pnpm install, commit pnpm-lock.yaml.",
             )
         )
-    if (repo_path / "yarn.lock").exists():
+    if (check_root / "yarn.lock").exists():
         findings.append(
             _finding(
                 "XSTACK-003",
@@ -1622,7 +1674,7 @@ def check_pnpm_lockfile(repo_path: Path) -> list[Finding]:
                 "Migrate to pnpm: remove yarn.lock, run pnpm install, commit pnpm-lock.yaml.",
             )
         )
-    if not (repo_path / "pnpm-lock.yaml").exists():
+    if not (check_root / "pnpm-lock.yaml").exists():
         findings.append(
             _finding(
                 "XSTACK-003",
@@ -1646,6 +1698,8 @@ def run_all_checks(
     dod_type: str | None = None,
     check_exceptions: list[str] | None = None,
     exception_reasons: dict[str, str] | None = None,
+    monorepo_root: Path | None = None,
+    workspace_package_json_text: str | None = None,
 ) -> CheckResult:
     """Run deterministic checks against a repo and return combined findings."""
     is_python = language == "python" or dod_type in (
@@ -1743,7 +1797,13 @@ def run_all_checks(
     _mark_checked("XSTACK-001")
     if "XSTACK-001" not in _exceptions:
         if not (language == "typescript" and dod_type == "new_frontend_site"):
-            findings.extend(check_shared_library_used(repo_path, language=language))
+            findings.extend(
+                check_shared_library_used(
+                    repo_path,
+                    language=language,
+                    workspace_package_json_text=workspace_package_json_text,
+                )
+            )
     else:
         reason = _exception_reasons.get("XSTACK-001", "")
         if reason:
@@ -1763,7 +1823,13 @@ def run_all_checks(
 
     _mark_checked("VER-003", "VER-005", "VER-006")
     try:
-        findings.extend(check_ci(repo_path, exceptions=_exceptions))
+        findings.extend(
+            check_ci(
+                repo_path,
+                exceptions=_exceptions,
+                monorepo_root=monorepo_root,
+            )
+        )
     except Exception as exc:
         findings.append(
             _finding(
@@ -1830,6 +1896,10 @@ def run_all_checks(
     _run(check_releaserc_assets, "VER-008")
 
     if dod_type in ("new_hono_service", "new_react_app"):
-        _run(check_pnpm_lockfile, "XSTACK-003")
+
+        def _pnpm_lock_check(p: Path) -> list[Finding]:
+            return check_pnpm_lockfile(p, monorepo_root=monorepo_root)
+
+        _run(_pnpm_lock_check, "XSTACK-003")
 
     return CheckResult(findings=findings, checked_rule_ids=checked_rule_ids)

@@ -181,6 +181,7 @@ def build_conformance_prompt(
     checked_rule_ids: set[str] | None = None,
     check_exceptions: list[str] | None = None,
     exception_reasons: dict[str, str] | None = None,
+    monorepo_context: dict | None = None,
 ) -> str:
     """Build the LLM prompt for soft-rule conformance assessment."""
     findings_summary = (
@@ -223,6 +224,34 @@ def build_conformance_prompt(
     else:
         exc_block = "  (none)"
 
+    if monorepo_context:
+        workspace_deps = ", ".join(monorepo_context.get("workspace_deps", [])) or "none"
+        sibling_ids = (
+            ", ".join(
+                str(a.get("service_id") or a.get("id") or "")
+                for a in monorepo_context.get("sibling_apps", [])
+                if (a.get("service_id") or a.get("id")) != repo_id
+            )
+            or "none"
+        )
+        monorepo_block = f"""
+Monorepo context:
+  This service is an app within the '{monorepo_context.get("monorepo_id")}' monorepo.
+  Package manager: {monorepo_context.get("package_manager", "pnpm")}
+  Workspace-level deps (satisfy XSTACK-001 per MONO-001): {workspace_deps}
+  Sibling apps: {sibling_ids}
+
+  IMPORTANT: Do not flag XSTACK-001 for absence of shared library in this app's package.json
+  if it is present in the workspace_deps list above — workspace root deps satisfy the
+  requirement per MONO-001. Only flag XSTACK-001 if the dep is absent from BOTH the workspace
+  root AND this app's own package.json.
+
+  Do not flag CI rules (VER-003, VER-005, VER-006) for absence in this app subdirectory if
+  the CI config exists at the monorepo root — root CI satisfies these rules per MONO-002.
+"""
+    else:
+        monorepo_block = ""
+
     return f"""You are reviewing a MiniAppPolis ecosystem repo against engineering standards v{standards_version}.
 
 Repo: {repo_id}
@@ -231,7 +260,7 @@ DoD type: {dod_type or "unknown"}
 Language: {language}
 Check exceptions (do not flag these rule IDs):
 {exc_block}
-
+{monorepo_block}
 STANDARDS RULES FOR THIS SERVICE TYPE:
 The following are the checkable rules that apply to this repo type, with
 instructions for how to evaluate them:

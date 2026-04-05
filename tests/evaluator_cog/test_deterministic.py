@@ -46,6 +46,7 @@ from evaluator_cog.engine.deterministic import (
     check_vite_react_ts,
     run_all_checks,
 )
+from evaluator_cog.flows.conformance import _deduplicate_sibling_findings
 
 
 def _make_repo(files: dict[str, str]) -> Path:
@@ -1001,3 +1002,92 @@ def test_check_split_package_identity_flags_undocumented_split(tmp_path: Path) -
     )
     findings = check_split_package_identity(tmp_path)
     assert any(f["rule_id"] == "DOC-009" for f in findings)
+
+
+# ── Monorepo-aware check tests ─────────────────────────────────────────────
+
+
+def test_check_shared_library_used_ts_workspace_dep_satisfies(tmp_path: Path) -> None:
+    """XSTACK-001 not flagged when dep is in workspace root package.json."""
+    app_pkg = tmp_path / "package.json"
+    app_pkg.write_text('{"name": "app", "dependencies": {}}')
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "index.ts").write_text(
+        'import { createLogger } from "common-typescript-utils"'
+    )
+
+    workspace_text = '{"dependencies": {"common-typescript-utils": "^1.0.0"}}'
+
+    findings = check_shared_library_used(
+        tmp_path,
+        language="typescript",
+        workspace_package_json_text=workspace_text,
+    )
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "XSTACK-001" not in rule_ids, (
+        "XSTACK-001 should not be flagged when dep is in workspace root (MONO-001)"
+    )
+
+
+def test_check_shared_library_used_ts_flags_when_absent_everywhere(
+    tmp_path: Path,
+) -> None:
+    """XSTACK-001 flagged when dep absent from both app and workspace."""
+    app_pkg = tmp_path / "package.json"
+    app_pkg.write_text('{"name": "app", "dependencies": {}}')
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "index.ts").write_text("// no shared lib import")
+
+    findings = check_shared_library_used(
+        tmp_path,
+        language="typescript",
+        workspace_package_json_text='{"dependencies": {}}',
+    )
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "XSTACK-001" in rule_ids
+
+
+def test_check_pnpm_lockfile_uses_monorepo_root(tmp_path: Path) -> None:
+    """XSTACK-003 checks monorepo root when monorepo_root provided."""
+    app_dir = tmp_path / "apps" / "api"
+    app_dir.mkdir(parents=True)
+
+    (tmp_path / "pnpm-lock.yaml").write_text("")
+
+    findings = check_pnpm_lockfile(app_dir, monorepo_root=tmp_path)
+    assert not any("pnpm-lock.yaml not found" in f.get("finding", "") for f in findings)
+
+
+def test_deduplication_collapses_sibling_findings() -> None:
+    """Identical findings across siblings are collapsed into primary."""
+    shared_finding = {
+        "rule_id": "XSTACK-001",
+        "severity": "ERROR",
+        "dimension": "cross_repo_coherence",
+        "finding": "common-typescript-utils is not declared for this TypeScript service.",
+        "suggestion": "Depend on common-typescript-utils.",
+    }
+    unique_finding = {
+        "rule_id": "FE-002",
+        "severity": "ERROR",
+        "dimension": "structural_conformance",
+        "finding": "TypeScript setup missing for React web app.",
+        "suggestion": "Add TypeScript dependency.",
+    }
+
+    findings_by_service = {
+        "deejaytools-com-api": [dict(shared_finding)],
+        "deejaytools-com-app": [dict(shared_finding), dict(unique_finding)],
+    }
+
+    result = _deduplicate_sibling_findings(findings_by_service)
+
+    primary = result["deejaytools-com-api"]
+    assert len(primary) == 1
+    assert "also affects deejaytools-com-app" in primary[0]["finding"]
+
+    sibling = result["deejaytools-com-app"]
+    assert len(sibling) == 1
+    assert sibling[0]["rule_id"] == "FE-002"

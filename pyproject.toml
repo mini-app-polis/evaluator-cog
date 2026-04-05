@@ -43,6 +43,9 @@ src = ["src", "tests"]
 select = ["E","W","F","I","B","C4","UP","ARG","SIM"]
 ignore = ["E501","B008","ARG001"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/evaluator_cog/engine/deterministic.py" = ["F841"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["evaluator_cog"]
 

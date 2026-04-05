@@ -75,6 +75,28 @@ def _get_active_repos(ecosystem: dict) -> list[dict]:
     return [s for s in services if s.get("status") == "active"]
 
 
+def _get_monorepos(ecosystem: dict) -> dict[str, dict]:
+    """
+    Return a dict of {monorepo_id: monorepo_record} from ecosystem.yaml.
+    Keys match the `monorepo` field on service entries.
+    """
+    return {m["id"]: m for m in ecosystem.get("monorepos", []) if m.get("id")}
+
+
+def _read_workspace_package_json(monorepo_root: Path) -> str:
+    """
+    Read the workspace root package.json text for XSTACK-001 monorepo check.
+    Returns empty string if not found.
+    """
+    pkg = monorepo_root / "package.json"
+    if pkg.exists():
+        try:
+            return pkg.read_text().lower()
+        except Exception:
+            pass
+    return ""
+
+
 def _fetch_standards_for_service(service: dict) -> list[dict]:
     """
     Fetch checkable rules from all standards domains, filtered by
@@ -95,6 +117,7 @@ def _fetch_standards_for_service(service: dict) -> list[dict]:
         "evaluation",
         "principles",
         "cross-stack",
+        "monorepo",
     ]
     for domain in domains:
         url = f"{_STANDARDS_BASE_URL}/{domain}.yaml"
@@ -140,6 +163,56 @@ def _parse_check_exceptions(raw: list) -> tuple[list[str], dict[str, str]]:
                 if reason:
                     exception_reasons[rule_id] = reason
     return exception_ids, exception_reasons
+
+
+def _deduplicate_sibling_findings(
+    findings_by_service: dict[str, list[dict]],
+) -> dict[str, list[dict]]:
+    """
+    Given findings keyed by service_id, collapse findings that are identical
+    across siblings (same rule_id + same finding text) into the first sibling's
+    list only, tagged with a note that the sibling shares the same issue.
+
+    This keeps the API payload unchanged — we post to the first sibling's repo
+    with an updated finding text that names the affected sibling, and skip
+    posting the duplicate to the second sibling entirely.
+
+    Example: both deejaytools-com-api and deejaytools-com-app fail XSTACK-001
+    with identical finding text. Result: one finding posted under
+    deejaytools-com-api mentioning deejaytools-com-app, nothing posted under
+    deejaytools-com-app for that rule.
+    """
+    if len(findings_by_service) < 2:
+        return findings_by_service
+
+    service_ids = list(findings_by_service.keys())
+    primary_id = service_ids[0]
+    sibling_ids = service_ids[1:]
+
+    primary_index: dict[tuple[str, str], dict] = {}
+    for f in findings_by_service[primary_id]:
+        key = (str(f.get("rule_id", "")), str(f.get("finding", "")))
+        primary_index[key] = f
+
+    deduplicated = {
+        sid: list(findings) for sid, findings in findings_by_service.items()
+    }
+
+    for sibling_id in sibling_ids:
+        remaining = []
+        for f in findings_by_service[sibling_id]:
+            key = (str(f.get("rule_id", "")), str(f.get("finding", "")))
+            if key in primary_index:
+                primary_f = primary_index[key]
+                existing_finding = primary_f.get("finding", "")
+                tag = f"(also affects {sibling_id})"
+                if tag not in existing_finding:
+                    primary_f["finding"] = existing_finding + f" {tag}"
+            else:
+                remaining.append(f)
+        deduplicated[sibling_id] = remaining
+
+    return deduplicated
 
 
 def _download_repo(repo_id: str, tmp_dir: str) -> Path | None:
@@ -195,10 +268,14 @@ def run_conformance_check(
     exception_reasons: dict[str, str] | None = None,
     standards_rules: list[dict] | None = None,
     run_id: str = "conformance",
+    monorepo_root: Path | None = None,
+    workspace_package_json_text: str | None = None,
+    monorepo_context: dict | None = None,
+    post: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Run deterministic + LLM conformance checks against a cloned repo.
-    Posts findings to api-kaianolevine-com. Never raises.
+    Posts findings to api-kaianolevine-com when post=True. Never raises.
     """
     prefect_log = get_run_logger()
 
@@ -212,6 +289,8 @@ def run_conformance_check(
             cog_subtype=cog_subtype,
             check_exceptions=check_exceptions,
             exception_reasons=exception_reasons,
+            monorepo_root=monorepo_root,
+            workspace_package_json_text=workspace_package_json_text,
         )
         deterministic_findings = result.findings
         checked_rule_ids = result.checked_rule_ids
@@ -242,6 +321,7 @@ def run_conformance_check(
                 checked_rule_ids=checked_rule_ids,
                 check_exceptions=check_exceptions,
                 exception_reasons=exception_reasons,
+                monorepo_context=monorepo_context,
             )
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
             raw = _anthropic_messages_create(
@@ -275,16 +355,58 @@ def run_conformance_check(
             }
         ]
 
-    post_findings(
-        findings=all_findings,
-        run_id=run_id,
-        repo=repo_id,
-        flow_name="conformance",
-        source="conformance_check",
-        standards_version=standards_version,
-    )
+    if post:
+        post_findings(
+            findings=all_findings,
+            run_id=run_id,
+            repo=repo_id,
+            flow_name="conformance",
+            source="conformance_check",
+            standards_version=standards_version,
+        )
 
     return all_findings
+
+
+def _run_standalone_conformance(
+    service: dict,
+    repo_path: Path,
+    standards_version: str,
+    run_id: str,
+    prefect_log: Any,
+) -> None:
+    """Run full conformance for a single cloned service (posts immediately)."""
+    repo_id = service.get("id", "")
+    if not repo_id:
+        return
+    service_type = service.get("type", "worker")
+    _raw_language = str(service.get("language") or "python")
+    language = "typescript" if _raw_language == "astro" else _raw_language
+    cog_subtype = str(service.get("cog_subtype") or "").strip() or None
+    dod_type = service.get("dod_type")
+    raw_exc = service.get("check_exceptions") or []
+    check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
+    standards_rules = _fetch_standards_for_service(service)
+    try:
+        findings = run_conformance_check(
+            repo_id=repo_id,
+            repo_path=repo_path,
+            standards_version=standards_version,
+            service_type=service_type,
+            dod_type=dod_type,
+            language=language,
+            cog_subtype=cog_subtype,
+            check_exceptions=check_exceptions,
+            exception_reasons=exception_reasons,
+            standards_rules=standards_rules,
+            run_id=run_id,
+            post=True,
+        )
+        prefect_log.info(
+            "conformance: %d total findings for %s", len(findings), repo_id
+        )
+    except Exception as exc:
+        prefect_log.warning("conformance: check failed for %s: %s", repo_id, exc)
 
 
 def _build_conformance_run_id(standards_version: str) -> str:
@@ -325,15 +447,22 @@ def conformance_check_flow() -> None:
 
     run_id = _build_conformance_run_id(standards_version)
 
+    monorepos_registry = _get_monorepos(ecosystem)
+
+    standalone_services = [s for s in active_repos if not s.get("monorepo")]
+    monorepo_service_groups: dict[str, list[dict]] = {}
+    for s in active_repos:
+        mono_id = s.get("monorepo")
+        if mono_id:
+            monorepo_service_groups.setdefault(str(mono_id), []).append(s)
+
     with tempfile.TemporaryDirectory() as tmp_dir:
-        for service in active_repos:
+        for service in standalone_services:
             repo_id = service.get("id", "")
             repo_name = service.get("repo") or repo_id
             if not repo_id:
                 continue
 
-            # Libraries without a host are not deployed services — skip cloning
-            # but still check if they have a GitHub repo
             prefect_log.info("conformance: processing %s", repo_id)
 
             repo_path = _download_repo(repo_name, tmp_dir)
@@ -343,37 +472,149 @@ def conformance_check_flow() -> None:
                 )
                 continue
 
-            service_type = service.get("type", "worker")
-            _raw_language = str(service.get("language") or "python")
-            # Astro is a TypeScript-based framework — normalise to "typescript"
-            # so run_all_checks applies the correct stack checks.
-            language = "typescript" if _raw_language == "astro" else _raw_language
-            cog_subtype = str(service.get("cog_subtype") or "").strip() or None
-            dod_type = service.get("dod_type")
-            raw_exc = service.get("check_exceptions") or []
-            check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
-            standards_rules = _fetch_standards_for_service(service)
+            _run_standalone_conformance(
+                service, repo_path, standards_version, run_id, prefect_log
+            )
 
-            try:
-                findings = run_conformance_check(
-                    repo_id=repo_id,
-                    repo_path=repo_path,
-                    standards_version=standards_version,
-                    service_type=service_type,
-                    dod_type=dod_type,
-                    language=language,
-                    cog_subtype=cog_subtype,
-                    check_exceptions=check_exceptions,
-                    exception_reasons=exception_reasons,
-                    standards_rules=standards_rules,
-                    run_id=run_id,
-                )
-                prefect_log.info(
-                    "conformance: %d total findings for %s", len(findings), repo_id
-                )
-            except Exception as exc:
+        for mono_id, services in monorepo_service_groups.items():
+            mono_record = monorepos_registry.get(mono_id)
+            if not mono_record:
                 prefect_log.warning(
-                    "conformance: check failed for %s: %s", repo_id, exc
+                    "conformance: monorepo record '%s' not found in ecosystem.yaml — "
+                    "processing apps as standalone",
+                    mono_id,
+                )
+                for svc in services:
+                    rid = svc.get("id", "")
+                    rname = svc.get("repo") or rid
+                    if not rid:
+                        continue
+                    rp = _download_repo(rname, tmp_dir)
+                    if rp is None:
+                        prefect_log.warning(
+                            "conformance: skipping %s — could not clone", rid
+                        )
+                        continue
+                    _run_standalone_conformance(
+                        svc, rp, standards_version, run_id, prefect_log
+                    )
+                continue
+
+            repo_name = mono_record.get("repo") or mono_id
+            prefect_log.info("conformance: cloning monorepo %s", repo_name)
+            monorepo_root = _download_repo(repo_name, tmp_dir)
+            if monorepo_root is None:
+                prefect_log.warning(
+                    "conformance: skipping monorepo %s — could not clone", mono_id
+                )
+                continue
+
+            workspace_package_json_text = _read_workspace_package_json(monorepo_root)
+
+            monorepo_context = {
+                "monorepo_id": mono_id,
+                "package_manager": mono_record.get("package_manager", "pnpm"),
+                "workspace_deps": mono_record.get("workspace_deps", []),
+                "sibling_apps": [
+                    {
+                        "service_id": app.get("service_id") or app.get("id"),
+                        "path": app.get("path"),
+                    }
+                    for app in mono_record.get("apps", [])
+                ],
+            }
+
+            findings_by_service: dict[str, list[dict[str, Any]]] = {}
+
+            for service in services:
+                repo_id = service.get("id", "")
+                monorepo_path = str(service.get("monorepo_path") or "")
+                if not repo_id:
+                    continue
+
+                repo_path = (
+                    monorepo_root / monorepo_path if monorepo_path else monorepo_root
+                )
+
+                if not repo_path.is_dir():
+                    prefect_log.warning(
+                        "conformance: monorepo_path '%s' not found in %s for %s",
+                        monorepo_path,
+                        mono_id,
+                        repo_id,
+                    )
+                    continue
+
+                prefect_log.info(
+                    "conformance: processing monorepo app %s at %s",
+                    repo_id,
+                    monorepo_path,
+                )
+
+                service_type = service.get("type", "worker")
+                _raw_language = str(service.get("language") or "typescript")
+                language = "typescript" if _raw_language == "astro" else _raw_language
+                cog_subtype = str(service.get("cog_subtype") or "").strip() or None
+                dod_type = service.get("dod_type")
+                raw_exc = service.get("check_exceptions") or []
+                check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
+                standards_rules = _fetch_standards_for_service(service)
+
+                try:
+                    app_findings = run_conformance_check(
+                        repo_id=repo_id,
+                        repo_path=repo_path,
+                        standards_version=standards_version,
+                        service_type=service_type,
+                        dod_type=dod_type,
+                        language=language,
+                        cog_subtype=cog_subtype,
+                        check_exceptions=check_exceptions,
+                        exception_reasons=exception_reasons,
+                        standards_rules=standards_rules,
+                        run_id=run_id,
+                        monorepo_root=monorepo_root,
+                        workspace_package_json_text=workspace_package_json_text,
+                        monorepo_context=monorepo_context,
+                        post=False,
+                    )
+                    findings_by_service[repo_id] = app_findings
+                    prefect_log.info(
+                        "conformance: %d findings for monorepo app %s",
+                        len(app_findings),
+                        repo_id,
+                    )
+                except Exception as exc:
+                    prefect_log.warning(
+                        "conformance: check failed for monorepo app %s: %s",
+                        repo_id,
+                        exc,
+                    )
+
+            if len(findings_by_service) > 1:
+                findings_by_service = _deduplicate_sibling_findings(findings_by_service)
+
+            for service_id, findings in findings_by_service.items():
+                if not findings:
+                    findings = [
+                        {
+                            "rule_id": "STATUS",
+                            "dimension": "structural_conformance",
+                            "severity": "INFO",
+                            "finding": (
+                                f"{service_id} passed all conformance checks for "
+                                f"standards v{standards_version}."
+                            ),
+                            "suggestion": "",
+                        }
+                    ]
+                post_findings(
+                    findings=findings,
+                    run_id=run_id,
+                    repo=service_id,
+                    flow_name="conformance",
+                    source="conformance_check",
+                    standards_version=standards_version,
                 )
 
     prefect_log.info("conformance: complete")

@@ -1,0 +1,52 @@
+# Runs after every release of evaluator-cog.
+# Clones ecosystem-standards and diffs checkable rules against implemented
+# checks in this repo. Submits a finding to api-kaianolevine-com if drift
+# is detected.
+
+name: Standards/Evaluator Drift Check
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — print findings but do not POST to API"
+        required: false
+        default: "false"
+
+jobs:
+  drift-check:
+    name: Check standards/evaluator drift
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout evaluator-cog
+        uses: actions/checkout@v4
+        with:
+          path: evaluator-cog
+
+      - name: Checkout ecosystem-standards
+        uses: actions/checkout@v4
+        with:
+          repository: mini-app-polis/ecosystem-standards
+          path: ecosystem-standards
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyyaml requests
+
+      - name: Run drift check
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          TRIGGERED_BY: evaluator-cog@${{ github.event.release.tag_name || 'manual' }}
+        run: |
+          python ecosystem-standards/scripts/check_drift.py \
+            --standards-dir ecosystem-standards \
+            --evaluator-dir evaluator-cog
