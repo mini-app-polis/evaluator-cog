@@ -1829,7 +1829,7 @@ def run_all_checks(
 
     _run(check_releaserc_assets, "VER-008")
 
-    if is_frontend and not is_python:
+    if dod_type in ("new_hono_service", "new_react_app"):
         _run(check_pnpm_lockfile, "XSTACK-003")
 
     return CheckResult(findings=findings, checked_rule_ids=checked_rule_ids)

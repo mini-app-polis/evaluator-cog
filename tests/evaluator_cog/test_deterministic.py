@@ -15,6 +15,7 @@ from evaluator_cog.engine.deterministic import (
     check_healthchecks_integration,
     check_mypy_in_ci,
     check_naming_conventions,
+    check_no_dead_code,
     check_no_hardcoded_secrets,
     check_no_hardcoded_urls,
     check_no_manual_changelog,
@@ -30,12 +31,14 @@ from evaluator_cog.engine.deterministic import (
     check_react_hook_form_zod,
     check_readme,
     check_readme_io,
+    check_readme_running_locally,
     check_releaserc,
     check_releaserc_assets,
     check_respx_for_http_mocking,
     check_retry_logic,
     check_shadcn,
     check_shared_library_used,
+    check_split_package_identity,
     check_src_layout,
     check_structured_logging,
     check_tailwind,
@@ -881,3 +884,120 @@ def test_check_no_retired_trigger_patterns_flags_repository_dispatch(
     )
     findings = check_no_retired_trigger_patterns(tmp_path)
     assert any(f["rule_id"] == "PIPE-008" for f in findings)
+
+
+# ── XSTACK-003 wiring coverage ────────────────────────────────────────────────
+
+
+def test_run_all_checks_xstack003_fires_for_hono_service(tmp_path: Path) -> None:
+    """XSTACK-003 must fire for new_hono_service missing pnpm-lock.yaml."""
+    (tmp_path / "package.json").write_text('{"name":"api"}\n')
+    (tmp_path / "package-lock.json").write_text("{}")
+    result = run_all_checks(
+        tmp_path,
+        language="typescript",
+        dod_type="new_hono_service",
+    )
+    rule_ids = [f["rule_id"] for f in result.findings]
+    assert "XSTACK-003" in rule_ids
+
+
+def test_run_all_checks_xstack003_fires_for_react_app(tmp_path: Path) -> None:
+    """XSTACK-003 must fire for new_react_app missing pnpm-lock.yaml."""
+    (tmp_path / "package.json").write_text('{"name":"app"}\n')
+    (tmp_path / "package-lock.json").write_text("{}")
+    result = run_all_checks(
+        tmp_path,
+        language="typescript",
+        dod_type="new_react_app",
+    )
+    rule_ids = [f["rule_id"] for f in result.findings]
+    assert "XSTACK-003" in rule_ids
+
+
+def test_run_all_checks_xstack003_does_not_fire_for_frontend_site(
+    tmp_path: Path,
+) -> None:
+    """XSTACK-003 must not fire for new_frontend_site — static sites are exempt."""
+    (tmp_path / "package.json").write_text('{"dependencies":{"astro":"4"}}\n')
+    (tmp_path / "astro.config.mjs").write_text("export default {}\n")
+    (tmp_path / "package-lock.json").write_text("{}")
+    result = run_all_checks(
+        tmp_path,
+        language="typescript",
+        service_type="site",
+        dod_type="new_frontend_site",
+    )
+    rule_ids = [f["rule_id"] for f in result.findings]
+    assert "XSTACK-003" not in rule_ids
+
+
+# ── Previously untested functions ─────────────────────────────────────────────
+
+
+def test_check_no_dead_code_flags_commented_code(tmp_path: Path) -> None:
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "main.py").write_text(
+        "x = 1\n"
+        "# def old_function():\n"
+        "#     return x + 1\n"
+        "#     if x > 0:\n"
+        "#         pass\n"
+    )
+    findings = check_no_dead_code(tmp_path)
+    assert any(f["rule_id"] == "DOC-008" for f in findings)
+
+
+def test_check_no_dead_code_passes_clean(tmp_path: Path) -> None:
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "main.py").write_text(
+        "# This is a normal comment\nx = 1\n"
+    )
+    assert check_no_dead_code(tmp_path) == []
+
+
+def test_check_readme_running_locally_flags_missing_uv_sync(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(
+        "# My Cog\nRun with python main.py\n",
+    )
+    findings = check_readme_running_locally(tmp_path, dod_type="new_cog")
+    assert any("uv sync" in f["finding"] for f in findings)
+
+
+def test_check_readme_running_locally_passes_for_cog(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(
+        "# My Cog\n"
+        "## Running locally\n"
+        "Prerequisites: Python 3.11, uv\n"
+        "Install: uv sync --all-extras\n"
+        "Pre-commit: uv run pre-commit install && uv run pre-commit run --all-files\n"
+        "Run: uv run python -m my_cog\n"
+        "Test: uv run pytest\n",
+    )
+    findings = check_readme_running_locally(tmp_path, dod_type="new_cog")
+    assert findings == []
+
+
+def test_check_split_package_identity_passes_when_names_match(tmp_path: Path) -> None:
+    """No finding when install name and src package name match."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "my-cog"\n')
+    (tmp_path / "src" / "my_cog").mkdir(parents=True)
+    (tmp_path / "src" / "my_cog" / "__init__.py").write_text("")
+    findings = check_split_package_identity(tmp_path)
+    assert findings == []
+
+
+def test_check_split_package_identity_flags_undocumented_split(tmp_path: Path) -> None:
+    """Finding when install name differs from src package and neither doc mentions both."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "common-python-utils"\n'
+    )
+    (tmp_path / "src" / "mini_app_polis").mkdir(parents=True)
+    (tmp_path / "src" / "mini_app_polis" / "__init__.py").write_text(
+        '"""Package."""\n',
+    )
+    (tmp_path / "README.md").write_text(
+        "# common-python-utils\nInstall this package.\n"
+    )
+    findings = check_split_package_identity(tmp_path)
+    assert any(f["rule_id"] == "DOC-009" for f in findings)
