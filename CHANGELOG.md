@@ -1,3 +1,10 @@
+## [2.1.4](https://github.com/mini-app-polis/evaluator-cog/compare/v2.1.3...v2.1.4) (2026-04-05)
+
+
+### Bug Fixes
+
+* rename kaiano-ts-utils to common-typescript-utils, honour XSTACK-001 check_exceptions ([2dd8e57](https://github.com/mini-app-polis/evaluator-cog/commit/2dd8e57873bcc10e7c068e3834719e5e3a5ab23b))
+
 ## [2.1.3](https://github.com/mini-app-polis/evaluator-cog/compare/v2.1.2...v2.1.3) (2026-04-05)
 
 
