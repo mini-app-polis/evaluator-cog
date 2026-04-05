@@ -627,7 +627,8 @@ def test_run_all_checks_xstack001_honoured_via_check_exceptions() -> None:
         exception_reasons={"XSTACK-001": "static site — no server-side logic"},
     )
     error_findings = [
-        f for f in result.findings
+        f
+        for f in result.findings
         if f["rule_id"] == "XSTACK-001" and f["severity"] == "ERROR"
     ]
     assert error_findings == []
@@ -648,7 +649,8 @@ def test_run_all_checks_xstack001_suppressed_for_frontend_site() -> None:
         dod_type="new_frontend_site",
     )
     error_findings = [
-        f for f in result.findings
+        f
+        for f in result.findings
         if f["rule_id"] == "XSTACK-001" and f["severity"] == "ERROR"
     ]
     assert error_findings == []
@@ -673,7 +675,8 @@ def test_run_all_checks_astro_language_does_not_trigger_ts_shared_lib_check() ->
         dod_type="new_frontend_site",
     )
     error_findings = [
-        f for f in result.findings
+        f
+        for f in result.findings
         if f["rule_id"] == "XSTACK-001" and f["severity"] == "ERROR"
     ]
     assert error_findings == []
