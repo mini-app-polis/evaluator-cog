@@ -1313,15 +1313,15 @@ def check_shared_library_used(
             if src.is_dir()
             else ""
         )
-        has_ts_shared_import = "kaiano-ts-utils" in src_text
-        if "kaiano-ts-utils" not in pkg_text:
+        has_ts_shared_import = "common-typescript-utils" in src_text
+        if "common-typescript-utils" not in pkg_text:
             findings.append(
                 _finding(
                     "XSTACK-001",
                     "ERROR",
                     "cross_repo_coherence",
-                    "kaiano-ts-utils is not declared for this TypeScript service.",
-                    "Depend on kaiano-ts-utils to avoid re-implementing shared utilities.",
+                    "common-typescript-utils is not declared for this TypeScript service.",
+                    "Depend on common-typescript-utils to avoid re-implementing shared utilities.",
                 )
             )
         if (
@@ -1332,8 +1332,8 @@ def check_shared_library_used(
                     "XSTACK-001",
                     "ERROR",
                     "cross_repo_coherence",
-                    "Hand-rolled shared TypeScript helper detected without kaiano-ts-utils import.",
-                    "Use kaiano-ts-utils logger/auth/response helpers.",
+                    "Hand-rolled shared TypeScript helper detected without common-typescript-utils import.",
+                    "Use common-typescript-utils logger/auth/response helpers.",
                 )
             )
     return findings
@@ -1607,8 +1607,21 @@ def run_all_checks(
     _run(check_no_manual_changelog, "VER-004")
 
     _mark_checked("XSTACK-001")
-    if not (language == "typescript" and dod_type == "new_frontend_site"):
-        findings.extend(check_shared_library_used(repo_path, language=language))
+    if "XSTACK-001" not in _exceptions:
+        if not (language == "typescript" and dod_type == "new_frontend_site"):
+            findings.extend(check_shared_library_used(repo_path, language=language))
+    else:
+        reason = _exception_reasons.get("XSTACK-001", "")
+        if reason:
+            findings.append(
+                _finding(
+                    "XSTACK-001",
+                    "INFO",
+                    "structural_conformance",
+                    f"Skipped: {reason}",
+                    "",
+                )
+            )
     if dod_type is None:  # standards repo only
         _run(check_standards_freshness, "PRIN-009")
 

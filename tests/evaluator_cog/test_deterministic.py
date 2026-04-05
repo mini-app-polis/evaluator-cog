@@ -571,8 +571,10 @@ def test_check_shared_library_ts_flags_hand_rolled_logger() -> None:
 def test_check_shared_library_ts_passes_with_dependency_and_import() -> None:
     repo = _make_repo(
         {
-            "package.json": '{"name":"x","dependencies":{"kaiano-ts-utils":"1.0.0"}}\n',
-            "src/index.ts": "import { createLogger } from 'kaiano-ts-utils'\n",
+            "package.json": (
+                '{"name":"x","dependencies":{"common-typescript-utils":"1.0.0"}}\n'
+            ),
+            "src/index.ts": "import { createLogger } from 'common-typescript-utils'\n",
         }
     )
     assert check_shared_library_used(repo, language="typescript") == []
