@@ -752,10 +752,18 @@ def check_readme_running_locally(
         required = ["pnpm install", "pnpm dev", "pnpm test", "node"]
         missing.extend([r for r in required if r not in text])
     elif dod_type in ("new_frontend_site", "new_react_app"):
-        required = ["pnpm install", "pnpm build", ".env.example"]
-        missing.extend([r for r in required if r not in text])
-        if "pnpm dev" not in text and "astro dev" not in text:
-            missing.append("pnpm dev/astro dev")
+        if "pnpm install" not in text and "npm install" not in text:
+            missing.append("pnpm install or npm install")
+        if "pnpm build" not in text and "npm run build" not in text:
+            missing.append("pnpm build or npm run build")
+        if (
+            "pnpm dev" not in text
+            and "npm run dev" not in text
+            and "astro dev" not in text
+        ):
+            missing.append("pnpm dev or npm run dev or astro dev")
+        if ".env.example" not in text:
+            missing.append(".env.example")
 
     for item in missing:
         findings.append(
@@ -979,10 +987,23 @@ def check_tailwind(repo_path: Path) -> list[Finding]:
     findings = []
     pkg = repo_path / "package.json"
     pkg_text = pkg.read_text().lower() if pkg.exists() else ""
-    has_cfg = (repo_path / "tailwind.config.js").exists() or (
-        repo_path / "tailwind.config.ts"
-    ).exists()
-    if '"tailwindcss"' not in pkg_text or not has_cfg:
+    astro_mjs = repo_path / "astro.config.mjs"
+    astro_ts = repo_path / "astro.config.ts"
+    astro_cfg_text = ""
+    if astro_mjs.exists():
+        astro_cfg_text += "\n" + astro_mjs.read_text().lower()
+    if astro_ts.exists():
+        astro_cfg_text += "\n" + astro_ts.read_text().lower()
+
+    has_astro_tailwind = "@astrojs/tailwind" in astro_cfg_text
+    has_cfg = (
+        (repo_path / "tailwind.config.js").exists()
+        or (repo_path / "tailwind.config.ts").exists()
+        or (repo_path / "tailwind.config.mjs").exists()
+        or has_astro_tailwind
+    )
+    has_tailwind_signal = '"tailwindcss"' in pkg_text or has_astro_tailwind
+    if not has_tailwind_signal or not has_cfg:
         findings.append(
             _finding(
                 "FE-003",
@@ -1586,7 +1607,8 @@ def run_all_checks(
     _run(check_no_manual_changelog, "VER-004")
 
     _mark_checked("XSTACK-001")
-    findings.extend(check_shared_library_used(repo_path, language=language))
+    if not (language == "typescript" and dod_type == "new_frontend_site"):
+        findings.extend(check_shared_library_used(repo_path, language=language))
     if dod_type is None:  # standards repo only
         _run(check_standards_freshness, "PRIN-009")
 
