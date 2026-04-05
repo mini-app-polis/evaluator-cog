@@ -140,6 +140,23 @@ def test_check_ci_accepts_pnpm_exec_semantic_release(tmp_path: Path) -> None:
     assert "VER-006" not in rule_ids
 
 
+# ── VER-006 / pnpm add pattern ────────────────────────────────────────────────
+
+
+def test_check_ci_accepts_pnpm_add_before_semantic_release(tmp_path: Path) -> None:
+    """VER-006 must not fire when pnpm add --save-dev installs plugins before release."""
+    ci = tmp_path / ".github" / "workflows"
+    ci.mkdir(parents=True)
+    (ci / "ci.yml").write_text(
+        "semantic-release\n"
+        "fetch-depth: 0\n"
+        "pnpm add --save-dev @semantic-release/changelog @semantic-release/git\n"
+    )
+    findings = check_ci(tmp_path)
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "VER-006" not in rule_ids
+
+
 def test_check_env_example_finds_monorepo_location(tmp_path: Path) -> None:
     """DOC-004 should not fire when .env.example is in apps/api/."""
     (tmp_path / "apps" / "api").mkdir(parents=True)
@@ -568,12 +585,79 @@ def test_check_shared_library_ts_flags_hand_rolled_logger() -> None:
     assert any(f["rule_id"] == "XSTACK-001" for f in findings)
 
 
+# ── XSTACK-001 / common-typescript-utils ─────────────────────────────────────
+
+
+def test_check_shared_library_ts_passes_with_common_typescript_utils() -> None:
+    """XSTACK-001 must not fire when common-typescript-utils is declared."""
+    repo = _make_repo(
+        {
+            "package.json": '{"name":"x","dependencies":{"common-typescript-utils":"1.0.0"}}\n',
+            "src/index.ts": "import { createLogger } from 'common-typescript-utils'\n",
+        }
+    )
+    assert check_shared_library_used(repo, language="typescript") == []
+
+
+def test_check_shared_library_ts_flags_missing_common_typescript_utils() -> None:
+    """XSTACK-001 must fire when common-typescript-utils is absent from package.json."""
+    repo = _make_repo(
+        {
+            "package.json": '{"name":"x","dependencies":{}}\n',
+            "src/index.ts": "export const x = 1\n",
+        }
+    )
+    findings = check_shared_library_used(repo, language="typescript")
+    assert any(f["rule_id"] == "XSTACK-001" for f in findings)
+
+
+def test_run_all_checks_xstack001_honoured_via_check_exceptions() -> None:
+    """XSTACK-001 in check_exceptions must suppress the finding in run_all_checks."""
+    repo = _make_repo(
+        {
+            "package.json": '{"name":"x","dependencies":{}}\n',
+            "src/index.ts": "export const x = 1\n",
+        }
+    )
+    result = run_all_checks(
+        repo,
+        language="typescript",
+        dod_type="new_hono_service",
+        check_exceptions=["XSTACK-001"],
+        exception_reasons={"XSTACK-001": "static site — no server-side logic"},
+    )
+    error_findings = [
+        f for f in result.findings
+        if f["rule_id"] == "XSTACK-001" and f["severity"] == "ERROR"
+    ]
+    assert error_findings == []
+
+
+def test_run_all_checks_xstack001_suppressed_for_frontend_site() -> None:
+    """XSTACK-001 must not fire for new_frontend_site regardless of check_exceptions."""
+    repo = _make_repo(
+        {
+            "package.json": '{"dependencies":{"astro":"4"}}\n',
+            "astro.config.mjs": "export default {}\n",
+        }
+    )
+    result = run_all_checks(
+        repo,
+        language="typescript",
+        service_type="site",
+        dod_type="new_frontend_site",
+    )
+    error_findings = [
+        f for f in result.findings
+        if f["rule_id"] == "XSTACK-001" and f["severity"] == "ERROR"
+    ]
+    assert error_findings == []
+
+
 def test_check_shared_library_ts_passes_with_dependency_and_import() -> None:
     repo = _make_repo(
         {
-            "package.json": (
-                '{"name":"x","dependencies":{"common-typescript-utils":"1.0.0"}}\n'
-            ),
+            "package.json": '{"name":"x","dependencies":{"common-typescript-utils":"1.0.0"}}\n',
             "src/index.ts": "import { createLogger } from 'common-typescript-utils'\n",
         }
     )

@@ -364,6 +364,7 @@ def check_ci(
         "npm install --no-save" not in content
         and "pnpm exec semantic-release" not in content
         and "pnpm run semantic-release" not in content
+        and "pnpm add" not in content
     ):
         findings.append(
             _finding(
