@@ -1,3 +1,10 @@
+# [2.3.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.2.1...v2.3.0) (2026-04-05)
+
+
+### Features
+
+* monorepo conformance support, CHECK_ID for drift checks, release drift workflow ([b5051e1](https://github.com/mini-app-polis/evaluator-cog/commit/b5051e17430790e8a6d0333d42d375c42c85e897))
+
 ## [2.2.1](https://github.com/mini-app-polis/evaluator-cog/compare/v2.2.0...v2.2.1) (2026-04-05)
 
 
