@@ -1,3 +1,10 @@
+# [2.2.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.1.5...v2.2.0) (2026-04-05)
+
+
+### Features
+
+* add CD-015, VER-008, XSTACK-003 deterministic checks; expand test coverage to untested functions; bump node to 22 ([b41e846](https://github.com/mini-app-polis/evaluator-cog/commit/b41e84624560443956c01121ecc74ac8962d7e55))
+
 ## [2.1.5](https://github.com/mini-app-polis/evaluator-cog/compare/v2.1.4...v2.1.5) (2026-04-05)
 
 
