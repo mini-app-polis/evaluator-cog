@@ -1,3 +1,11 @@
+## [2.1.5](https://github.com/mini-app-polis/evaluator-cog/compare/v2.1.4...v2.1.5) (2026-04-05)
+
+
+### Bug Fixes
+
+* formatting ([7980712](https://github.com/mini-app-polis/evaluator-cog/commit/798071203396945a5dc0ba0444af5e89112097dd))
+* normalise astro language to typescript in conformance flow, remove duplicate test ([35e96a8](https://github.com/mini-app-polis/evaluator-cog/commit/35e96a8c835f1cf4bf2507cfbe3bd38f89f77daf))
+
 ## [2.1.4](https://github.com/mini-app-polis/evaluator-cog/compare/v2.1.3...v2.1.4) (2026-04-05)
 
 
