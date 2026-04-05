@@ -271,9 +271,7 @@ Monorepo context:
                 )
             )
             if len(src_files) > 60:
-                src_files = src_files[:60] + [
-                    f"... ({len(src_files) - 60} more files)"
-                ]
+                src_files = src_files[:60] + [f"... ({len(src_files) - 60} more files)"]
             inventory_block = (
                 "REPO FILE INVENTORY (actual files present — do not reference files not listed here):\n"
                 + "\n".join(f"  {f}" for f in src_files)

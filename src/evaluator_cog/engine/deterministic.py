@@ -72,9 +72,7 @@ def _deduplicate_same_repo_findings(findings: list[Finding]) -> list[Finding]:
 # -- File presence checks -----------------------------------------------------
 
 
-def check_readme(
-    repo_path: Path, monorepo_root: Path | None = None
-) -> list[Finding]:
+def check_readme(repo_path: Path, monorepo_root: Path | None = None) -> list[Finding]:
     """DOC-001: README.md is mandatory."""
     CHECK_ID = "DOC-001"
     findings = []
@@ -1763,9 +1761,7 @@ def run_all_checks(
         "new_fastapi_service",
     )
     is_library = service_type == "library" or dod_type is None
-    is_pipeline_cog = (
-        dod_type == "new_cog" and cog_subtype != "trigger"
-    ) or (
+    is_pipeline_cog = (dod_type == "new_cog" and cog_subtype != "trigger") or (
         is_python and service_type == "worker" and cog_subtype == "pipeline"
     )
     is_fastapi = dod_type == "new_fastapi_service"
