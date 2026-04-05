@@ -16,11 +16,22 @@ from evaluator_cog.engine.deterministic import (
     check_mypy_in_ci,
     check_naming_conventions,
     check_no_hardcoded_secrets,
+    check_no_hardcoded_urls,
     check_no_manual_changelog,
+    check_no_print_statements,
+    check_no_retired_trigger_patterns,
+    check_no_setup_py,
+    check_pipeline_cog_tests,
+    check_pnpm_lockfile,
+    check_pre_commit,
+    check_prefect_serve_pattern,
     check_pyproject,
+    check_pytest_coverage_in_ci,
     check_react_hook_form_zod,
     check_readme,
     check_readme_io,
+    check_releaserc,
+    check_releaserc_assets,
     check_respx_for_http_mocking,
     check_retry_logic,
     check_shadcn,
@@ -723,3 +734,150 @@ def test_checked_rule_ids_includes_pyproject_subrules() -> None:
     result = run_all_checks(repo, language="python", dod_type="new_cog")
     assert "PY-001" in result.checked_rule_ids
     assert "PY-002" in result.checked_rule_ids
+
+
+# ── CD-015: Prefect serve() ───────────────────────────────────────────────────
+
+
+def test_check_prefect_serve_flags_work_pool(tmp_path: Path) -> None:
+    (tmp_path / "src" / "my_cog").mkdir(parents=True)
+    (tmp_path / "src" / "my_cog" / "main.py").write_text(
+        "flow.deploy(name='x', work_pool_name='my-pool')\n"
+    )
+    findings = check_prefect_serve_pattern(tmp_path)
+    assert any(f["rule_id"] == "CD-015" for f in findings)
+
+
+def test_check_prefect_serve_passes_when_serve_present(tmp_path: Path) -> None:
+    (tmp_path / "src" / "my_cog").mkdir(parents=True)
+    (tmp_path / "src" / "my_cog" / "main.py").write_text(
+        "from prefect import flow\n@flow\ndef my_flow(): pass\nprefect.serve(my_flow)\n"
+    )
+    findings = check_prefect_serve_pattern(tmp_path)
+    assert not any(f["severity"] == "ERROR" for f in findings)
+
+
+# ── VER-008: .releaserc.json assets ──────────────────────────────────────────
+
+
+def test_check_releaserc_assets_flags_missing_changelog(tmp_path: Path) -> None:
+    (tmp_path / ".releaserc.json").write_text(
+        '{"plugins":[["@semantic-release/git",{"assets":["pyproject.toml"]}]]}'
+    )
+    findings = check_releaserc_assets(tmp_path)
+    assert any(
+        f["rule_id"] == "VER-008" and "CHANGELOG" in f["finding"] for f in findings
+    )
+
+
+def test_check_releaserc_assets_flags_missing_managed_file(tmp_path: Path) -> None:
+    (tmp_path / ".releaserc.json").write_text(
+        '{"plugins":[["@semantic-release/exec",{"prepareCmd":"uv version ${nextRelease.version} pyproject.toml"}],["@semantic-release/git",{"assets":["CHANGELOG.md"]}]]}'
+    )
+    findings = check_releaserc_assets(tmp_path)
+    assert any(
+        f["rule_id"] == "VER-008" and "pyproject.toml" in f["finding"] for f in findings
+    )
+
+
+def test_check_releaserc_assets_passes_when_complete(tmp_path: Path) -> None:
+    (tmp_path / ".releaserc.json").write_text(
+        '{"plugins":[["@semantic-release/exec",{"prepareCmd":"uv version ${nextRelease.version} pyproject.toml"}],["@semantic-release/git",{"assets":["CHANGELOG.md","pyproject.toml"]}]]}'
+    )
+    assert check_releaserc_assets(tmp_path) == []
+
+
+# ── XSTACK-003: pnpm lockfile ─────────────────────────────────────────────────
+
+
+def test_check_pnpm_lockfile_flags_package_lock(tmp_path: Path) -> None:
+    (tmp_path / "package-lock.json").write_text("{}")
+    findings = check_pnpm_lockfile(tmp_path)
+    assert any(
+        f["rule_id"] == "XSTACK-003" and "package-lock" in f["finding"]
+        for f in findings
+    )
+
+
+def test_check_pnpm_lockfile_passes_with_pnpm_lock(tmp_path: Path) -> None:
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    assert check_pnpm_lockfile(tmp_path) == []
+
+
+# ── Previously untested functions ─────────────────────────────────────────────
+
+
+def test_check_no_print_statements_flags_print(tmp_path: Path) -> None:
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "main.py").write_text("print('hello')\n")
+    findings = check_no_print_statements(tmp_path)
+    assert any(f["rule_id"] == "CD-003" for f in findings)
+
+
+def test_check_no_print_statements_passes_clean(tmp_path: Path) -> None:
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "main.py").write_text("x = 1\n")
+    assert check_no_print_statements(tmp_path) == []
+
+
+def test_check_no_setup_py_flags_requirements_txt(tmp_path: Path) -> None:
+    (tmp_path / "requirements.txt").write_text("requests\n")
+    findings = check_no_setup_py(tmp_path)
+    assert any(f["rule_id"] == "PY-007" for f in findings)
+
+
+def test_check_releaserc_flags_missing(tmp_path: Path) -> None:
+    findings = check_releaserc(tmp_path)
+    assert any(f["rule_id"] == "VER-003" for f in findings)
+
+
+def test_check_releaserc_passes_when_present(tmp_path: Path) -> None:
+    (tmp_path / ".releaserc.json").write_text("{}\n")
+    assert check_releaserc(tmp_path) == []
+
+
+def test_check_pre_commit_flags_missing(tmp_path: Path) -> None:
+    findings = check_pre_commit(tmp_path)
+    assert any(f["rule_id"] == "PY-008" for f in findings)
+
+
+def test_check_pre_commit_passes_when_present(tmp_path: Path) -> None:
+    (tmp_path / ".pre-commit-config.yaml").write_text("repos: []\n")
+    assert check_pre_commit(tmp_path) == []
+
+
+def test_check_no_hardcoded_urls_flags_railway_url(tmp_path: Path) -> None:
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "client.py").write_text(
+        'BASE = "https://my-service.up.railway.app"\n'
+    )
+    findings = check_no_hardcoded_urls(tmp_path)
+    assert any(f["rule_id"] == "FE-007" for f in findings)
+
+
+def test_check_pytest_coverage_in_ci_flags_missing(tmp_path: Path) -> None:
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        "name: CI\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pytest\n"
+    )
+    findings = check_pytest_coverage_in_ci(tmp_path)
+    assert any(f["rule_id"] == "TEST-006" for f in findings)
+
+
+def test_check_pipeline_cog_tests_flags_missing_normalization(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_basic.py").write_text("def test_ok(): assert True\n")
+    findings = check_pipeline_cog_tests(tmp_path)
+    assert any(f["rule_id"] == "TEST-001" for f in findings)
+
+
+def test_check_no_retired_trigger_patterns_flags_repository_dispatch(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "trigger.py").write_text(
+        'url = "https://api.github.com/repos/org/repo/dispatches"\n'
+        'payload = {"event_type": "repository_dispatch"}\n'
+    )
+    findings = check_no_retired_trigger_patterns(tmp_path)
+    assert any(f["rule_id"] == "PIPE-008" for f in findings)

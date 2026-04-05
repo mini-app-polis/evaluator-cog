@@ -1502,6 +1502,139 @@ def check_test_structure(
     return findings
 
 
+def check_prefect_serve_pattern(repo_path: Path) -> list[Finding]:
+    """CD-015: Prefect serve() — no work pool."""
+    findings = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+    content = "\n".join(f.read_text() for f in src.rglob("*.py"))
+    if "flow.deploy(" in content or "work_pool_name" in content:
+        findings.append(
+            _finding(
+                "CD-015",
+                "ERROR",
+                "cd_readiness",
+                "work pool pattern detected — flow.deploy() or work_pool_name found.",
+                "Use prefect.serve() running in-process on Railway instead of work pool deployments.",
+            )
+        )
+    prefect_yaml = repo_path / "prefect.yaml"
+    if prefect_yaml.exists() and "work_pool" in prefect_yaml.read_text():
+        findings.append(
+            _finding(
+                "CD-015",
+                "ERROR",
+                "cd_readiness",
+                "work_pool configuration found in prefect.yaml.",
+                "Remove work pool config and use prefect.serve() instead.",
+            )
+        )
+    if "prefect.serve(" not in content and "flow.serve(" not in content:
+        findings.append(
+            _finding(
+                "CD-015",
+                "WARN",
+                "cd_readiness",
+                "No prefect.serve() call found in source — flow registration pattern missing or unverifiable.",
+                "Ensure flows are registered via prefect.serve() at the cog entry point.",
+            )
+        )
+    return findings
+
+
+def check_releaserc_assets(repo_path: Path) -> list[Finding]:
+    """VER-008: .releaserc.json assets must include all version-managed files."""
+    import json as _json
+
+    findings = []
+    releaserc = repo_path / ".releaserc.json"
+    if not releaserc.exists():
+        return findings
+    try:
+        data = _json.loads(releaserc.read_text())
+    except Exception:
+        return findings
+
+    plugins = data.get("plugins", [])
+    prepare_cmd = ""
+    git_assets: list[str] = []
+
+    for plugin in plugins:
+        if isinstance(plugin, list) and len(plugin) >= 2:
+            name, config = plugin[0], plugin[1]
+            if "@semantic-release/exec" in str(name):
+                prepare_cmd = config.get("prepareCmd", "")
+            if "@semantic-release/git" in str(name):
+                git_assets = config.get("assets", [])
+
+    # Detect files written by prepareCmd
+    managed_files = []
+    for candidate in ("pyproject.toml", "package.json", "index.yaml"):
+        if candidate in prepare_cmd:
+            managed_files.append(candidate)
+
+    if "CHANGELOG.md" not in git_assets:
+        findings.append(
+            _finding(
+                "VER-008",
+                "ERROR",
+                "cd_readiness",
+                "CHANGELOG.md is absent from @semantic-release/git assets.",
+                "Add CHANGELOG.md to the assets array in the @semantic-release/git plugin config.",
+            )
+        )
+
+    for f in managed_files:
+        if f not in git_assets:
+            findings.append(
+                _finding(
+                    "VER-008",
+                    "ERROR",
+                    "cd_readiness",
+                    f"{f} is written by prepareCmd but absent from @semantic-release/git assets.",
+                    f"Add {f} to the assets array in the @semantic-release/git plugin config.",
+                )
+            )
+    return findings
+
+
+def check_pnpm_lockfile(repo_path: Path) -> list[Finding]:
+    """XSTACK-003: pnpm for all TypeScript projects."""
+    findings = []
+    if (repo_path / "package-lock.json").exists():
+        findings.append(
+            _finding(
+                "XSTACK-003",
+                "ERROR",
+                "structural_conformance",
+                "package-lock.json found — npm is not the approved package manager for TypeScript projects.",
+                "Migrate to pnpm: remove package-lock.json, run pnpm install, commit pnpm-lock.yaml.",
+            )
+        )
+    if (repo_path / "yarn.lock").exists():
+        findings.append(
+            _finding(
+                "XSTACK-003",
+                "ERROR",
+                "structural_conformance",
+                "yarn.lock found — yarn is not the approved package manager for TypeScript projects.",
+                "Migrate to pnpm: remove yarn.lock, run pnpm install, commit pnpm-lock.yaml.",
+            )
+        )
+    if not (repo_path / "pnpm-lock.yaml").exists():
+        findings.append(
+            _finding(
+                "XSTACK-003",
+                "WARN",
+                "structural_conformance",
+                "pnpm-lock.yaml not found — pnpm may not be in use.",
+                "Use pnpm as the package manager and commit pnpm-lock.yaml.",
+            )
+        )
+    return findings
+
+
 # -- Runner -------------------------------------------------------------------
 
 
@@ -1692,5 +1825,11 @@ def run_all_checks(
         _run(check_retry_logic, "PIPE-007")
         _run(check_no_retired_trigger_patterns, "PIPE-008")
         _run(check_evaluation_step, "PIPE-009")
+        _run(check_prefect_serve_pattern, "CD-015")
+
+    _run(check_releaserc_assets, "VER-008")
+
+    if is_frontend and not is_python:
+        _run(check_pnpm_lockfile, "XSTACK-003")
 
     return CheckResult(findings=findings, checked_rule_ids=checked_rule_ids)
