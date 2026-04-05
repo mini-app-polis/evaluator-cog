@@ -1,3 +1,10 @@
+## [2.2.1](https://github.com/mini-app-polis/evaluator-cog/compare/v2.2.0...v2.2.1) (2026-04-05)
+
+
+### Bug Fixes
+
+* correct XSTACK-003 wiring to hono/react only, expand test coverage ([f1c57d4](https://github.com/mini-app-polis/evaluator-cog/commit/f1c57d4147a5a11b7452089e727aa92f4e1a14b4))
+
 # [2.2.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.1.5...v2.2.0) (2026-04-05)
 
 
