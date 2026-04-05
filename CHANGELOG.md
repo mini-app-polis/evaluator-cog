@@ -1,3 +1,11 @@
+## [2.3.1](https://github.com/mini-app-polis/evaluator-cog/compare/v2.3.0...v2.3.1) (2026-04-05)
+
+
+### Bug Fixes
+
+* findings quality pass — false positives, deduplication, monorepo root fallback ([50712f9](https://github.com/mini-app-polis/evaluator-cog/commit/50712f97630c2b3cc04e5f049f9abdd4487dc301))
+* formatting ([ad28cce](https://github.com/mini-app-polis/evaluator-cog/commit/ad28cce39f7b2691b597fb77ed1df2944daf5491))
+
 # [2.3.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.2.1...v2.3.0) (2026-04-05)
 
 
