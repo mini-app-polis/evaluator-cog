@@ -654,14 +654,29 @@ def test_run_all_checks_xstack001_suppressed_for_frontend_site() -> None:
     assert error_findings == []
 
 
-def test_check_shared_library_ts_passes_with_dependency_and_import() -> None:
+def test_run_all_checks_astro_language_does_not_trigger_ts_shared_lib_check() -> None:
+    """Astro repos passed with language='astro' must not trigger XSTACK-001.
+    conformance.py normalises 'astro' -> 'typescript' before calling run_all_checks,
+    and new_frontend_site is exempt from XSTACK-001 by design.
+    """
     repo = _make_repo(
         {
-            "package.json": '{"name":"x","dependencies":{"common-typescript-utils":"1.0.0"}}\n',
-            "src/index.ts": "import { createLogger } from 'common-typescript-utils'\n",
+            "package.json": '{"dependencies":{"astro":"4"}}\n',
+            "astro.config.mjs": "export default {}\n",
         }
     )
-    assert check_shared_library_used(repo, language="typescript") == []
+    # Simulate what conformance.py does after normalisation
+    result = run_all_checks(
+        repo,
+        language="typescript",
+        service_type="site",
+        dod_type="new_frontend_site",
+    )
+    error_findings = [
+        f for f in result.findings
+        if f["rule_id"] == "XSTACK-001" and f["severity"] == "ERROR"
+    ]
+    assert error_findings == []
 
 
 def test_run_all_checks_frontend_wires_new_frontend_rules() -> None:

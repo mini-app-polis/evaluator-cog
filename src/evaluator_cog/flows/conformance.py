@@ -344,7 +344,10 @@ def conformance_check_flow() -> None:
                 continue
 
             service_type = service.get("type", "worker")
-            language = str(service.get("language") or "python")
+            _raw_language = str(service.get("language") or "python")
+            # Astro is a TypeScript-based framework — normalise to "typescript"
+            # so run_all_checks applies the correct stack checks.
+            language = "typescript" if _raw_language == "astro" else _raw_language
             cog_subtype = str(service.get("cog_subtype") or "").strip() or None
             dod_type = service.get("dod_type")
             raw_exc = service.get("check_exceptions") or []
