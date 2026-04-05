@@ -28,6 +28,24 @@ log = logger_mod.get_logger()
 _LLM_IMPORTED_SYMBOLS = (_anthropic_messages_create, _parse_findings_from_claude)
 _API_IMPORTED_SYMBOLS = (_get_latest_stored_finding,)
 
+# Maps Prefect flow names to their source repo in the ecosystem inventory.
+# Add new entries here when new pipeline cogs are deployed.
+_FLOW_REPO_MAP: dict[str, str] = {
+    "process-transcript": "notes-ingest-cog",
+    "update-dj-set-collection": "deejay-cog",
+    "generate-summaries": "deejay-cog",
+    "process-set": "deejay-cog",
+}
+
+
+def _flow_name_to_repo(flow_name: str) -> str:
+    """Map a Prefect flow name to its ecosystem repo id.
+
+    Falls back to 'deejay-cog' for unknown flows to preserve existing
+    behaviour for legacy flows not yet in the map.
+    """
+    return _FLOW_REPO_MAP.get(flow_name, "deejay-cog")
+
 
 def evaluate_pipeline_run(
     *,
@@ -235,7 +253,7 @@ def _apply_prefect_flow_run_event(payload: dict[str, Any]) -> None:
     if state_type in {"FAILED", "CRASHED"}:
         evaluate_pipeline_run(
             run_id=flow_run_id,
-            repo="deejay-cog",
+            repo=_flow_name_to_repo(flow_name),
             flow_name=flow_name,
             sets_imported=0,
             sets_failed=0,
@@ -253,7 +271,7 @@ def _apply_prefect_flow_run_event(payload: dict[str, Any]) -> None:
 
     evaluate_pipeline_run(
         run_id=flow_run_id,
-        repo="deejay-cog",
+        repo=_flow_name_to_repo(flow_name),
         flow_name=flow_name,
         sets_imported=0,
         sets_failed=0,
