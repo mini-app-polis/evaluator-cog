@@ -42,14 +42,46 @@ def _finding(
     }
 
 
+# Pairs where the first rule supersedes the second — if both fire,
+# drop the superseded rule's finding.
+_SUPERSEDED_BY: dict[str, str] = {
+    "CD-002": "CD-010",
+    "CD-009": "CD-010",
+}
+
+
+def _deduplicate_same_repo_findings(findings: list[Finding]) -> list[Finding]:
+    """
+    Remove findings for rules that are superseded by a higher-level rule
+    that also fired in the same check run.
+
+    Example: if CD-010 fires, drop any CD-002 and CD-009 findings — they
+    are sub-components of CD-010 and generating all three is redundant.
+    """
+    fired_rule_ids = {str(f.get("rule_id", "")) for f in findings}
+    return [
+        f
+        for f in findings
+        if not (
+            str(f.get("rule_id", "")) in _SUPERSEDED_BY
+            and _SUPERSEDED_BY[str(f.get("rule_id", ""))] in fired_rule_ids
+        )
+    ]
+
+
 # -- File presence checks -----------------------------------------------------
 
 
-def check_readme(repo_path: Path) -> list[Finding]:
+def check_readme(
+    repo_path: Path, monorepo_root: Path | None = None
+) -> list[Finding]:
     """DOC-001: README.md is mandatory."""
     CHECK_ID = "DOC-001"
     findings = []
-    if not (repo_path / "README.md").exists():
+    exists = (repo_path / "README.md").exists()
+    if not exists and monorepo_root:
+        exists = (monorepo_root / "README.md").exists()
+    if not exists:
         findings.append(
             _finding(
                 "DOC-001",
@@ -62,11 +94,16 @@ def check_readme(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_changelog(repo_path: Path) -> list[Finding]:
+def check_changelog(
+    repo_path: Path, monorepo_root: Path | None = None
+) -> list[Finding]:
     """DOC-003: CHANGELOG.md required."""
     CHECK_ID = "DOC-003"
     findings = []
-    if not (repo_path / "CHANGELOG.md").exists():
+    exists = (repo_path / "CHANGELOG.md").exists()
+    if not exists and monorepo_root:
+        exists = (monorepo_root / "CHANGELOG.md").exists()
+    if not exists:
         findings.append(
             _finding(
                 "DOC-003",
@@ -79,7 +116,9 @@ def check_changelog(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_env_example(repo_path: Path) -> list[Finding]:
+def check_env_example(
+    repo_path: Path, monorepo_root: Path | None = None
+) -> list[Finding]:
     """DOC-004: .env.example is required."""
     CHECK_ID = "DOC-004"
     findings = []
@@ -92,6 +131,8 @@ def check_env_example(repo_path: Path) -> list[Finding]:
         repo_path / "backend" / ".env.example",
         repo_path / "server" / ".env.example",
     ]
+    if monorepo_root:
+        candidates.append(monorepo_root / ".env.example")
     if not any(p.exists() for p in candidates):
         findings.append(
             _finding(
@@ -122,11 +163,16 @@ def check_pre_commit(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_releaserc(repo_path: Path) -> list[Finding]:
+def check_releaserc(
+    repo_path: Path, monorepo_root: Path | None = None
+) -> list[Finding]:
     """VER-003: semantic-release on all repos."""
     CHECK_ID = "VER-003"
     findings = []
-    if not (repo_path / ".releaserc.json").exists():
+    exists = (repo_path / ".releaserc.json").exists()
+    if not exists and monorepo_root:
+        exists = (monorepo_root / ".releaserc.json").exists()
+    if not exists:
         findings.append(
             _finding(
                 "VER-003",
@@ -632,11 +678,15 @@ def check_finally_cleanup(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_readme_io(repo_path: Path) -> list[Finding]:
+def check_readme_io(
+    repo_path: Path, monorepo_root: Path | None = None
+) -> list[Finding]:
     """DOC-002: README describes inputs and outputs."""
     CHECK_ID = "DOC-002"
     findings = []
     readme = repo_path / "README.md"
+    if not readme.exists() and monorepo_root:
+        readme = monorepo_root / "README.md"
     if not readme.exists():
         return findings
     text = readme.read_text().lower()
@@ -1181,6 +1231,8 @@ def check_no_retired_trigger_patterns(repo_path: Path) -> list[Finding]:
             continue
         if ".github/workflows/" in str(path).replace("\\", "/"):
             continue
+        if "tests/" in str(path).replace("\\", "/"):
+            continue
         if path.suffix.lower() not in {".py", ".ts", ".tsx", ".js"}:
             continue
         text = path.read_text()
@@ -1589,13 +1641,17 @@ def check_prefect_serve_pattern(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_releaserc_assets(repo_path: Path) -> list[Finding]:
+def check_releaserc_assets(
+    repo_path: Path, monorepo_root: Path | None = None
+) -> list[Finding]:
     """VER-008: .releaserc.json assets must include all version-managed files."""
     CHECK_ID = "VER-008"
     import json as _json
 
     findings = []
     releaserc = repo_path / ".releaserc.json"
+    if not releaserc.exists() and monorepo_root:
+        releaserc = monorepo_root / ".releaserc.json"
     if not releaserc.exists():
         return findings
     try:
@@ -1707,7 +1763,9 @@ def run_all_checks(
         "new_fastapi_service",
     )
     is_library = service_type == "library" or dod_type is None
-    is_pipeline_cog = dod_type == "new_cog" or (
+    is_pipeline_cog = (
+        dod_type == "new_cog" and cog_subtype != "trigger"
+    ) or (
         is_python and service_type == "worker" and cog_subtype == "pipeline"
     )
     is_fastapi = dod_type == "new_fastapi_service"
@@ -1752,15 +1810,15 @@ def run_all_checks(
 
     findings: list[Finding] = []
 
-    _run(check_readme, "DOC-001")
-    _run(check_readme_io, "DOC-002")
-    _run(check_changelog, "DOC-003")
-    _run(check_releaserc, "VER-003")
+    _run(lambda p: check_readme(p, monorepo_root=monorepo_root), "DOC-001")
+    _run(lambda p: check_readme_io(p, monorepo_root=monorepo_root), "DOC-002")
+    _run(lambda p: check_changelog(p, monorepo_root=monorepo_root), "DOC-003")
+    _run(lambda p: check_releaserc(p, monorepo_root=monorepo_root), "VER-003")
     _run(check_no_dead_code, "DOC-008")
     _run(check_split_package_identity, "DOC-009")
 
     if not is_library:
-        _run(check_env_example, "DOC-004")
+        _run(lambda p: check_env_example(p, monorepo_root=monorepo_root), "DOC-004")
 
     if is_python and not is_frontend:
         _run(check_pre_commit, "PY-008")
@@ -1893,7 +1951,10 @@ def run_all_checks(
         _run(check_evaluation_step, "PIPE-009")
         _run(check_prefect_serve_pattern, "CD-015")
 
-    _run(check_releaserc_assets, "VER-008")
+    _run(
+        lambda p: check_releaserc_assets(p, monorepo_root=monorepo_root),
+        "VER-008",
+    )
 
     if dod_type in ("new_hono_service", "new_react_app"):
 
@@ -1902,4 +1963,5 @@ def run_all_checks(
 
         _run(_pnpm_lock_check, "XSTACK-003")
 
+    findings = _deduplicate_same_repo_findings(findings)
     return CheckResult(findings=findings, checked_rule_ids=checked_rule_ids)

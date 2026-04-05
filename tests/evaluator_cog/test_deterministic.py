@@ -4,6 +4,8 @@ import tempfile
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic import (
+    Finding,
+    _deduplicate_same_repo_findings,
     check_astro_framework,
     check_changelog,
     check_ci,
@@ -1091,3 +1093,167 @@ def test_deduplication_collapses_sibling_findings() -> None:
     sibling = result["deejaytools-com-app"]
     assert len(sibling) == 1
     assert sibling[0]["rule_id"] == "FE-002"
+
+
+# ── Category A: trigger cog exclusion ─────────────────────────────────────
+
+
+def test_trigger_cog_skips_pipe008(tmp_path: Path) -> None:
+    """PIPE-008 must not fire on trigger cogs (cog_subtype=trigger)."""
+    src = tmp_path / "src" / "watcher_cog"
+    src.mkdir(parents=True)
+    (src / "main.py").write_text(
+        "# uses repository_dispatch pattern\nrepository_dispatch = True\n"
+    )
+
+    result = run_all_checks(
+        tmp_path,
+        language="python",
+        dod_type="new_cog",
+        cog_subtype="trigger",
+    )
+    rule_ids = [f["rule_id"] for f in result.findings]
+    assert "PIPE-008" not in rule_ids, "PIPE-008 must not fire on trigger cogs"
+
+
+def test_trigger_cog_skips_pipe009_evaluation_step(tmp_path: Path) -> None:
+    """PIPE-009 (evaluation step) must not fire on trigger cogs."""
+    src = tmp_path / "src" / "watcher_cog"
+    src.mkdir(parents=True)
+    (src / "main.py").write_text("# trigger cog — no pipeline\n")
+
+    result = run_all_checks(
+        tmp_path,
+        language="python",
+        dod_type="new_cog",
+        cog_subtype="trigger",
+    )
+    rule_ids = [f["rule_id"] for f in result.findings]
+    assert "PIPE-009" not in rule_ids, "PIPE-009 must not fire on trigger cogs"
+
+
+def test_retired_pattern_in_tests_not_flagged(tmp_path: Path) -> None:
+    """Retired trigger patterns in tests/ must not trigger PIPE-008."""
+    src = tmp_path / "src" / "my_cog"
+    src.mkdir(parents=True)
+    (src / "main.py").write_text("# clean source\n")
+
+    tests = tmp_path / "tests" / "my_cog"
+    tests.mkdir(parents=True)
+    (tests / "test_trigger.py").write_text(
+        'def test_retired():\n    pattern = "repository_dispatch"\n    assert pattern in old_config\n'
+    )
+
+    result = run_all_checks(
+        tmp_path,
+        language="python",
+        dod_type="new_cog",
+        cog_subtype="pipeline",
+    )
+    rule_ids = [f["rule_id"] for f in result.findings]
+    assert "PIPE-008" not in rule_ids, (
+        "PIPE-008 must not fire for retired patterns in test files"
+    )
+
+
+# ── Category B: same-repo deduplication ───────────────────────────────────
+
+
+def test_cd010_supersedes_cd002_and_cd009() -> None:
+    """When CD-010 fires, CD-002 and CD-009 findings should be dropped."""
+    raw_findings: list[Finding] = [
+        {
+            "rule_id": "CD-010",
+            "severity": "ERROR",
+            "dimension": "cd_readiness",
+            "finding": "Three-layer observability stack is absent.",
+            "suggestion": "",
+        },
+        {
+            "rule_id": "CD-002",
+            "severity": "WARN",
+            "dimension": "cd_readiness",
+            "finding": "sentry-sdk not found in pyproject.toml.",
+            "suggestion": "",
+        },
+        {
+            "rule_id": "CD-009",
+            "severity": "WARN",
+            "dimension": "cd_readiness",
+            "finding": "Hand-rolled logging detected.",
+            "suggestion": "",
+        },
+        {
+            "rule_id": "DOC-001",
+            "severity": "ERROR",
+            "dimension": "documentation_coverage",
+            "finding": "README.md is absent.",
+            "suggestion": "",
+        },
+    ]
+    result = _deduplicate_same_repo_findings(raw_findings)
+    rule_ids = [f["rule_id"] for f in result]
+    assert "CD-010" in rule_ids, "CD-010 should be retained"
+    assert "CD-002" not in rule_ids, "CD-002 should be dropped when CD-010 fires"
+    assert "CD-009" not in rule_ids, "CD-009 should be dropped when CD-010 fires"
+    assert "DOC-001" in rule_ids, "Unrelated findings should be retained"
+
+
+def test_cd002_not_dropped_without_cd010() -> None:
+    """CD-002 should NOT be dropped if CD-010 did not fire."""
+    raw_findings: list[Finding] = [
+        {
+            "rule_id": "CD-002",
+            "severity": "WARN",
+            "dimension": "cd_readiness",
+            "finding": "sentry-sdk not found.",
+            "suggestion": "",
+        },
+    ]
+    result = _deduplicate_same_repo_findings(raw_findings)
+    assert len(result) == 1
+    assert result[0]["rule_id"] == "CD-002"
+
+
+# ── Category C: monorepo root file fallback ───────────────────────────────
+
+
+def test_check_readme_finds_at_monorepo_root(tmp_path: Path) -> None:
+    """check_readme should not flag absence if README exists at monorepo root."""
+    app_dir = tmp_path / "apps" / "api"
+    app_dir.mkdir(parents=True)
+    monorepo_root = tmp_path
+    (monorepo_root / "README.md").write_text("# Monorepo README")
+
+    findings = check_readme(app_dir, monorepo_root=monorepo_root)
+    assert not findings, "README at monorepo root should satisfy DOC-001"
+
+
+def test_check_changelog_finds_at_monorepo_root(tmp_path: Path) -> None:
+    """check_changelog should not flag absence if CHANGELOG exists at monorepo root."""
+    app_dir = tmp_path / "apps" / "api"
+    app_dir.mkdir(parents=True)
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog")
+
+    findings = check_changelog(app_dir, monorepo_root=tmp_path)
+    assert not findings, "CHANGELOG at monorepo root should satisfy DOC-003"
+
+
+def test_check_releaserc_finds_at_monorepo_root(tmp_path: Path) -> None:
+    """check_releaserc should not flag absence if .releaserc.json exists at monorepo root."""
+    app_dir = tmp_path / "apps" / "api"
+    app_dir.mkdir(parents=True)
+    (tmp_path / ".releaserc.json").write_text('{"branches": ["main"]}')
+
+    findings = check_releaserc(app_dir, monorepo_root=tmp_path)
+    assert not findings, ".releaserc.json at monorepo root should satisfy VER-003"
+
+
+def test_check_readme_flags_absent_from_both(tmp_path: Path) -> None:
+    """check_readme should flag if README absent from BOTH app dir and monorepo root."""
+    app_dir = tmp_path / "apps" / "api"
+    app_dir.mkdir(parents=True)
+    monorepo_root = tmp_path
+
+    findings = check_readme(app_dir, monorepo_root=monorepo_root)
+    assert any(f["rule_id"] == "DOC-001" for f in findings)

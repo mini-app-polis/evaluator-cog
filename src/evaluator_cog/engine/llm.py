@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
@@ -182,6 +183,7 @@ def build_conformance_prompt(
     check_exceptions: list[str] | None = None,
     exception_reasons: dict[str, str] | None = None,
     monorepo_context: dict | None = None,
+    repo_path: Path | None = None,
 ) -> str:
     """Build the LLM prompt for soft-rule conformance assessment."""
     findings_summary = (
@@ -205,6 +207,9 @@ def build_conformance_prompt(
         for f in deterministic_findings
         if f.get("rule_id") != "CHECKER"
     }
+    # EVAL-002 is assessed deterministically via the standards_version field check.
+    # Always mark it as checked so the LLM does not re-assess it.
+    all_checked.add("EVAL-002")
     soft_rules = [r for r in standards_rules if r["id"] not in all_checked]
     soft_rules_text = (
         "\n".join(
@@ -252,6 +257,33 @@ Monorepo context:
     else:
         monorepo_block = ""
 
+    if repo_path is not None:
+        try:
+            src_files = sorted(
+                str(p.relative_to(repo_path))
+                for p in repo_path.rglob("*")
+                if p.is_file()
+                and not any(
+                    part.startswith(".")
+                    or part == "__pycache__"
+                    or part == "node_modules"
+                    for part in p.parts
+                )
+            )
+            if len(src_files) > 60:
+                src_files = src_files[:60] + [
+                    f"... ({len(src_files) - 60} more files)"
+                ]
+            inventory_block = (
+                "REPO FILE INVENTORY (actual files present — do not reference files not listed here):\n"
+                + "\n".join(f"  {f}" for f in src_files)
+                + "\n"
+            )
+        except Exception:
+            inventory_block = ""
+    else:
+        inventory_block = ""
+
     return f"""You are reviewing a MiniAppPolis ecosystem repo against engineering standards v{standards_version}.
 
 Repo: {repo_id}
@@ -261,6 +293,7 @@ Language: {language}
 Check exceptions (do not flag these rule IDs):
 {exc_block}
 {monorepo_block}
+{inventory_block}
 STANDARDS RULES FOR THIS SERVICE TYPE:
 The following are the checkable rules that apply to this repo type, with
 instructions for how to evaluate them:
@@ -297,6 +330,11 @@ ABSOLUTE CONSTRAINTS:
 - Never flag something as missing just because it was not mentioned
   in the deterministic findings — absence of a finding means passing
 - Only flag rules where you have genuine positive signal of a problem
+- If you are raising a finding for CD-010 (three-layer observability stack
+  absent or incomplete), do NOT also raise separate findings for CD-002
+  (Sentry absent) or CD-009 (structured logging absent) for the same service.
+  CD-010 is the composite rule — its sub-components are implicit. Raising all
+  three produces duplicate findings for one root cause.
 - If soft_rules is empty, emit exactly one INFO finding confirming
   the repo passed all assessed rules
 RESPONSE COUNT RULE: Emit the MINIMUM number of findings needed.

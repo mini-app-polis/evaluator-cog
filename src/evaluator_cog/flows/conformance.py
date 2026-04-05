@@ -322,6 +322,7 @@ def run_conformance_check(
                 check_exceptions=check_exceptions,
                 exception_reasons=exception_reasons,
                 monorepo_context=monorepo_context,
+                repo_path=repo_path,
             )
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
             raw = _anthropic_messages_create(
