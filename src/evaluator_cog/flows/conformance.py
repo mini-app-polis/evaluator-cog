@@ -117,7 +117,9 @@ def _read_workspace_package_json(monorepo_root: Path) -> str:
     return ""
 
 
-def _fetch_standards_for_service(service: dict, evaluator_cfg: EvaluatorConfig | None = None) -> list[dict]:
+def _fetch_standards_for_service(
+    service: dict, evaluator_cfg: EvaluatorConfig | None = None
+) -> list[dict]:
     """
     Fetch checkable rules from all standards domains, filtered by
     the service's repo type using the applies_to field on each rule.
@@ -125,10 +127,7 @@ def _fetch_standards_for_service(service: dict, evaluator_cfg: EvaluatorConfig |
     Never raises — returns [] on failure.
     """
     # Prefer new type from evaluator_config, fall back to dod_type for migration period
-    if evaluator_cfg is not None:
-        repo_type = evaluator_cfg.repo_type
-    else:
-        repo_type = None
+    repo_type = evaluator_cfg.repo_type if evaluator_cfg is not None else None
 
     dod_type = service.get("dod_type")
     all_rules = []
@@ -164,16 +163,12 @@ def _fetch_standards_for_service(service: dict, evaluator_cfg: EvaluatorConfig |
                 )
                 continue
             # Match on new repo type (v3.0.0) or legacy dod_type (migration period)
-            if repo_type and repo_type in applies_to:
-                all_rules.append(
-                    {
-                        "id": rule.get("id", ""),
-                        "title": rule.get("title", ""),
-                        "severity": rule.get("severity", "INFO"),
-                        "check_notes": rule.get("check_notes", "").strip(),
-                    }
-                )
-            elif dod_type and dod_type in applies_to:
+            if (
+                repo_type
+                and repo_type in applies_to
+                or dod_type
+                and dod_type in applies_to
+            ):
                 all_rules.append(
                     {
                         "id": rule.get("id", ""),
@@ -465,7 +460,11 @@ def _run_standalone_conformance(
             evaluator_config=evaluator_cfg,
         )
         _ = all_findings
-        prefect_log.info("conformance: LLM pass complete for %s (config: %s)", repo_id, evaluator_cfg.source)
+        prefect_log.info(
+            "conformance: LLM pass complete for %s (config: %s)",
+            repo_id,
+            evaluator_cfg.source,
+        )
     except Exception as exc:
         prefect_log.warning("conformance: check failed for %s: %s", repo_id, exc)
 

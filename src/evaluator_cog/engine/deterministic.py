@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from evaluator_cog.engine.evaluator_config import EvaluatorConfig
+
 Finding = dict[str, Any]
 
 
@@ -1747,7 +1749,9 @@ def _type_to_dod(repo_type: str, language: str = "python") -> str | None:
     mapping = {
         "pipeline-cog": "new_cog",
         "trigger-cog": "new_cog",
-        "api-service": "new_fastapi_service" if language == "python" else "new_hono_service",
+        "api-service": "new_fastapi_service"
+        if language == "python"
+        else "new_hono_service",
         "shared-library": "new_cog",  # closest match for README check
         "static-site": "new_frontend_site",
         "react-app": "new_react_app",
@@ -1769,7 +1773,7 @@ def run_all_checks(
     exception_reasons: dict[str, str] | None = None,
     monorepo_root: Path | None = None,
     workspace_package_json_text: str | None = None,
-    evaluator_config: "EvaluatorConfig | None" = None,
+    evaluator_config: EvaluatorConfig | None = None,
 ) -> CheckResult:
     """Run deterministic checks against a repo and return combined findings.
 
@@ -1777,8 +1781,6 @@ def run_all_checks(
     takes precedence over the legacy dod_type/service_type/check_exceptions
     parameters for type-based branching and exception scoping.
     """
-    from evaluator_cog.engine.evaluator_config import EvaluatorConfig  # noqa: F401 (type hint)
-
     # ── Resolve type-based flags ─────────────────────────────────────────────
     # Prefer evaluator_config (from evaluator.yaml) over legacy dod_type fields.
     if evaluator_config is not None:
@@ -1814,9 +1816,8 @@ def run_all_checks(
 
     # Also handle cog_subtype trigger for trigger-cog type
     is_trigger_cog = (
-        (evaluator_config is not None and evaluator_config.is_trigger_cog)
-        or cog_subtype == "trigger"
-    )
+        evaluator_config is not None and evaluator_config.is_trigger_cog
+    ) or cog_subtype == "trigger"
 
     checked_rule_ids: set[str] = set()
 
@@ -1899,7 +1900,9 @@ def run_all_checks(
     # Healthchecks only applies to trigger cogs
     _mark_checked("CD-007")
     if is_trigger_cog:
-        findings.extend(check_healthchecks_integration(repo_path, cog_subtype="trigger"))
+        findings.extend(
+            check_healthchecks_integration(repo_path, cog_subtype="trigger")
+        )
 
     _run(check_structured_logging, "CD-009")
     _run(check_no_hardcoded_secrets, "CD-011")
@@ -1908,7 +1911,9 @@ def run_all_checks(
     _mark_checked("XSTACK-001")
     if "XSTACK-001" not in _exceptions:
         # Static sites are excluded from XSTACK-001 by type scoping
-        if not is_frontend or (evaluator_config is not None and not evaluator_config.is_static_site):
+        if not is_frontend or (
+            evaluator_config is not None and not evaluator_config.is_static_site
+        ):
             findings.extend(
                 check_shared_library_used(
                     repo_path,
@@ -2039,6 +2044,7 @@ def run_all_checks(
         _needs_pnpm = dod_type in ("new_hono_service", "new_react_app")
 
     if _needs_pnpm:
+
         def _pnpm_lock_check(p: Path) -> list[Finding]:
             return check_pnpm_lockfile(p, monorepo_root=monorepo_root)
 
