@@ -1,3 +1,15 @@
+# [3.1.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.0.0...v3.1.0) (2026-04-06)
+
+
+### Bug Fixes
+
+* formatting ([c29fa08](https://github.com/mini-app-polis/evaluator-cog/commit/c29fa08cdb5015df81b7219e63acb79d1edcd0eb))
+
+
+### Features
+
+* adding testing for new functionality from 3.0.0 ([a768ee3](https://github.com/mini-app-polis/evaluator-cog/commit/a768ee318bce5e51e8209474ccf927bde305b267))
+
 # [3.0.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.6.4...v3.0.0) (2026-04-06)
 
 
