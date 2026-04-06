@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import os
 import sys
+import urllib.request
+from contextlib import suppress
 from pathlib import Path
 
 import sentry_sdk
@@ -25,6 +27,10 @@ def main() -> None:
     """Register all flows and start the Prefect runner loop."""
     load_dotenv()
     sentry_sdk.init(dsn=os.getenv("SENTRY_DSN_EVALUATOR"), environment="production")
+    HEALTHCHECKS_URL = os.getenv("HEALTHCHECKS_URL", "")
+    if HEALTHCHECKS_URL:
+        with suppress(Exception):
+            urllib.request.urlopen(HEALTHCHECKS_URL, timeout=5)
 
     src_path = os.environ.get(
         "APP_SOURCE_PATH", str(Path(__file__).parent.parent.parent)

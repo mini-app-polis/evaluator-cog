@@ -15,6 +15,18 @@ Findings are written to the `pipeline_evaluations` table via
 `source=flow_hook` (failure/crash hooks) or `source=prefect_webhook`
 (Prefect Cloud automation).
 
+## Inputs and outputs
+
+**Inputs:** Pipeline run metrics (sets imported, failed, skipped, track counts)
+passed directly from calling cogs via `evaluate_pipeline_run()`. Prefect flow
+state events received as JSON via stdin or webhook payload. Repo source code
+cloned from GitHub for structural conformance checks.
+
+**Outputs:** Structured findings written to the `pipeline_evaluations` table
+via `POST /v1/evaluations` on api-kaianolevine-com. Each finding includes
+`repo`, `run_id`, `severity`, `dimension`, `finding`, `suggestion`,
+`standards_version`, and `source`.
+
 ## Running locally
 
 Prerequisites: Python 3.11+, uv

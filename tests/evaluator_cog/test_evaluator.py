@@ -142,6 +142,8 @@ def test_evaluate_pipeline_run_uses_csv_prompt_when_collection_update_false(
         )
 
     assert prompts and "CSV PROCESSING evaluation context" in prompts[0]
+    # Prompt was captured — no API post expected (empty findings list)
+    api.post.assert_not_called()
 
 
 def test_evaluate_pipeline_run_uses_collection_prompt_when_collection_update_true(
@@ -183,6 +185,7 @@ def test_evaluate_pipeline_run_uses_collection_prompt_when_collection_update_tru
         )
 
     assert prompts and "COLLECTION_UPDATE evaluation context" in prompts[0]
+    api.post.assert_not_called()
 
 
 def test_evaluate_pipeline_run_posts_findings(monkeypatch) -> None:
