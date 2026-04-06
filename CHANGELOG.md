@@ -1,3 +1,10 @@
+## [2.3.2](https://github.com/mini-app-polis/evaluator-cog/compare/v2.3.1...v2.3.2) (2026-04-06)
+
+
+### Bug Fixes
+
+* address exception rules ([8c484cb](https://github.com/mini-app-polis/evaluator-cog/commit/8c484cbe864ddf42ef7521c0b989e497cc31bf09))
+
 ## [2.3.1](https://github.com/mini-app-polis/evaluator-cog/compare/v2.3.0...v2.3.1) (2026-04-05)
 
 
