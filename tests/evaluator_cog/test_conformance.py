@@ -7,7 +7,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from evaluator_cog.flows.conformance import run_conformance_check
+from evaluator_cog.engine.deterministic import CheckResult
+from evaluator_cog.engine.evaluator_config import EvaluatorConfig
+from evaluator_cog.flows.conformance import (
+    _fetch_standards_for_service,
+    _run_standalone_deterministic,
+    run_conformance_check,
+)
 
 
 def _minimal_repo() -> Path:
@@ -179,3 +185,96 @@ def test_run_llm_false_source_is_conformance_deterministic(monkeypatch) -> None:
         )
 
     assert all(p["source"] == "conformance_check" for p in posted)
+
+
+def _fake_fetch_standards(url: str) -> dict:
+    if url.endswith("/pipeline.yaml"):
+        return {
+            "standards": [
+                {
+                    "id": "PIPELINE-RULE",
+                    "checkable": True,
+                    "applies_to": ["pipeline-cog"],
+                    "title": "Pipeline-only",
+                    "severity": "WARN",
+                    "check_notes": "Only for pipeline cogs.",
+                },
+            ]
+        }
+    if url.endswith("/python.yaml"):
+        return {
+            "standards": [
+                {
+                    "id": "LEGACY-COG-RULE",
+                    "checkable": True,
+                    "applies_to": ["new_cog"],
+                    "title": "Legacy cog",
+                    "severity": "INFO",
+                    "check_notes": "Matches dod_type.",
+                },
+            ]
+        }
+    return {"standards": []}
+
+
+def test_fetch_standards_matches_new_repo_type() -> None:
+    """Rules whose applies_to includes pipeline-cog are included when repo_type matches."""
+    service = {"id": "x", "dod_type": "new_cog"}
+    cfg = EvaluatorConfig(repo_type="pipeline-cog")
+    with patch(
+        "evaluator_cog.flows.conformance._fetch_yaml",
+        side_effect=_fake_fetch_standards,
+    ):
+        rules = _fetch_standards_for_service(service, cfg)
+    ids = {r["id"] for r in rules}
+    assert "PIPELINE-RULE" in ids
+
+
+def test_fetch_standards_falls_back_to_dod_type_when_no_evaluator_cfg() -> None:
+    """When evaluator_cfg is None, applies_to matches on legacy dod_type."""
+    service = {"id": "x", "dod_type": "new_cog"}
+    with patch(
+        "evaluator_cog.flows.conformance._fetch_yaml",
+        side_effect=_fake_fetch_standards,
+    ):
+        rules = _fetch_standards_for_service(service, None)
+    ids = {r["id"] for r in rules}
+    assert "LEGACY-COG-RULE" in ids
+
+
+def test_run_standalone_deterministic_calls_load_evaluator_config(
+    tmp_path: Path,
+) -> None:
+    """Standalone deterministic pass loads config from the cloned repo path."""
+    cfg = EvaluatorConfig(repo_type="pipeline-cog")
+    (tmp_path / "README.md").write_text("# ok\n")
+
+    with (
+        patch(
+            "evaluator_cog.flows.conformance.load_evaluator_config",
+        ) as mock_load,
+        patch(
+            "evaluator_cog.flows.conformance.run_all_checks",
+        ) as mock_run_all,
+        patch(
+            "evaluator_cog.flows.conformance.post_findings",
+        ) as mock_post,
+    ):
+        mock_load.return_value = cfg
+        mock_run_all.return_value = CheckResult(findings=[], checked_rule_ids=set())
+        service = {"id": "svc-test", "type": "worker", "dod_type": "new_cog"}
+        prefect_log = MagicMock()
+        _run_standalone_deterministic(
+            service,
+            tmp_path,
+            "2.5.0",
+            "deterministic-2.5.0-unit",
+            prefect_log,
+            monorepo_root=None,
+        )
+
+    mock_load.assert_called()
+    assert mock_load.call_args_list[0][0][0] == tmp_path
+    mock_run_all.assert_called_once()
+    assert mock_run_all.call_args.kwargs["evaluator_config"] is cfg
+    mock_post.assert_called_once()

@@ -3,9 +3,12 @@
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from evaluator_cog.engine.deterministic import (
     Finding,
     _deduplicate_same_repo_findings,
+    _type_to_dod,
     check_astro_framework,
     check_changelog,
     check_ci,
@@ -48,6 +51,7 @@ from evaluator_cog.engine.deterministic import (
     check_vite_react_ts,
     run_all_checks,
 )
+from evaluator_cog.engine.evaluator_config import EvaluatorConfig
 from evaluator_cog.flows.conformance import _deduplicate_sibling_findings
 
 
@@ -1257,3 +1261,145 @@ def test_check_readme_flags_absent_from_both(tmp_path: Path) -> None:
 
     findings = check_readme(app_dir, monorepo_root=monorepo_root)
     assert any(f["rule_id"] == "DOC-001" for f in findings)
+
+
+# ── Evaluator.yaml / EvaluatorConfig integration ────────────────────────────
+
+
+def _write_evaluator_yaml(root: Path, content: str = "type: pipeline-cog\n") -> None:
+    (root / "evaluator.yaml").write_text(content)
+
+
+def test_eval008_when_evaluator_yaml_absent(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# x\n")
+    result = run_all_checks(tmp_path, language="python", dod_type="new_cog")
+    assert any(f.get("rule_id") == "EVAL-008" for f in result.findings)
+
+
+def test_eval008_not_emitted_when_evaluator_yaml_present(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# x\n")
+    _write_evaluator_yaml(tmp_path)
+    result = run_all_checks(tmp_path, language="python", dod_type="new_cog")
+    assert not any(f.get("rule_id") == "EVAL-008" for f in result.findings)
+
+
+def test_deferred_finding_has_info_and_flag(tmp_path: Path) -> None:
+    """Deferrals downgrade severity to INFO and set deferred=True on findings."""
+    cfg = EvaluatorConfig(
+        repo_type="pipeline-cog",
+        deferral_ids=["DOC-001"],
+        deferral_reasons={"DOC-001": "scheduled"},
+    )
+    # No README → DOC-001 would normally ERROR/WARN from check_readme
+    result = run_all_checks(
+        tmp_path,
+        language="python",
+        evaluator_config=cfg,
+    )
+    doc = [f for f in result.findings if f.get("rule_id") == "DOC-001"]
+    assert doc, "expected a DOC-001 finding"
+    assert all(f.get("severity") == "INFO" for f in doc)
+    assert all(f.get("deferred") is True for f in doc)
+
+
+def test_evaluator_config_trigger_cog_skips_pipeline_rules(tmp_path: Path) -> None:
+    cfg = EvaluatorConfig(repo_type="trigger-cog")
+    src = tmp_path / "src" / "watcher"
+    src.mkdir(parents=True)
+    (src / "main.py").write_text("repository_dispatch = True\n")
+    _write_evaluator_yaml(tmp_path)
+    result = run_all_checks(
+        tmp_path,
+        language="python",
+        evaluator_config=cfg,
+    )
+    pipe = {"PIPE-008", "PIPE-009", "PIPE-011"}
+    hit = {f["rule_id"] for f in result.findings} & pipe
+    assert not hit, f"pipeline rules should not fire for trigger-cog: {hit}"
+
+
+def test_evaluator_config_shared_library_no_cd002_test001_py006_violations(
+    tmp_path: Path,
+) -> None:
+    """Type auto-exceptions prevent WARN/ERROR on CD-002, TEST-001, PY-006."""
+    cfg = EvaluatorConfig(repo_type="shared-library")
+    _write_evaluator_yaml(tmp_path)
+    (tmp_path / "README.md").write_text("# lib\n")
+    (tmp_path / "CHANGELOG.md").write_text("# c\n")
+    (tmp_path / ".releaserc.json").write_text("{}")
+    src = tmp_path / "src" / "mylib"
+    src.mkdir(parents=True)
+    (src / "__init__.py").write_text("")
+    # Deliberately omit sentry-sdk — would be CD-002 without the exception
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="x"\nversion="0.1.0"\nrequires-python=">=3.11"\n'
+        'dependencies = []\n[build-system]\nrequires = ["hatchling"]\n'
+        'build-backend = "hatchling.build"\n[tool.uv]\n[tool.ruff]\nline-length = 88\n'
+    )
+    result = run_all_checks(
+        tmp_path,
+        language="python",
+        evaluator_config=cfg,
+    )
+    bad = {
+        f["rule_id"]
+        for f in result.findings
+        if f["rule_id"] in ("CD-002", "TEST-001", "PY-006")
+        and f.get("severity") in ("WARN", "ERROR")
+    }
+    assert not bad, f"unexpected violations: {bad}"
+
+
+def test_evaluator_config_pipeline_logger_primitive_skips_cd009_violation(
+    tmp_path: Path,
+) -> None:
+    cfg = EvaluatorConfig(
+        repo_type="pipeline-cog",
+        traits=["logger-primitive"],
+    )
+    _write_evaluator_yaml(tmp_path)
+    (tmp_path / "README.md").write_text("# p\ninput\noutput\n")
+    (tmp_path / "CHANGELOG.md").write_text("# c\n")
+    (tmp_path / ".releaserc.json").write_text("{}")
+    src = tmp_path / "src" / "pipe"
+    src.mkdir(parents=True)
+    (src / "main.py").write_text(
+        "import logging\nlogging.getLogger(__name__).info('x')\n"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="x"\nversion="0.1.0"\nrequires-python=">=3.11"\n'
+        'dependencies = ["sentry-sdk"]\n[build-system]\nrequires = ["hatchling"]\n'
+        'build-backend = "hatchling.build"\n[tool.uv]\n[tool.ruff]\nline-length = 88\n'
+    )
+    result = run_all_checks(
+        tmp_path,
+        language="python",
+        evaluator_config=cfg,
+    )
+    cd009_bad = [
+        f
+        for f in result.findings
+        if f.get("rule_id") == "CD-009" and f.get("severity") in ("WARN", "ERROR")
+    ]
+    assert not cd009_bad
+
+
+@pytest.mark.parametrize(
+    ("repo_type", "language", "expected"),
+    [
+        ("pipeline-cog", "python", "new_cog"),
+        ("trigger-cog", "python", "new_cog"),
+        ("api-service", "python", "new_fastapi_service"),
+        ("api-service", "typescript", "new_hono_service"),
+        ("shared-library", "python", "new_cog"),
+        ("static-site", "typescript", "new_frontend_site"),
+        ("react-app", "typescript", "new_react_app"),
+        ("standards-repo", "python", None),
+    ],
+)
+def test_type_to_dod_mapping(
+    repo_type: str,
+    language: str,
+    expected: str | None,
+) -> None:
+    assert _type_to_dod(repo_type, language) == expected
