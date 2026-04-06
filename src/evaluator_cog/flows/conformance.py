@@ -34,6 +34,7 @@ from prefect.concurrency.sync import concurrency
 
 from evaluator_cog.engine.api_client import post_findings
 from evaluator_cog.engine.deterministic import run_all_checks
+from evaluator_cog.engine.evaluator_config import EvaluatorConfig, load_evaluator_config
 from evaluator_cog.engine.llm import (
     _anthropic_messages_create,
     _parse_findings_from_claude,
@@ -116,13 +117,19 @@ def _read_workspace_package_json(monorepo_root: Path) -> str:
     return ""
 
 
-def _fetch_standards_for_service(service: dict) -> list[dict]:
+def _fetch_standards_for_service(service: dict, evaluator_cfg: EvaluatorConfig | None = None) -> list[dict]:
     """
     Fetch checkable rules from all standards domains, filtered by
-    the service's dod_type using the applies_to field on each rule.
+    the service's repo type using the applies_to field on each rule.
     Returns a list of rule dicts with id, title, severity, check_notes.
     Never raises — returns [] on failure.
     """
+    # Prefer new type from evaluator_config, fall back to dod_type for migration period
+    if evaluator_cfg is not None:
+        repo_type = evaluator_cfg.repo_type
+    else:
+        repo_type = None
+
     dod_type = service.get("dod_type")
     all_rules = []
     domains = [
@@ -145,8 +152,28 @@ def _fetch_standards_for_service(service: dict) -> list[dict]:
             if not rule.get("checkable"):
                 continue
             applies_to = rule.get("applies_to", [])
-            # "all" applies to every service type
-            if "all" in applies_to or dod_type in applies_to:
+            # "all" applies to every type
+            if "all" in applies_to:
+                all_rules.append(
+                    {
+                        "id": rule.get("id", ""),
+                        "title": rule.get("title", ""),
+                        "severity": rule.get("severity", "INFO"),
+                        "check_notes": rule.get("check_notes", "").strip(),
+                    }
+                )
+                continue
+            # Match on new repo type (v3.0.0) or legacy dod_type (migration period)
+            if repo_type and repo_type in applies_to:
+                all_rules.append(
+                    {
+                        "id": rule.get("id", ""),
+                        "title": rule.get("title", ""),
+                        "severity": rule.get("severity", "INFO"),
+                        "check_notes": rule.get("check_notes", "").strip(),
+                    }
+                )
+            elif dod_type and dod_type in applies_to:
                 all_rules.append(
                     {
                         "id": rule.get("id", ""),
@@ -292,6 +319,7 @@ def run_conformance_check(
     monorepo_context: dict | None = None,
     post: bool = True,
     post_llm_only: bool = False,
+    evaluator_config: EvaluatorConfig | None = None,
 ) -> list[dict[str, Any]]:
     """
     Run deterministic + LLM conformance checks against a cloned repo.
@@ -311,6 +339,7 @@ def run_conformance_check(
             exception_reasons=exception_reasons,
             monorepo_root=monorepo_root,
             workspace_package_json_text=workspace_package_json_text,
+            evaluator_config=evaluator_config,
         )
         deterministic_findings = result.findings
         checked_rule_ids = result.checked_rule_ids
@@ -408,7 +437,16 @@ def _run_standalone_conformance(
     dod_type = service.get("dod_type")
     raw_exc = service.get("check_exceptions") or []
     check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
-    standards_rules = _fetch_standards_for_service(service)
+
+    # Load evaluator.yaml from cloned repo (preferred), fall back to ecosystem.yaml
+    evaluator_cfg = load_evaluator_config(
+        repo_path,
+        fallback_type=service.get("type") or dod_type,
+        fallback_exceptions=check_exceptions,
+        fallback_exception_reasons=exception_reasons,
+    )
+
+    standards_rules = _fetch_standards_for_service(service, evaluator_cfg)
     try:
         all_findings = run_conformance_check(
             repo_id=repo_id,
@@ -424,12 +462,10 @@ def _run_standalone_conformance(
             run_id=run_id,
             post=True,
             post_llm_only=True,
+            evaluator_config=evaluator_cfg,
         )
-        # run_conformance_check returns deterministic+LLM combined.
-        # Only LLM findings were posted (post_llm_only=True).
-        # Log completion without a potentially misleading count.
         _ = all_findings
-        prefect_log.info("conformance: LLM pass complete for %s", repo_id)
+        prefect_log.info("conformance: LLM pass complete for %s (config: %s)", repo_id, evaluator_cfg.source)
     except Exception as exc:
         prefect_log.warning("conformance: check failed for %s: %s", repo_id, exc)
 
@@ -488,6 +524,27 @@ def _run_standalone_deterministic(
     raw_exc = service.get("check_exceptions") or []
     check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
 
+    # Load evaluator.yaml from cloned repo (preferred), fall back to ecosystem.yaml
+    check_root = monorepo_root or repo_path
+    evaluator_cfg = load_evaluator_config(
+        check_root,
+        fallback_type=service.get("type") or dod_type,
+        fallback_exceptions=check_exceptions,
+        fallback_exception_reasons=exception_reasons,
+    )
+    # For monorepo apps the evaluator.yaml may live at the app path
+    if monorepo_root and not (check_root / "evaluator.yaml").exists():
+        evaluator_cfg = load_evaluator_config(
+            repo_path,
+            fallback_type=service.get("type") or dod_type,
+            fallback_exceptions=check_exceptions,
+            fallback_exception_reasons=exception_reasons,
+        )
+
+    prefect_log.info(
+        "deterministic: %s using config from %s", repo_id, evaluator_cfg.source
+    )
+
     try:
         result = run_all_checks(
             repo_path,
@@ -499,6 +556,7 @@ def _run_standalone_deterministic(
             exception_reasons=exception_reasons,
             monorepo_root=monorepo_root,
             workspace_package_json_text=workspace_package_json_text,
+            evaluator_config=evaluator_cfg,
         )
         findings = result.findings
         prefect_log.info("deterministic: %d findings for %s", len(findings), repo_id)

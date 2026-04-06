@@ -1742,6 +1742,20 @@ def check_pnpm_lockfile(
     return findings
 
 
+def _type_to_dod(repo_type: str, language: str = "python") -> str | None:
+    """Map new repo type taxonomy back to dod_type string for check_readme_running_locally."""
+    mapping = {
+        "pipeline-cog": "new_cog",
+        "trigger-cog": "new_cog",
+        "api-service": "new_fastapi_service" if language == "python" else "new_hono_service",
+        "shared-library": "new_cog",  # closest match for README check
+        "static-site": "new_frontend_site",
+        "react-app": "new_react_app",
+        "standards-repo": None,
+    }
+    return mapping.get(repo_type)
+
+
 # -- Runner -------------------------------------------------------------------
 
 
@@ -1755,21 +1769,54 @@ def run_all_checks(
     exception_reasons: dict[str, str] | None = None,
     monorepo_root: Path | None = None,
     workspace_package_json_text: str | None = None,
+    evaluator_config: "EvaluatorConfig | None" = None,
 ) -> CheckResult:
-    """Run deterministic checks against a repo and return combined findings."""
-    is_python = language == "python" or dod_type in (
-        "new_cog",
-        "new_fastapi_service",
-    )
-    is_library = service_type == "library" or dod_type is None
-    is_pipeline_cog = (dod_type == "new_cog" and cog_subtype != "trigger") or (
-        is_python and service_type == "worker" and cog_subtype == "pipeline"
-    )
-    is_fastapi = dod_type == "new_fastapi_service"
-    is_frontend = dod_type in ("new_frontend_site", "new_react_app")
+    """Run deterministic checks against a repo and return combined findings.
 
-    _exceptions = frozenset(check_exceptions or [])
-    _exception_reasons = exception_reasons or {}
+    When evaluator_config is provided (from the repo's evaluator.yaml), it
+    takes precedence over the legacy dod_type/service_type/check_exceptions
+    parameters for type-based branching and exception scoping.
+    """
+    from evaluator_cog.engine.evaluator_config import EvaluatorConfig  # noqa: F401 (type hint)
+
+    # ── Resolve type-based flags ─────────────────────────────────────────────
+    # Prefer evaluator_config (from evaluator.yaml) over legacy dod_type fields.
+    if evaluator_config is not None:
+        cfg = evaluator_config
+        is_python = language == "python" or cfg.is_python_service
+        is_library = cfg.is_shared_library
+        is_pipeline_cog = cfg.is_pipeline_cog
+        is_fastapi = cfg.is_api_service and language == "python"
+        is_frontend = cfg.is_frontend
+        _exceptions = cfg.all_skipped_ids
+        _exception_reasons = {**cfg.exemption_reasons}
+        # Add deferral reasons with a deferral marker prefix for finding output
+        for rule_id, reason in cfg.deferral_reasons.items():
+            if rule_id not in _exception_reasons:
+                _exception_reasons[rule_id] = f"[DEFERRED] {reason}"
+        # Deferrals: still run the check but mark findings as deferred
+        _deferred_ids = frozenset(cfg.deferral_ids)
+    else:
+        # Legacy path — used during migration when evaluator.yaml is absent
+        is_python = language == "python" or dod_type in (
+            "new_cog",
+            "new_fastapi_service",
+        )
+        is_library = service_type == "library" or dod_type is None
+        is_pipeline_cog = (dod_type == "new_cog" and cog_subtype != "trigger") or (
+            is_python and service_type == "worker" and cog_subtype == "pipeline"
+        )
+        is_fastapi = dod_type == "new_fastapi_service"
+        is_frontend = dod_type in ("new_frontend_site", "new_react_app")
+        _exceptions = frozenset(check_exceptions or [])
+        _exception_reasons = exception_reasons or {}
+        _deferred_ids: frozenset[str] = frozenset()
+
+    # Also handle cog_subtype trigger for trigger-cog type
+    is_trigger_cog = (
+        (evaluator_config is not None and evaluator_config.is_trigger_cog)
+        or cog_subtype == "trigger"
+    )
 
     checked_rule_ids: set[str] = set()
 
@@ -1793,7 +1840,13 @@ def run_all_checks(
                 )
             return
         try:
-            findings.extend(check_fn(repo_path))
+            new_findings = check_fn(repo_path)
+            # If rule is deferred, downgrade severity to INFO
+            if rule_id and rule_id in _deferred_ids:
+                for f in new_findings:
+                    f["severity"] = "INFO"
+                    f["deferred"] = True
+            findings.extend(new_findings)
         except Exception as exc:
             findings.append(
                 _finding(
@@ -1843,15 +1896,19 @@ def run_all_checks(
     if (is_python or is_fastapi) and not is_library and not is_frontend:
         _run(check_common_python_utils_dep, "PY-006")
 
+    # Healthchecks only applies to trigger cogs
     _mark_checked("CD-007")
-    findings.extend(check_healthchecks_integration(repo_path, cog_subtype=cog_subtype))
+    if is_trigger_cog:
+        findings.extend(check_healthchecks_integration(repo_path, cog_subtype="trigger"))
+
     _run(check_structured_logging, "CD-009")
     _run(check_no_hardcoded_secrets, "CD-011")
     _run(check_no_manual_changelog, "VER-004")
 
     _mark_checked("XSTACK-001")
     if "XSTACK-001" not in _exceptions:
-        if not (language == "typescript" and dod_type == "new_frontend_site"):
+        # Static sites are excluded from XSTACK-001 by type scoping
+        if not is_frontend or (evaluator_config is not None and not evaluator_config.is_static_site):
             findings.extend(
                 check_shared_library_used(
                     repo_path,
@@ -1871,7 +1928,12 @@ def run_all_checks(
                     "",
                 )
             )
-    if dod_type is None:  # standards repo only
+
+    # Standards freshness check only applies to standards-repo type
+    if evaluator_config is not None:
+        if evaluator_config.is_standards_repo:
+            _run(check_standards_freshness, "PRIN-009")
+    elif dod_type is None:
         _run(check_standards_freshness, "PRIN-009")
 
     _run(check_no_hardcoded_urls, "FE-007")
@@ -1916,18 +1978,33 @@ def run_all_checks(
                 )
             )
 
+    # DOC-013 README running locally — use new type for dod_type hint
     if "DOC-013" not in _exceptions:
         _mark_checked("DOC-013")
-        findings.extend(check_readme_running_locally(repo_path, dod_type=dod_type))
+        # Map type to dod_type string for check_readme_running_locally
+        if evaluator_config is not None:
+            _readme_dod = _type_to_dod(evaluator_config.repo_type, language)
+        else:
+            _readme_dod = dod_type
+        findings.extend(check_readme_running_locally(repo_path, dod_type=_readme_dod))
 
     if is_frontend:
         _run(check_tailwind, "FE-003")
-    if dod_type == "new_frontend_site":
-        _run(check_astro_framework, "FE-001")
-    if dod_type == "new_react_app":
-        _run(check_vite_react_ts, "FE-002")
-        _run(check_shadcn, "FE-004")
-        _run(check_react_hook_form_zod, "FE-005")
+    # Static site specific
+    if evaluator_config is not None:
+        if evaluator_config.is_static_site:
+            _run(check_astro_framework, "FE-001")
+        elif evaluator_config.is_react_app:
+            _run(check_vite_react_ts, "FE-002")
+            _run(check_shadcn, "FE-004")
+            _run(check_react_hook_form_zod, "FE-005")
+    else:
+        if dod_type == "new_frontend_site":
+            _run(check_astro_framework, "FE-001")
+        if dod_type == "new_react_app":
+            _run(check_vite_react_ts, "FE-002")
+            _run(check_shadcn, "FE-004")
+            _run(check_react_hook_form_zod, "FE-005")
 
     if is_pipeline_cog:
         _mark_checked("TEST-001", "TEST-002", "TEST-004")
@@ -1953,12 +2030,32 @@ def run_all_checks(
         "VER-008",
     )
 
-    if dod_type in ("new_hono_service", "new_react_app"):
+    # XSTACK-003 pnpm — applies to api-service (TS) and react-app
+    if evaluator_config is not None:
+        _needs_pnpm = evaluator_config.is_react_app or (
+            evaluator_config.is_api_service and language == "typescript"
+        )
+    else:
+        _needs_pnpm = dod_type in ("new_hono_service", "new_react_app")
 
+    if _needs_pnpm:
         def _pnpm_lock_check(p: Path) -> list[Finding]:
             return check_pnpm_lockfile(p, monorepo_root=monorepo_root)
 
         _run(_pnpm_lock_check, "XSTACK-003")
+
+    # EVAL-008: check for evaluator.yaml presence
+    _mark_checked("EVAL-008")
+    if not (repo_path / "evaluator.yaml").exists():
+        findings.append(
+            _finding(
+                "EVAL-008",
+                "WARN",
+                "structural_conformance",
+                "evaluator.yaml is absent from repo root.",
+                "Add evaluator.yaml declaring type, traits, exemptions, and deferrals.",
+            )
+        )
 
     findings = _deduplicate_same_repo_findings(findings)
     return CheckResult(findings=findings, checked_rule_ids=checked_rule_ids)
