@@ -1,3 +1,10 @@
+# [2.6.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.5.0...v2.6.0) (2026-04-06)
+
+
+### Features
+
+* splitting deterministic and non, but keeping one deployment ([4ca6e3c](https://github.com/mini-app-polis/evaluator-cog/commit/4ca6e3c82b7d14c6287271c7604e09ea29953180))
+
 # [2.5.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.4.0...v2.5.0) (2026-04-06)
 
 
