@@ -426,7 +426,7 @@ def _run_standalone_conformance(
             post_llm_only=True,
         )
         prefect_log.info(
-            "conformance: %d total findings for %s", len(findings), repo_id
+            "conformance: %d LLM findings posted for %s", len(findings), repo_id
         )
     except Exception as exc:
         prefect_log.warning("conformance: check failed for %s: %s", repo_id, exc)
