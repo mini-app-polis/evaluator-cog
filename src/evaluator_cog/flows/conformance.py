@@ -410,7 +410,7 @@ def _run_standalone_conformance(
     check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
     standards_rules = _fetch_standards_for_service(service)
     try:
-        findings = run_conformance_check(
+        all_findings = run_conformance_check(
             repo_id=repo_id,
             repo_path=repo_path,
             standards_version=standards_version,
@@ -425,9 +425,11 @@ def _run_standalone_conformance(
             post=True,
             post_llm_only=True,
         )
-        prefect_log.info(
-            "conformance: %d LLM findings posted for %s", len(findings), repo_id
-        )
+        # run_conformance_check returns deterministic+LLM combined.
+        # Only LLM findings were posted (post_llm_only=True).
+        # Log completion without a potentially misleading count.
+        _ = all_findings
+        prefect_log.info("conformance: LLM pass complete for %s", repo_id)
     except Exception as exc:
         prefect_log.warning("conformance: check failed for %s: %s", repo_id, exc)
 
