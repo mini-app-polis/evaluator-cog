@@ -1,3 +1,10 @@
+## [2.6.2](https://github.com/mini-app-polis/evaluator-cog/compare/v2.6.1...v2.6.2) (2026-04-06)
+
+
+### Bug Fixes
+
+* logging and tests ([ea90c53](https://github.com/mini-app-polis/evaluator-cog/commit/ea90c5377b411eac2fb7e5b84de51eed6d8f41cb))
+
 ## [2.6.1](https://github.com/mini-app-polis/evaluator-cog/compare/v2.6.0...v2.6.1) (2026-04-06)
 
 
