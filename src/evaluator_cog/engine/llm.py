@@ -282,6 +282,27 @@ Monorepo context:
     else:
         inventory_block = ""
 
+    # Include README content so documentation rules are evaluated from evidence,
+    # not assumptions. Keep the payload bounded for token safety.
+    if repo_path is not None:
+        readme_path = repo_path / "README.md"
+        if readme_path.exists():
+            try:
+                readme_text = readme_path.read_text()
+                if len(readme_text) < 4000:
+                    readme_block = f"README.md CONTENT:\n{readme_text}\n"
+                else:
+                    readme_block = (
+                        "README.md CONTENT (first 3000 chars):\n"
+                        f"{readme_text[:3000]}\n...(truncated)\n"
+                    )
+            except Exception:
+                readme_block = ""
+        else:
+            readme_block = ""
+    else:
+        readme_block = ""
+
     return f"""You are reviewing a MiniAppPolis ecosystem repo against engineering standards v{standards_version}.
 
 Repo: {repo_id}
@@ -292,6 +313,7 @@ Check exceptions (do not flag these rule IDs):
 {exc_block}
 {monorepo_block}
 {inventory_block}
+{readme_block}
 STANDARDS RULES FOR THIS SERVICE TYPE:
 The following are the checkable rules that apply to this repo type, with
 instructions for how to evaluate them:
@@ -325,6 +347,12 @@ ABSOLUTE CONSTRAINTS:
 - Never produce a finding phrased as "no deterministic result
   confirms X" — if you cannot observe something directly, do not
   flag it
+- The check_exceptions list is ABSOLUTE. Never produce a finding for any rule in that
+  list under ANY framing, even if you believe from ecosystem context that the rule
+  should apply. Exceptions are architectural decisions, not oversights.
+- Never apply general ecosystem knowledge to infer violations. Only flag things you
+  can observe directly from the file inventory, README content, or deterministic
+  findings. If you cannot observe a violation, do not flag it.
 - Never flag something as missing just because it was not mentioned
   in the deterministic findings — absence of a finding means passing
 - Only flag rules where you have genuine positive signal of a problem
