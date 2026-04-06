@@ -1,3 +1,18 @@
+# [3.0.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.6.4...v3.0.0) (2026-04-06)
+
+
+* feat!: read per-repo evaluator.yaml for type/trait/exemption/deferral config (ADR-001, ADR-002) ([9845fa6](https://github.com/mini-app-polis/evaluator-cog/commit/9845fa6b0166b850ec1a3d68171404b5fa797839))
+
+
+### Bug Fixes
+
+* formatting follow up ([0073502](https://github.com/mini-app-polis/evaluator-cog/commit/007350288081852a37f56524f3dbaca486429486))
+
+
+### BREAKING CHANGES
+
+* run_all_checks now accepts evaluator_config parameter and derives check routing from repo type taxonomy (v3.0.0) when evaluator.yaml is present. Repos with evaluator.yaml will see significantly reduced false positives as type-scoped auto-exceptions replace ecosystem.yaml check_exceptions. Legacy dod_type path retained for repos without evaluator.yaml during migration period.
+
 ## [2.6.4](https://github.com/mini-app-polis/evaluator-cog/compare/v2.6.3...v2.6.4) (2026-04-06)
 
 
