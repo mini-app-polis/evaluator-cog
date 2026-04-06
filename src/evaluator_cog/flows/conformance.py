@@ -47,7 +47,7 @@ _INDEX_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-st
 _STANDARDS_BASE_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/standards"
 
 
-def _ping_healthchecks(flow, flow_run, state) -> None:
+def _on_completion(flow, flow_run, state) -> None:
     """Ping Healthchecks.io after successful conformance run. Never raises."""
     import urllib.request
 
@@ -527,7 +527,7 @@ def _run_standalone_deterministic(
     )
 
 
-@flow(name="conformance-check", log_prints=True, on_completion=[_ping_healthchecks])
+@flow(name="conformance-check", log_prints=True, on_completion=[_on_completion])
 def conformance_check_flow(run_llm: bool = False) -> None:
     """
     Clone each active repo and run conformance checks.
@@ -659,7 +659,8 @@ def conformance_check_flow(run_llm: bool = False) -> None:
 
                     if not repo_path.is_dir():
                         prefect_log.warning(
-                            "conformance: monorepo_path '%s' not found in %s for %s",
+                            "%s: monorepo_path '%s' not found in %s for %s",
+                            flow_label,
                             monorepo_path,
                             mono_id,
                             repo_id,
@@ -667,7 +668,8 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                         continue
 
                     prefect_log.info(
-                        "conformance: processing monorepo app %s at %s",
+                        "%s: processing monorepo app %s at %s",
+                        flow_label,
                         repo_id,
                         monorepo_path,
                     )
