@@ -282,26 +282,23 @@ Monorepo context:
     else:
         inventory_block = ""
 
-    # Include README content so documentation rules are evaluated from evidence,
-    # not assumptions. Keep the payload bounded for token safety.
+    # Inject README content so the LLM can assess documentation rules directly
+    # rather than inferring from file inventory alone.
+    readme_block = ""
     if repo_path is not None:
         readme_path = repo_path / "README.md"
         if readme_path.exists():
             try:
                 readme_text = readme_path.read_text()
-                if len(readme_text) < 4000:
+                if len(readme_text) <= 4000:
                     readme_block = f"README.md CONTENT:\n{readme_text}\n"
                 else:
                     readme_block = (
-                        "README.md CONTENT (first 3000 chars):\n"
-                        f"{readme_text[:3000]}\n...(truncated)\n"
+                        f"README.md CONTENT (first 4000 chars — truncated):\n"
+                        f"{readme_text[:4000]}\n...(truncated)\n"
                     )
             except Exception:
                 readme_block = ""
-        else:
-            readme_block = ""
-    else:
-        readme_block = ""
 
     return f"""You are reviewing a MiniAppPolis ecosystem repo against engineering standards v{standards_version}.
 
@@ -343,19 +340,25 @@ RULES TO ASSESS above — rules the deterministic checker cannot
 evaluate. These require qualitative judgment from you.
 
 ABSOLUTE CONSTRAINTS:
-- Never produce a finding for a rule in the resolved list above
-- Never produce a finding phrased as "no deterministic result
-  confirms X" — if you cannot observe something directly, do not
-  flag it
-- The check_exceptions list is ABSOLUTE. Never produce a finding for any rule in that
-  list under ANY framing, even if you believe from ecosystem context that the rule
-  should apply. Exceptions are architectural decisions, not oversights.
-- Never apply general ecosystem knowledge to infer violations. Only flag things you
-  can observe directly from the file inventory, README content, or deterministic
-  findings. If you cannot observe a violation, do not flag it.
-- Never flag something as missing just because it was not mentioned
-  in the deterministic findings — absence of a finding means passing
-- Only flag rules where you have genuine positive signal of a problem
+
+Never produce a finding for a rule in the resolved list above,
+regardless of how the violation is framed or what rule ID you
+assign it. Resolved means resolved.
+The check_exceptions list is ABSOLUTE. Never produce a finding
+for any excepted rule under any framing — not as a different
+rule ID, not as a general observation, not as a suggestion.
+Exceptions are deliberate architectural decisions, not oversights.
+Never apply general ecosystem knowledge to infer violations.
+Only flag things observable directly from the file inventory,
+README content provided above, or deterministic findings.
+If you cannot observe a violation from the provided context,
+do not flag it.
+Never produce a finding phrased as "no deterministic result
+confirms X" — if you cannot observe something directly, do not
+flag it
+Never flag something as missing just because it was not mentioned
+in the deterministic findings — absence of a finding means passing
+Only flag rules where you have genuine positive signal of a problem
 - If you are raising a finding for CD-010 (three-layer observability stack
   absent or incomplete), do NOT also raise separate findings for CD-002
   (Sentry absent) or CD-009 (structured logging absent) for the same service.
