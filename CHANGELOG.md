@@ -1,3 +1,10 @@
+## [2.6.1](https://github.com/mini-app-polis/evaluator-cog/compare/v2.6.0...v2.6.1) (2026-04-06)
+
+
+### Bug Fixes
+
+* flow separation ([c449ccb](https://github.com/mini-app-polis/evaluator-cog/commit/c449ccb1b8225ab3db44a5aa7f5aab484226694a))
+
 # [2.6.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.5.0...v2.6.0) (2026-04-06)
 
 
