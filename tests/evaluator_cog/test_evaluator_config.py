@@ -72,7 +72,9 @@ def test_parse_evaluator_yaml_invalid_type_raises() -> None:
         _parse_evaluator_yaml({"type": "not-a-valid-type"})
 
 
-def test_parse_evaluator_yaml_unknown_trait_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_parse_evaluator_yaml_unknown_trait_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Unknown traits are ignored with a warning (no exception)."""
     with caplog.at_level("WARNING"):
         cfg = _parse_evaluator_yaml(
@@ -149,7 +151,17 @@ def test_map_legacy_type(legacy: str | None, expected: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("repo_type", "pipeline", "trigger", "api", "shared", "static", "react", "std", "front"),
+    (
+        "repo_type",
+        "pipeline",
+        "trigger",
+        "api",
+        "shared",
+        "static",
+        "react",
+        "std",
+        "front",
+    ),
     [
         ("pipeline-cog", True, False, False, False, False, False, False, False),
         ("trigger-cog", False, True, False, False, False, False, False, False),
