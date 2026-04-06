@@ -1752,7 +1752,9 @@ def _type_to_dod(repo_type: str, language: str = "python") -> str | None:
         "api-service": "new_fastapi_service"
         if language == "python"
         else "new_hono_service",
-        "shared-library": "new_cog",  # closest match for README check
+        # Libraries have no standardized "running locally" section like cogs — avoid
+        # routing through the Python cog README path (uv sync, pytest, etc.).
+        "shared-library": None,
         "static-site": "new_frontend_site",
         "react-app": "new_react_app",
         "standards-repo": None,
@@ -1785,7 +1787,8 @@ def run_all_checks(
     # Prefer evaluator_config (from evaluator.yaml) over legacy dod_type fields.
     if evaluator_config is not None:
         cfg = evaluator_config
-        is_python = language == "python" or cfg.is_python_service
+        # Type says "could be Python" (e.g. shared-library); ecosystem language is authoritative.
+        is_python = (language == "python") and cfg.is_python_service
         is_library = cfg.is_shared_library
         is_pipeline_cog = cfg.is_pipeline_cog
         is_fastapi = cfg.is_api_service and language == "python"

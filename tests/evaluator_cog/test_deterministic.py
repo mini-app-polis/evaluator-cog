@@ -1391,7 +1391,7 @@ def test_evaluator_config_pipeline_logger_primitive_skips_cd009_violation(
         ("trigger-cog", "python", "new_cog"),
         ("api-service", "python", "new_fastapi_service"),
         ("api-service", "typescript", "new_hono_service"),
-        ("shared-library", "python", "new_cog"),
+        ("shared-library", "python", None),
         ("static-site", "typescript", "new_frontend_site"),
         ("react-app", "typescript", "new_react_app"),
         ("standards-repo", "python", None),
