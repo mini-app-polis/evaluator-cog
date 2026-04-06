@@ -1,10 +1,17 @@
-"""Conformance flows for evaluator-cog.
+"""Conformance checking flow for evaluator-cog.
 
-This module exposes two independent Prefect flows:
-- deterministic_conformance_flow: deterministic checks only, daily schedule,
-  posts findings with source='conformance_deterministic'
-- conformance_check_flow: LLM soft-rule assessment, weekly schedule,
-  posts findings with source='conformance_check'
+A single parameterized flow (conformance_check_flow) handles both modes:
+
+run_llm=False (default, daily schedule):
+  Runs deterministic rule checks only. No LLM calls. No token cost.
+  Posts findings with source='conformance_deterministic'.
+  run_id prefix: 'deterministic-{version}-{uuid}'
+
+run_llm=True (triggered manually or via Prefect automation, weekly):
+  Runs deterministic pass first to get checked_rule_ids, then calls
+  the LLM for soft-rule assessment. Posts LLM findings only.
+  Posts findings with source='conformance_check'.
+  run_id prefix: 'conformance-{version}-{uuid}'
 """
 
 from __future__ import annotations
@@ -284,6 +291,7 @@ def run_conformance_check(
     workspace_package_json_text: str | None = None,
     monorepo_context: dict | None = None,
     post: bool = True,
+    post_llm_only: bool = False,
 ) -> list[dict[str, Any]]:
     """
     Run deterministic + LLM conformance checks against a cloned repo.
@@ -356,21 +364,22 @@ def run_conformance_check(
         )
 
     all_findings = deterministic_findings + llm_findings
+    findings_to_post = llm_findings if post_llm_only else all_findings
 
-    if not all_findings:
-        all_findings = [
+    if post and not findings_to_post:
+        findings_to_post = [
             {
                 "rule_id": "STATUS",
                 "dimension": "structural_conformance",
                 "severity": "INFO",
-                "finding": f"{repo_id} passed all conformance checks for standards v{standards_version}.",
+                "finding": f"{repo_id} passed all {'LLM' if post_llm_only else 'conformance'} checks for standards v{standards_version}.",
                 "suggestion": "",
             }
         ]
 
     if post:
         post_findings(
-            findings=all_findings,
+            findings=findings_to_post,
             run_id=run_id,
             repo=repo_id,
             flow_name="conformance",
@@ -414,6 +423,7 @@ def _run_standalone_conformance(
             standards_rules=standards_rules,
             run_id=run_id,
             post=True,
+            post_llm_only=True,
         )
         prefect_log.info(
             "conformance: %d total findings for %s", len(findings), repo_id
@@ -530,7 +540,6 @@ def conformance_check_flow(run_llm: bool = False) -> None:
     source='conformance_check'. Triggered manually or via Prefect automation.
     """
     prefect_log = get_run_logger()
-    source = "conformance_check" if run_llm else "conformance_deterministic"
     flow_label = "conformance" if run_llm else "deterministic"
 
     standards_version = _get_standards_version()
@@ -680,7 +689,7 @@ def conformance_check_flow(run_llm: bool = False) -> None:
 
                     if run_llm:
                         try:
-                            app_findings = run_conformance_check(
+                            run_conformance_check(
                                 repo_id=repo_id,
                                 repo_path=repo_path,
                                 standards_version=standards_version,
@@ -695,9 +704,13 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                                 monorepo_root=monorepo_root,
                                 workspace_package_json_text=workspace_package_json_text,
                                 monorepo_context=monorepo_context,
-                                post=False,
+                                post=True,
+                                post_llm_only=True,
                             )
-                            findings_by_service[repo_id] = app_findings
+                            prefect_log.info(
+                                "conformance: posted LLM findings for monorepo app %s",
+                                repo_id,
+                            )
                         except Exception as exc:
                             prefect_log.warning(
                                 "conformance: check failed for monorepo app %s: %s",
@@ -725,33 +738,33 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                                 exc,
                             )
 
-                if len(findings_by_service) > 1:
-                    findings_by_service = _deduplicate_sibling_findings(
-                        findings_by_service
-                    )
+                if not run_llm:
+                    if len(findings_by_service) > 1:
+                        findings_by_service = _deduplicate_sibling_findings(
+                            findings_by_service
+                        )
 
-                for service_id, findings in findings_by_service.items():
-                    if not findings:
-                        findings = [
-                            {
-                                "rule_id": "STATUS",
-                                "dimension": "structural_conformance",
-                                "severity": "INFO",
-                                "finding": (
-                                    f"{service_id} passed all "
-                                    f"{'conformance' if run_llm else 'deterministic'} "
-                                    f"checks for standards v{standards_version}."
-                                ),
-                                "suggestion": "",
-                            }
-                        ]
-                    post_findings(
-                        findings=findings,
-                        run_id=run_id,
-                        repo=service_id,
-                        flow_name="conformance-check",
-                        source=source,
-                        standards_version=standards_version,
-                    )
+                    for service_id, findings in findings_by_service.items():
+                        if not findings:
+                            findings = [
+                                {
+                                    "rule_id": "STATUS",
+                                    "dimension": "structural_conformance",
+                                    "severity": "INFO",
+                                    "finding": (
+                                        f"{service_id} passed all deterministic checks for "
+                                        f"standards v{standards_version}."
+                                    ),
+                                    "suggestion": "",
+                                }
+                            ]
+                        post_findings(
+                            findings=findings,
+                            run_id=run_id,
+                            repo=service_id,
+                            flow_name="conformance-check",
+                            source="conformance_deterministic",
+                            standards_version=standards_version,
+                        )
 
     prefect_log.info("%s: complete", flow_label)
