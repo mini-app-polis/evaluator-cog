@@ -1,3 +1,10 @@
+# [2.5.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.4.0...v2.5.0) (2026-04-06)
+
+
+### Features
+
+* functional health checks ([a197668](https://github.com/mini-app-polis/evaluator-cog/commit/a19766815e2561aba0baeea7937611951818faf5))
+
 # [2.4.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.3.3...v2.4.0) (2026-04-06)
 
 
