@@ -866,8 +866,9 @@ def check_healthchecks_integration(
         if (repo_path / "src").is_dir()
         else ""
     )
-    if "HEALTHCHECKS_URL" not in env_text or (
-        "HEALTHCHECKS_URL" not in src_text and "healthchecks" not in src_text.lower()
+    if "HEALTHCHECKS_URL_EVALUATOR" not in env_text or (
+        "HEALTHCHECKS_URL_EVALUATOR" not in src_text
+        and "healthchecks" not in src_text.lower()
     ):
         findings.append(
             _finding(
@@ -875,7 +876,7 @@ def check_healthchecks_integration(
                 "WARN",
                 "cd_readiness",
                 "Trigger cog is missing Healthchecks.io integration signals.",
-                "Declare HEALTHCHECKS_URL in .env.example and ping it in trigger loop code.",
+                "Declare HEALTHCHECKS_URL_EVALUATOR in .env.example and ping it in trigger loop code.",
             )
         )
     return findings

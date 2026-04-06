@@ -16,6 +16,7 @@ import os
 import shutil
 import tempfile
 import zipfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,17 @@ log = logger_mod.get_logger()
 _ECOSYSTEM_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/ecosystem.yaml"
 _INDEX_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml"
 _STANDARDS_BASE_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/standards"
+
+
+def _ping_healthchecks(flow, flow_run, state) -> None:
+    """Ping Healthchecks.io after successful conformance run. Never raises."""
+    import urllib.request
+
+    url = os.getenv("HEALTHCHECKS_URL_EVALUATOR", "").strip()
+    if not url:
+        return
+    with suppress(Exception):
+        urllib.request.urlopen(url, timeout=10)
 
 
 def _fetch_yaml(url: str) -> dict:
@@ -427,7 +439,7 @@ def _build_conformance_run_id(standards_version: str) -> str:
     return f"conformance-{standards_version}-{unique_suffix}"
 
 
-@flow(name="conformance-check", log_prints=True)
+@flow(name="conformance-check", log_prints=True, on_completion=[_ping_healthchecks])
 def conformance_check_flow() -> None:
     """
     Fetch ecosystem inventory, clone each active repo, run conformance checks.
