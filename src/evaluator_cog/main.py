@@ -38,8 +38,8 @@ def main() -> None:
     serve(
         conformance.to_deployment(
             name="conformance-check",
-            cron="0 9 * * 0",
-        )
+            cron="0 9 * * *",
+        ),
     )
 
 

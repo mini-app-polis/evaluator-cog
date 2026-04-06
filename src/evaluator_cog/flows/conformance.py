@@ -1,11 +1,10 @@
-"""Structural conformance checking flow.
+"""Conformance flows for evaluator-cog.
 
-Fetches the live ecosystem inventory from ecosystem-standards, clones each
-active repo, runs deterministic rule checks, calls LLM for soft-rule
-assessment, and posts all findings to api-kaianolevine-com with
-source='conformance_check'.
-
-Triggered by Prefect schedule (daily) or manually via Prefect Cloud.
+This module exposes two independent Prefect flows:
+- deterministic_conformance_flow: deterministic checks only, daily schedule,
+  posts findings with source='conformance_deterministic'
+- conformance_check_flow: LLM soft-rule assessment, weekly schedule,
+  posts findings with source='conformance_check'
 """
 
 from __future__ import annotations
@@ -439,27 +438,117 @@ def _build_conformance_run_id(standards_version: str) -> str:
     return f"conformance-{standards_version}-{unique_suffix}"
 
 
+def _build_deterministic_run_id(standards_version: str) -> str:
+    """Build a per-execution run_id for deterministic conformance findings."""
+    flow_run_id = ""
+    try:
+        from prefect.runtime import flow_run
+
+        flow_run_id = str(flow_run.id or "").strip()
+    except Exception:
+        flow_run_id = ""
+
+    unique_suffix = flow_run_id or datetime.datetime.now(datetime.UTC).strftime(
+        "%Y%m%dT%H%M%S"
+    )
+    return f"deterministic-{standards_version}-{unique_suffix}"
+
+
+def _run_standalone_deterministic(
+    service: dict,
+    repo_path: Path,
+    standards_version: str,
+    run_id: str,
+    prefect_log: Any,
+    monorepo_root: Path | None = None,
+    workspace_package_json_text: str | None = None,
+) -> None:
+    """Run deterministic-only checks for a single service and post immediately."""
+    repo_id = service.get("id", "")
+    if not repo_id:
+        return
+
+    service_type = service.get("type", "worker")
+    _raw_language = str(service.get("language") or "python")
+    language = "typescript" if _raw_language == "astro" else _raw_language
+    cog_subtype = str(service.get("cog_subtype") or "").strip() or None
+    dod_type = service.get("dod_type")
+    raw_exc = service.get("check_exceptions") or []
+    check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
+
+    try:
+        result = run_all_checks(
+            repo_path,
+            language=language,
+            service_type=service_type,
+            dod_type=dod_type,
+            cog_subtype=cog_subtype,
+            check_exceptions=check_exceptions,
+            exception_reasons=exception_reasons,
+            monorepo_root=monorepo_root,
+            workspace_package_json_text=workspace_package_json_text,
+        )
+        findings = result.findings
+        prefect_log.info("deterministic: %d findings for %s", len(findings), repo_id)
+    except Exception as exc:
+        prefect_log.warning(
+            "deterministic: run_all_checks failed for %s: %s", repo_id, exc
+        )
+        return
+
+    if not findings:
+        findings = [
+            {
+                "rule_id": "STATUS",
+                "dimension": "structural_conformance",
+                "severity": "INFO",
+                "finding": f"{repo_id} passed all deterministic checks for standards v{standards_version}.",
+                "suggestion": "",
+            }
+        ]
+
+    post_findings(
+        findings=findings,
+        run_id=run_id,
+        repo=repo_id,
+        flow_name="deterministic-conformance",
+        source="conformance_deterministic",
+        standards_version=standards_version,
+    )
+
+
 @flow(name="conformance-check", log_prints=True, on_completion=[_ping_healthchecks])
-def conformance_check_flow() -> None:
+def conformance_check_flow(run_llm: bool = False) -> None:
     """
-    Fetch ecosystem inventory, clone each active repo, run conformance checks.
-    Runs daily via Prefect schedule. Advisory only — no automated remediation.
+    Clone each active repo and run conformance checks.
+
+    When run_llm=False (default): deterministic checks only, no LLM calls.
+    Posts findings with source='conformance_deterministic'. Runs daily.
+
+    When run_llm=True: deterministic pass first (for checked_rule_ids),
+    then LLM soft-rule assessment. Posts LLM findings only with
+    source='conformance_check'. Triggered manually or via Prefect automation.
     """
     prefect_log = get_run_logger()
+    source = "conformance_check" if run_llm else "conformance_deterministic"
+    flow_label = "conformance" if run_llm else "deterministic"
 
     standards_version = _get_standards_version()
-    prefect_log.info("conformance: standards version %s", standards_version)
+    prefect_log.info("%s: standards version %s", flow_label, standards_version)
 
     ecosystem = _fetch_yaml(_ECOSYSTEM_YAML_URL)
     active_repos = _get_active_repos(ecosystem)
 
     if not active_repos:
-        prefect_log.warning("conformance: no active repos found in ecosystem.yaml")
+        prefect_log.warning("%s: no active repos found in ecosystem.yaml", flow_label)
         return
 
-    prefect_log.info("conformance: checking %d active repos", len(active_repos))
-
-    run_id = _build_conformance_run_id(standards_version)
+    prefect_log.info("%s: checking %d active repos", flow_label, len(active_repos))
+    run_id = (
+        _build_conformance_run_id(standards_version)
+        if run_llm
+        else _build_deterministic_run_id(standards_version)
+    )
 
     with concurrency("evaluator-cog-writes", occupy=1):
         monorepos_registry = _get_monorepos(ecosystem)
@@ -478,27 +567,27 @@ def conformance_check_flow() -> None:
                 if not repo_id:
                     continue
 
-                prefect_log.info("conformance: processing %s", repo_id)
+                prefect_log.info("%s: processing %s", flow_label, repo_id)
 
                 repo_path = _download_repo(repo_name, tmp_dir)
                 if repo_path is None:
                     prefect_log.warning(
-                        "conformance: skipping %s — could not clone", repo_id
+                        "%s: skipping %s — could not clone", flow_label, repo_id
                     )
                     continue
 
-                _run_standalone_conformance(
-                    service, repo_path, standards_version, run_id, prefect_log
-                )
+                if run_llm:
+                    _run_standalone_conformance(
+                        service, repo_path, standards_version, run_id, prefect_log
+                    )
+                else:
+                    _run_standalone_deterministic(
+                        service, repo_path, standards_version, run_id, prefect_log
+                    )
 
             for mono_id, services in monorepo_service_groups.items():
                 mono_record = monorepos_registry.get(mono_id)
                 if not mono_record:
-                    prefect_log.warning(
-                        "conformance: monorepo record '%s' not found in ecosystem.yaml — "
-                        "processing apps as standalone",
-                        mono_id,
-                    )
                     for svc in services:
                         rid = svc.get("id", "")
                         rname = svc.get("repo") or rid
@@ -506,21 +595,25 @@ def conformance_check_flow() -> None:
                             continue
                         rp = _download_repo(rname, tmp_dir)
                         if rp is None:
-                            prefect_log.warning(
-                                "conformance: skipping %s — could not clone", rid
-                            )
                             continue
-                        _run_standalone_conformance(
-                            svc, rp, standards_version, run_id, prefect_log
-                        )
+                        if run_llm:
+                            _run_standalone_conformance(
+                                svc, rp, standards_version, run_id, prefect_log
+                            )
+                        else:
+                            _run_standalone_deterministic(
+                                svc, rp, standards_version, run_id, prefect_log
+                            )
                     continue
 
                 repo_name = mono_record.get("repo") or mono_id
-                prefect_log.info("conformance: cloning monorepo %s", repo_name)
+                prefect_log.info("%s: cloning monorepo %s", flow_label, repo_name)
                 monorepo_root = _download_repo(repo_name, tmp_dir)
                 if monorepo_root is None:
                     prefect_log.warning(
-                        "conformance: skipping monorepo %s — could not clone", mono_id
+                        "%s: skipping monorepo %s — could not clone",
+                        flow_label,
+                        mono_id,
                     )
                     continue
 
@@ -581,38 +674,56 @@ def conformance_check_flow() -> None:
                     check_exceptions, exception_reasons = _parse_check_exceptions(
                         raw_exc
                     )
-                    standards_rules = _fetch_standards_for_service(service)
+                    standards_rules = (
+                        _fetch_standards_for_service(service) if run_llm else []
+                    )
 
-                    try:
-                        app_findings = run_conformance_check(
-                            repo_id=repo_id,
-                            repo_path=repo_path,
-                            standards_version=standards_version,
-                            service_type=service_type,
-                            dod_type=dod_type,
-                            language=language,
-                            cog_subtype=cog_subtype,
-                            check_exceptions=check_exceptions,
-                            exception_reasons=exception_reasons,
-                            standards_rules=standards_rules,
-                            run_id=run_id,
-                            monorepo_root=monorepo_root,
-                            workspace_package_json_text=workspace_package_json_text,
-                            monorepo_context=monorepo_context,
-                            post=False,
-                        )
-                        findings_by_service[repo_id] = app_findings
-                        prefect_log.info(
-                            "conformance: %d findings for monorepo app %s",
-                            len(app_findings),
-                            repo_id,
-                        )
-                    except Exception as exc:
-                        prefect_log.warning(
-                            "conformance: check failed for monorepo app %s: %s",
-                            repo_id,
-                            exc,
-                        )
+                    if run_llm:
+                        try:
+                            app_findings = run_conformance_check(
+                                repo_id=repo_id,
+                                repo_path=repo_path,
+                                standards_version=standards_version,
+                                service_type=service_type,
+                                dod_type=dod_type,
+                                language=language,
+                                cog_subtype=cog_subtype,
+                                check_exceptions=check_exceptions,
+                                exception_reasons=exception_reasons,
+                                standards_rules=standards_rules,
+                                run_id=run_id,
+                                monorepo_root=monorepo_root,
+                                workspace_package_json_text=workspace_package_json_text,
+                                monorepo_context=monorepo_context,
+                                post=False,
+                            )
+                            findings_by_service[repo_id] = app_findings
+                        except Exception as exc:
+                            prefect_log.warning(
+                                "conformance: check failed for monorepo app %s: %s",
+                                repo_id,
+                                exc,
+                            )
+                    else:
+                        try:
+                            result = run_all_checks(
+                                repo_path,
+                                language=language,
+                                service_type=service_type,
+                                dod_type=dod_type,
+                                cog_subtype=cog_subtype,
+                                check_exceptions=check_exceptions,
+                                exception_reasons=exception_reasons,
+                                monorepo_root=monorepo_root,
+                                workspace_package_json_text=workspace_package_json_text,
+                            )
+                            findings_by_service[repo_id] = result.findings
+                        except Exception as exc:
+                            prefect_log.warning(
+                                "deterministic: check failed for monorepo app %s: %s",
+                                repo_id,
+                                exc,
+                            )
 
                 if len(findings_by_service) > 1:
                     findings_by_service = _deduplicate_sibling_findings(
@@ -627,8 +738,9 @@ def conformance_check_flow() -> None:
                                 "dimension": "structural_conformance",
                                 "severity": "INFO",
                                 "finding": (
-                                    f"{service_id} passed all conformance checks for "
-                                    f"standards v{standards_version}."
+                                    f"{service_id} passed all "
+                                    f"{'conformance' if run_llm else 'deterministic'} "
+                                    f"checks for standards v{standards_version}."
                                 ),
                                 "suggestion": "",
                             }
@@ -637,9 +749,9 @@ def conformance_check_flow() -> None:
                         findings=findings,
                         run_id=run_id,
                         repo=service_id,
-                        flow_name="conformance",
-                        source="conformance_check",
+                        flow_name="conformance-check",
+                        source=source,
                         standards_version=standards_version,
                     )
 
-    prefect_log.info("conformance: complete")
+    prefect_log.info("%s: complete", flow_label)
