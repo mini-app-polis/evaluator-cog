@@ -1,3 +1,10 @@
+# [2.4.0](https://github.com/mini-app-polis/evaluator-cog/compare/v2.3.3...v2.4.0) (2026-04-06)
+
+
+### Features
+
+* changes to meet standards findings ([bbbb4c3](https://github.com/mini-app-polis/evaluator-cog/commit/bbbb4c39656d0d8778f230c60b450a090643fd12))
+
 ## [2.3.3](https://github.com/mini-app-polis/evaluator-cog/compare/v2.3.2...v2.3.3) (2026-04-06)
 
 
