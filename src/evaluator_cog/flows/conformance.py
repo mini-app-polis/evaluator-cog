@@ -628,12 +628,23 @@ def conformance_check_flow(run_llm: bool = False) -> None:
             if mono_id:
                 monorepo_service_groups.setdefault(str(mono_id), []).append(s)
 
+        # One service id must run at most once per flow (duplicate ecosystem rows, etc.).
+        seen_repo_ids: set[str] = set()
+
         with tempfile.TemporaryDirectory() as tmp_dir:
             for service in standalone_services:
                 repo_id = service.get("id", "")
                 repo_name = service.get("repo") or repo_id
                 if not repo_id:
                     continue
+                if repo_id in seen_repo_ids:
+                    prefect_log.warning(
+                        "%s: skipping duplicate service %s",
+                        flow_label,
+                        repo_id,
+                    )
+                    continue
+                seen_repo_ids.add(repo_id)
 
                 prefect_log.info("%s: processing %s", flow_label, repo_id)
 
@@ -661,6 +672,14 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                         rname = svc.get("repo") or rid
                         if not rid:
                             continue
+                        if rid in seen_repo_ids:
+                            prefect_log.warning(
+                                "%s: skipping duplicate service %s",
+                                flow_label,
+                                rid,
+                            )
+                            continue
+                        seen_repo_ids.add(rid)
                         rp = _download_repo(rname, tmp_dir)
                         if rp is None:
                             continue
@@ -709,6 +728,14 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                     monorepo_path = str(service.get("monorepo_path") or "")
                     if not repo_id:
                         continue
+                    if repo_id in seen_repo_ids:
+                        prefect_log.warning(
+                            "%s: skipping duplicate service %s",
+                            flow_label,
+                            repo_id,
+                        )
+                        continue
+                    seen_repo_ids.add(repo_id)
 
                     repo_path = (
                         monorepo_root / monorepo_path
@@ -780,6 +807,23 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                             )
                     else:
                         try:
+                            check_root = monorepo_root
+                            evaluator_cfg = load_evaluator_config(
+                                check_root,
+                                fallback_type=service.get("type") or dod_type,
+                                fallback_exceptions=check_exceptions,
+                                fallback_exception_reasons=exception_reasons,
+                            )
+                            if (
+                                monorepo_root
+                                and not (check_root / "evaluator.yaml").exists()
+                            ):
+                                evaluator_cfg = load_evaluator_config(
+                                    repo_path,
+                                    fallback_type=service.get("type") or dod_type,
+                                    fallback_exceptions=check_exceptions,
+                                    fallback_exception_reasons=exception_reasons,
+                                )
                             result = run_all_checks(
                                 repo_path,
                                 language=language,
@@ -790,6 +834,7 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                                 exception_reasons=exception_reasons,
                                 monorepo_root=monorepo_root,
                                 workspace_package_json_text=workspace_package_json_text,
+                                evaluator_config=evaluator_cfg,
                             )
                             findings_by_service[repo_id] = result.findings
                         except Exception as exc:

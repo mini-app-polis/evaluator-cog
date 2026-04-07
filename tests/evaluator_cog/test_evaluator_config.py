@@ -88,6 +88,7 @@ def test_all_skipped_ids_shared_library() -> None:
     cfg = EvaluatorConfig(repo_type="shared-library")
     skipped = cfg.all_skipped_ids
     assert {"CD-002", "TEST-001", "PY-006"} <= skipped
+    assert "TEST-007" in cfg.all_skipped_ids
 
 
 def test_all_skipped_ids_static_site_cloudflare_trait() -> None:
@@ -99,6 +100,11 @@ def test_all_skipped_ids_static_site_cloudflare_trait() -> None:
 def test_all_skipped_ids_pipeline_cog_empty_type_auto() -> None:
     cfg = EvaluatorConfig(repo_type="pipeline-cog")
     assert cfg.all_skipped_ids == frozenset()
+
+
+def test_all_skipped_ids_api_service() -> None:
+    cfg = EvaluatorConfig(repo_type="api-service")
+    assert "CD-015" in cfg.all_skipped_ids
 
 
 def test_is_deferred() -> None:

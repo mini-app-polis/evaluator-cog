@@ -54,6 +54,7 @@ _TYPE_AUTO_EXCEPTIONS: dict[str, set[str]] = {
         "TEST-002",
         "TEST-003",
         "TEST-004",
+        "TEST-007",  # respx/pytest HTTP mocking — Python-only; skip TS libs defensively
         "PIPE-001",
         "PIPE-002",
         "PIPE-003",
@@ -112,6 +113,8 @@ _TYPE_AUTO_EXCEPTIONS: dict[str, set[str]] = {
         "CD-007",
         "CD-015",
     },
+    # CD-015 (Prefect serve) is pipeline-only; APIs must never be evaluated for it.
+    # Listed here so type-scoped skips apply even when evaluator.yaml is absent (fallback).
     "api-service": {
         "TEST-001",
         "TEST-002",
