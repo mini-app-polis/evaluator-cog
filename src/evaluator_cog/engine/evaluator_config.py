@@ -50,6 +50,9 @@ _TYPE_AUTO_EXCEPTIONS: dict[str, set[str]] = {
         "CD-009",
         "CD-010",
         "PY-006",
+        "PY-012",  # FAILED_ prefix — file-processing cog pattern, not applicable to libraries
+        "PY-013",  # possible_duplicate_ prefix — file-processing cog pattern, not applicable to libraries
+        "PY-014",  # finally cleanup — file-processing cog pattern, not applicable to libraries
         "TEST-001",
         "TEST-002",
         "TEST-003",
