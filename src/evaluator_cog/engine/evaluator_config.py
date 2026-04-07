@@ -116,8 +116,6 @@ _TYPE_AUTO_EXCEPTIONS: dict[str, set[str]] = {
         "CD-007",
         "CD-015",
     },
-    # CD-015 (Prefect serve) is pipeline-only; APIs must never be evaluated for it.
-    # Listed here so type-scoped skips apply even when evaluator.yaml is absent (fallback).
     "api-service": {
         "TEST-001",
         "TEST-002",
@@ -188,7 +186,7 @@ _TRAIT_AUTO_EXCEPTIONS: dict[str, set[str]] = {
     "cloudflare-pages": {"VER-003", "VER-005", "VER-006"},
     "multi-flow": {"CD-015"},
     "pipeline-cog-evaluator": {"PIPE-011"},
-    "pre-rule": set(),  # Used with specific rule_id in exemptions, no auto-except
+    "pre-rule": set(),
 }
 
 
@@ -198,20 +196,14 @@ class EvaluatorConfig:
 
     repo_type: str
     traits: list[str] = field(default_factory=list)
-    # exemption_ids: rule IDs that genuinely do not apply
     exemption_ids: list[str] = field(default_factory=list)
-    # exemption_reasons: rule_id -> reason string for finding output
     exemption_reasons: dict[str, str] = field(default_factory=dict)
-    # deferral_ids: rule IDs that apply but are not prioritized
     deferral_ids: list[str] = field(default_factory=list)
-    # deferral_reasons: rule_id -> reason string
     deferral_reasons: dict[str, str] = field(default_factory=dict)
-    # source: where config came from (for logging)
     source: str = "evaluator.yaml"
 
     @property
     def all_skipped_ids(self) -> frozenset[str]:
-        """All rule IDs to skip entirely (type + trait auto-exceptions + exemptions)."""
         skipped: set[str] = set()
         skipped.update(_TYPE_AUTO_EXCEPTIONS.get(self.repo_type, set()))
         for trait in self.traits:
@@ -220,20 +212,13 @@ class EvaluatorConfig:
         return frozenset(skipped)
 
     def is_deferred(self, rule_id: str) -> bool:
-        """Return True if this rule is deferred (applies but deprioritized)."""
         return rule_id in self.deferral_ids
 
     def is_skipped(self, rule_id: str) -> bool:
-        """Return True if this rule should be skipped entirely."""
         return rule_id in self.all_skipped_ids
-
-    # ── Backward-compat helpers ──────────────────────────────────────────────
-    # These map the new type taxonomy back to the flags that deterministic.py
-    # branching logic currently uses, so we can migrate incrementally.
 
     @property
     def language(self) -> str:
-        """Infer language from type for backward compat."""
         if self.repo_type in (
             "pipeline-cog",
             "trigger-cog",
@@ -241,7 +226,7 @@ class EvaluatorConfig:
             "shared-library",
             "standards-repo",
         ):
-            return "python"  # overridden by ecosystem.yaml language field
+            return "python"
         return "typescript"
 
     @property
@@ -293,16 +278,6 @@ def load_evaluator_config(
     fallback_exceptions: list[str] | None = None,
     fallback_exception_reasons: dict[str, str] | None = None,
 ) -> EvaluatorConfig:
-    """
-    Load evaluator.yaml from repo_path.
-
-    Falls back gracefully during migration period:
-    - If evaluator.yaml is absent, uses fallback_type (derived from ecosystem.yaml
-      dod_type/type) and fallback_exceptions (from ecosystem.yaml check_exceptions).
-    - If evaluator.yaml is present but malformed, logs a warning and uses fallbacks.
-
-    Returns an EvaluatorConfig instance always — never raises.
-    """
     evaluator_yaml = repo_path / "evaluator.yaml"
 
     if evaluator_yaml.exists():
@@ -316,7 +291,6 @@ def load_evaluator_config(
                 exc,
             )
 
-    # Fallback: build config from ecosystem.yaml fields
     return _build_fallback_config(
         fallback_type=fallback_type,
         fallback_exceptions=fallback_exceptions or [],
@@ -325,7 +299,6 @@ def load_evaluator_config(
 
 
 def _parse_evaluator_yaml(raw: dict, source: str = "evaluator.yaml") -> EvaluatorConfig:
-    """Parse and validate raw evaluator.yaml content into EvaluatorConfig."""
     repo_type = str(raw.get("type", "")).strip()
     if repo_type not in VALID_REPO_TYPES:
         raise ValueError(
@@ -381,11 +354,6 @@ def _build_fallback_config(
     fallback_exceptions: list[str],
     fallback_exception_reasons: dict[str, str],
 ) -> EvaluatorConfig:
-    """
-    Build a fallback EvaluatorConfig from ecosystem.yaml fields.
-    Used during migration period when evaluator.yaml is absent.
-    Maps old dod_type/type values to new repo type taxonomy.
-    """
     repo_type = _map_legacy_type(fallback_type)
     log.info(
         "evaluator_config: evaluator.yaml absent — using fallback type '%s' (from '%s')",
@@ -404,21 +372,17 @@ def _build_fallback_config(
 
 
 def _map_legacy_type(legacy: str | None) -> str:
-    """Map old ecosystem.yaml type/dod_type values to new repo type taxonomy."""
     mapping = {
-        # Old type values
-        "worker": "pipeline-cog",  # default — cog_subtype distinguishes
+        "worker": "pipeline-cog",
         "api": "api-service",
         "library": "shared-library",
         "site": "static-site",
         "standards": "standards-repo",
-        # Old dod_type values
         "new_cog": "pipeline-cog",
         "new_fastapi_service": "api-service",
         "new_hono_service": "api-service",
         "new_frontend_site": "static-site",
         "new_react_app": "react-app",
-        # New type values (pass-through)
         "pipeline-cog": "pipeline-cog",
         "trigger-cog": "trigger-cog",
         "api-service": "api-service",
@@ -428,5 +392,5 @@ def _map_legacy_type(legacy: str | None) -> str:
         "standards-repo": "standards-repo",
     }
     if legacy is None:
-        return "shared-library"  # null dod_type = library
+        return "shared-library"
     return mapping.get(str(legacy).strip(), "pipeline-cog")
