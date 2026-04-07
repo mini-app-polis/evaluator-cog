@@ -16,8 +16,8 @@ traits:
 exemptions:
   - rule: PIPE-008
     reason: "The deterministic checker source contains retired trigger pattern strings (e.g. repository_dispatch) as string literals being checked against, not as active trigger usage. PIPE-008 does not apply."
+  - rule: CD-009
+    reason: "evaluator_config.py uses stdlib logging intentionally — it is a pure utility module loaded during unit tests where the mini_app_polis shared logger is unavailable. CD-009 does not apply to test-safe utility modules."
 
 # TEST-001/002/004 covered by pipeline-cog type scoping (evaluator has no
 # normalization/deduplication of external data — its output is evaluation findings).
-# CD-009 for deterministic.py covered by the note that test-safe utility modules
-# using stdlib logging intentionally are not flagged by the trait system.
