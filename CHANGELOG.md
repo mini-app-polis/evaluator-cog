@@ -1,3 +1,10 @@
+## [3.1.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.5...v3.1.6) (2026-04-07)
+
+
+### Bug Fixes
+
+* restore pipeline_eval.py — was overwritten with webhook router content ([b97af73](https://github.com/mini-app-polis/evaluator-cog/commit/b97af7357da739be5eaf2a62bc57361cc69981e4))
+
 ## [3.1.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.4...v3.1.5) (2026-04-07)
 
 
