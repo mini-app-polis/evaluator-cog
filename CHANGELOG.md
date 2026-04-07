@@ -1,3 +1,10 @@
+## [3.1.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.3...v3.1.4) (2026-04-07)
+
+
+### Bug Fixes
+
+* llm taking yaml for exception context ([4a26662](https://github.com/mini-app-polis/evaluator-cog/commit/4a26662cc1095ee16042b02319caf9190398a6ca))
+
 ## [3.1.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.2...v3.1.3) (2026-04-07)
 
 
