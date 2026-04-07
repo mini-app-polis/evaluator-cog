@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -186,6 +187,20 @@ def build_conformance_prompt(
     repo_path: Path | None = None,
 ) -> str:
     """Build the LLM prompt for soft-rule conformance assessment."""
+    import yaml as _yaml
+
+    evaluator_yaml_content = ""
+    repo_type = "pipeline-cog"
+    if repo_path is not None:
+        evaluator_yaml_path = repo_path / "evaluator.yaml"
+        if evaluator_yaml_path.exists():
+            with suppress(Exception):
+                evaluator_yaml_content = evaluator_yaml_path.read_text().strip()
+        if evaluator_yaml_content:
+            with suppress(Exception):
+                ev = _yaml.safe_load(evaluator_yaml_content) or {}
+                repo_type = str(ev.get("type", "pipeline-cog") or "pipeline-cog")
+
     findings_summary = (
         "\n".join(
             f"- [{f.get('severity', 'INFO')}] {f.get('rule_id', '?')}: {f.get('finding', '')}"
@@ -300,6 +315,34 @@ Monorepo context:
             except Exception:
                 readme_block = ""
 
+    if evaluator_yaml_content:
+        evaluator_yaml_block = f"""## Repo Evaluation Configuration (evaluator.yaml)
+
+This repo has a formal evaluation configuration that has been reviewed and accepted:
+
+{evaluator_yaml_content}
+
+Rules listed under `exemptions` are formally excepted for this repo with documented reasons — do not raise findings for these rule IDs under any circumstances.
+
+Rules listed under `deferrals` are known failures that are intentionally deprioritized — do not raise findings for these rule IDs. They are already tracked.
+
+Traits listed modify which rules apply:
+- `multi-flow`: CD-015 (prefect.serve() pattern) does not apply — the multi-flow structure makes source scanning unreliable for this check.
+- `pipeline-cog-evaluator`: PIPE-011 does not apply — this repo IS the evaluator.
+- `logger-primitive`: CD-009 and XSTACK-001 do not apply — this repo defines the shared logger primitive.
+- `cloudflare-pages`: VER-003, VER-005, VER-006 do not apply — Cloudflare Pages Git integration handles deployment.
+
+Additionally, rules that are auto-excepted by repo type (`type: {repo_type}`) should not be flagged:
+- `shared-library`: TEST-001, TEST-002, TEST-003, TEST-004, TEST-007, CD-002, CD-009, CD-010, PY-006, XSTACK-001, all PIPE rules, CD-007, CD-015
+- `static-site`: same as shared-library plus XSTACK-003
+- `api-service`: all PIPE rules, TEST-001–004, CD-007, CD-015
+- `trigger-cog`: all PIPE rules except CD-007, TEST-001–004, CD-015
+- `standards-repo`: all PIPE rules, TEST-001–004, CD-002, CD-009, CD-010, XSTACK-001, PY-006, CD-007, CD-015
+
+"""
+    else:
+        evaluator_yaml_block = ""
+
     return f"""You are reviewing a MiniAppPolis ecosystem repo against engineering standards v{standards_version}.
 
 Repo: {repo_id}
@@ -311,7 +354,7 @@ Check exceptions (do not flag these rule IDs):
 {monorepo_block}
 {inventory_block}
 {readme_block}
-STANDARDS RULES FOR THIS SERVICE TYPE:
+{evaluator_yaml_block}STANDARDS RULES FOR THIS SERVICE TYPE:
 The following are the checkable rules that apply to this repo type, with
 instructions for how to evaluate them:
 
