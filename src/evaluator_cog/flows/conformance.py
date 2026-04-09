@@ -273,8 +273,9 @@ def _download_repo(repo_id: str, tmp_dir: str) -> Path | None:
         with httpx.Client(timeout=60.0, follow_redirects=True) as client:
             r = client.get(url, headers=headers)
             r.raise_for_status()
+            content = r.content  # capture before client context closes
 
-        with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
             zf.extractall(tmp_dir)
             top_level = next(
                 (
@@ -603,7 +604,12 @@ def conformance_check_flow(run_llm: bool = False) -> None:
     then LLM soft-rule assessment. Posts LLM findings only with
     source='conformance_check'. Triggered manually or via Prefect automation.
     """
-    prefect_log = get_run_logger()
+    try:
+        prefect_log = get_run_logger()
+    except Exception:
+        import logging
+
+        prefect_log = logging.getLogger(__name__)
     flow_label = "conformance" if run_llm else "deterministic"
 
     standards_version = _get_standards_version()

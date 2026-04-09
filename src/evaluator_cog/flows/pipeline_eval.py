@@ -1,4 +1,12 @@
-"""Pipeline evaluation flow — post-run AI assessment and Prefect webhook handling."""
+"""Pipeline evaluation flow — post-run AI assessment and Prefect webhook handling.
+
+Note: this module is NOT registered as a Prefect deployment in main.py.
+`evaluate_pipeline_run` is called directly (in-process) by other cogs at the
+end of their flows, and `handle_prefect_flow_run_event` is invoked via the
+Prefect Cloud automation webhook. There is no scheduled or queued execution of
+this module — it is a library called by other services and by the webhook
+handler embedded in conformance_check_flow.
+"""
 
 from __future__ import annotations
 
@@ -63,7 +71,7 @@ def evaluate_pipeline_run(
     if not os.environ.get("KAIANO_API_BASE_URL"):
         return
 
-    standards_version = os.environ.get("STANDARDS_VERSION", "6.0")
+    standards_version = os.environ.get("STANDARDS_VERSION", "3.0.1")
     model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
     findings: list[dict[str, Any]] = []
 
@@ -206,12 +214,12 @@ def _extract_flow_run_event_fields(payload: dict[str, Any]) -> dict[str, str]:
 def _state_to_severity(state_type: str) -> str:
     """Map a Prefect flow run state type string to an evaluation severity level.
 
-    CRASHED -> ERROR, FAILED -> WARN, anything else -> INFO.
+    CRASHED -> ERROR, FAILED -> WARN, CANCELLED -> WARN, anything else -> INFO.
     """
     normalized = (state_type or "").upper()
     if normalized == "CRASHED":
         return "ERROR"
-    if normalized == "FAILED":
+    if normalized in {"FAILED", "CANCELLED"}:
         return "WARN"
     return "INFO"
 

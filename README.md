@@ -6,9 +6,13 @@ findings to api-kaianolevine-com.
 
 ## Overview
 
-Two modules:
-- `evaluator_cog.evaluator` — builds prompts, calls Claude, posts findings
-- `evaluator_cog.webhook` — handles Prefect flow-run state events
+Two flows, two engine modules:
+- `evaluator_cog.flows.pipeline_eval` — post-run behavioral evaluation; calls
+  Claude, posts findings; handles Prefect webhook state events
+- `evaluator_cog.flows.conformance` — scheduled structural conformance checker;
+  clones each active repo, runs deterministic + LLM checks
+- `evaluator_cog.engine.deterministic` — file/AST/YAML rule checks (~40 rules)
+- `evaluator_cog.engine.llm` — soft rule assessment, prompt builders, response parsing
 
 Findings are written to the `pipeline_evaluations` table via
 `api-kaianolevine-com` with `source=flow_inline` (normal runs) or
@@ -41,7 +45,7 @@ Copy `.env.example` to `.env` and fill in values before running.
 
 ## Wiring into a Prefect flow
 ```python
-from evaluator_cog.evaluator import evaluate_pipeline_run
+from evaluator_cog.flows.pipeline_eval import evaluate_pipeline_run
 
 # At the end of your flow:
 evaluate_pipeline_run(

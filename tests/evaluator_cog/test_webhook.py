@@ -93,3 +93,25 @@ def test_completed_flow_calls_evaluator_normally() -> None:
     assert kw.get("direct_finding_text") is None
     assert kw.get("direct_severity") is None
     assert kw["source"] == "prefect_webhook"
+
+
+def test_cancelled_flow_posts_warn_finding() -> None:
+    payload = {
+        "flow_run_id": "run-4",
+        "flow_name": "process-new-csv-files",
+        "state_name": "Cancelled",
+        "state_type": "CANCELLED",
+        "start_time": "2026-03-19T10:00:00Z",
+        "end_time": "2026-03-19T10:01:00Z",
+    }
+
+    with patch("evaluator_cog.flows.pipeline_eval.evaluate_pipeline_run") as mock_eval:
+        handle_prefect_flow_run_event(payload)
+
+    mock_eval.assert_called_once()
+    kw = mock_eval.call_args.kwargs
+    assert kw["run_id"] == "run-4"
+    assert kw["flow_name"] == "process-new-csv-files"
+    assert kw["direct_severity"] == "WARN"
+    assert "entered Cancelled state" in kw["direct_finding_text"]
+    assert kw["source"] == "prefect_webhook"

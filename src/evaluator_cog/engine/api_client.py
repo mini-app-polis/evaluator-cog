@@ -70,6 +70,17 @@ def post_findings(
     findings_posted = 0
     evaluator_failed = False
 
+    # Fetch once before the loop — avoids one GET per finding.
+    # Note: this compares against the single most-recent stored finding.
+    # Multi-finding batches may still accumulate duplicates if an earlier
+    # finding in the batch is not the most recent record for the repo.
+    # Known limitation — tracked for future improvement via composite key lookup.
+    latest = _get_latest_stored_finding(
+        api_client=api_client,
+        api_base_url=api_base_url,
+        repo=repo,
+    )
+
     for f in findings:
         if not isinstance(f, dict):
             continue
@@ -100,11 +111,6 @@ def post_findings(
             "standards_version": standards_version,
             "source": "flow_hook" if direct_finding_text else source,
         }
-        latest = _get_latest_stored_finding(
-            api_client=api_client,
-            api_base_url=api_base_url,
-            repo=repo,
-        )
         if latest and (
             str(latest.get("finding") or "").strip() == finding_text
             and str(latest.get("severity") or "").upper() == sev

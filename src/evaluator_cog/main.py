@@ -41,6 +41,10 @@ def main() -> None:
             cron="0 9 * * *",
         ),
     )
+    # pipeline_eval (flows/pipeline_eval.py) is intentionally NOT registered here.
+    # evaluate_pipeline_run() is called in-process by other cogs at the end of
+    # their flows. handle_prefect_flow_run_event() is invoked via Prefect Cloud
+    # automation webhook. Neither runs as a scheduled Prefect deployment.
 
 
 if __name__ == "__main__":
