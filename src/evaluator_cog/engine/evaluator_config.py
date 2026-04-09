@@ -278,6 +278,12 @@ def load_evaluator_config(
     fallback_exceptions: list[str] | None = None,
     fallback_exception_reasons: dict[str, str] | None = None,
 ) -> EvaluatorConfig:
+    """Load and return the EvaluatorConfig for a repo.
+
+    Reads evaluator.yaml from repo_path if present; falls back to a config
+    derived from the provided fallback_type and exception lists if absent or
+    unparseable. Never raises.
+    """
     evaluator_yaml = repo_path / "evaluator.yaml"
 
     if evaluator_yaml.exists():

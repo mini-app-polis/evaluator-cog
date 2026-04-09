@@ -35,6 +35,11 @@ def _anthropic_messages_create(
     max_tokens: int,
     user_prompt: str,
 ) -> str:
+    """Send a single-turn message to the Anthropic Messages API and return the text response.
+
+    Makes a synchronous HTTP POST to /v1/messages with the given model and prompt.
+    Raises httpx.HTTPStatusError on non-2xx responses.
+    """
     import httpx
 
     url = "https://api.anthropic.com/v1/messages"
@@ -61,6 +66,13 @@ def _anthropic_messages_create(
 
 
 def _parse_findings_from_claude(text: str) -> tuple[list[dict[str, Any]], bool]:
+    """Parse a JSON findings payload returned by Claude.
+
+    Accepts raw text that may contain a ```json``` fence.
+    Returns a tuple of (findings_list, bool) where bool is always False
+    (reserved for a future partial-parse flag).
+    Returns ([], False) on any parse error.
+    """
     raw = text.strip()
     m = _JSON_FENCE.search(raw)
     if m:
@@ -105,6 +117,11 @@ def _build_prompt_csv(
     unrecognized_filename_skips: int,
     duplicate_csv_count: int,
 ) -> str:
+    """Build the LLM evaluation prompt for a CSV processing pipeline run.
+
+    Returns a prompt string instructing Claude to emit a JSON findings payload
+    assessing the run against pipeline_consistency standards.
+    """
     failed_labels = ", ".join(failed_set_labels) if failed_set_labels else "(none)"
     return f"""You are evaluating a DJ set CSV processing pipeline run against engineering standards v{standards_version}.
 
@@ -141,6 +158,11 @@ def _build_prompt_collection(
     json_snapshot_written: bool,
     folder_names: list[str],
 ) -> str:
+    """Build the LLM evaluation prompt for a DJ set collection update pipeline run.
+
+    Returns a prompt string instructing Claude to emit a JSON findings payload
+    assessing the collection rebuild run against pipeline_consistency standards.
+    """
     current_year = datetime.now().year
     formatted_folder_names = ", ".join(folder_names) if folder_names else "(none)"
     return f"""You are evaluating a DJ set COLLECTION UPDATE pipeline run against engineering standards v{standards_version}.

@@ -204,6 +204,10 @@ def _extract_flow_run_event_fields(payload: dict[str, Any]) -> dict[str, str]:
 
 
 def _state_to_severity(state_type: str) -> str:
+    """Map a Prefect flow run state type string to an evaluation severity level.
+
+    CRASHED -> ERROR, FAILED -> WARN, anything else -> INFO.
+    """
     normalized = (state_type or "").upper()
     if normalized == "CRASHED":
         return "ERROR"

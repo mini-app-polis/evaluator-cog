@@ -320,7 +320,12 @@ def run_conformance_check(
     Run deterministic + LLM conformance checks against a cloned repo.
     Posts findings to api-kaianolevine-com when post=True. Never raises.
     """
-    prefect_log = get_run_logger()
+    try:
+        prefect_log = get_run_logger()
+    except Exception:
+        import logging
+
+        prefect_log = logging.getLogger(__name__)
 
     # Deterministic checks
     try:

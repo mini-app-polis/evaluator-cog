@@ -275,6 +275,33 @@ def test_run_standalone_deterministic_calls_load_evaluator_config(
 
     mock_load.assert_called()
     assert mock_load.call_args_list[0][0][0] == tmp_path
-    mock_run_all.assert_called_once()
-    assert mock_run_all.call_args.kwargs["evaluator_config"] is cfg
-    mock_post.assert_called_once()
+    mock_run_all.assert_called_once_with(
+        tmp_path,
+        language="python",
+        service_type="worker",
+        dod_type="new_cog",
+        cog_subtype=None,
+        check_exceptions=[],
+        exception_reasons={},
+        monorepo_root=None,
+        workspace_package_json_text=None,
+        evaluator_config=cfg,
+    )
+    # run_all_checks returns empty findings, so _run_standalone_deterministic
+    # substitutes a STATUS INFO finding before posting.
+    mock_post.assert_called_once_with(
+        findings=[
+            {
+                "rule_id": "STATUS",
+                "dimension": "structural_conformance",
+                "severity": "INFO",
+                "finding": "svc-test passed all deterministic checks for standards v2.5.0.",
+                "suggestion": "",
+            }
+        ],
+        run_id="deterministic-2.5.0-unit",
+        repo="svc-test",
+        flow_name="deterministic-conformance",
+        source="conformance_deterministic",
+        standards_version="2.5.0",
+    )
