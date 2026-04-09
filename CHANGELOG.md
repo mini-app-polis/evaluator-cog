@@ -1,3 +1,10 @@
+## [3.1.10](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.9...v3.1.10) (2026-04-09)
+
+
+### Bug Fixes
+
+* increasing test coverage ([3913b1a](https://github.com/mini-app-polis/evaluator-cog/commit/3913b1a488282a024a78a414cbde6b1903e79052))
+
 ## [3.1.9](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.8...v3.1.9) (2026-04-09)
 
 
