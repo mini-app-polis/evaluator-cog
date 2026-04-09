@@ -1,3 +1,10 @@
+## [3.1.9](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.8...v3.1.9) (2026-04-09)
+
+
+### Bug Fixes
+
+* tech debt ([887a9ac](https://github.com/mini-app-polis/evaluator-cog/commit/887a9ac9e9d2daae20262347a791e0035792498d))
+
 ## [3.1.8](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.7...v3.1.8) (2026-04-09)
 
 
