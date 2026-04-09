@@ -963,6 +963,33 @@ def test_check_no_dead_code_passes_clean(tmp_path: Path) -> None:
     assert check_no_dead_code(tmp_path) == []
 
 
+def test_check_no_dead_code_ignores_prose_with_code_tokens(tmp_path: Path) -> None:
+    """Explanatory comments using 'if'/'for' as prepositions must not be flagged."""
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "main.py").write_text(
+        "latest = get_latest()\n"
+        "# Fetch once before the loop — avoids one GET per finding.\n"
+        "# Note: this compares against the single most-recent stored finding.\n"
+        "# Multi-finding batches may still accumulate duplicates if an earlier\n"
+        "# finding in the batch is not the most recent record for the repo.\n"
+        "# Known limitation — tracked for future improvement via composite key lookup.\n"
+    )
+    assert check_no_dead_code(tmp_path) == []
+
+
+def test_check_no_dead_code_ignores_architecture_comments(tmp_path: Path) -> None:
+    """Multi-line comments referencing function names with parens must not be flagged."""
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "main.py").write_text(
+        "serve(deployment)\n"
+        "# pipeline_eval (flows/pipeline_eval.py) is intentionally NOT registered here.\n"
+        "# evaluate_pipeline_run() is called in-process by other cogs at the end of\n"
+        "# their flows. handle_prefect_flow_run_event() is invoked via Prefect Cloud\n"
+        "# automation webhook. Neither runs as a scheduled Prefect deployment.\n"
+    )
+    assert check_no_dead_code(tmp_path) == []
+
+
 def test_check_readme_running_locally_flags_missing_uv_sync(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text(
         "# My Cog\nRun with python main.py\n",

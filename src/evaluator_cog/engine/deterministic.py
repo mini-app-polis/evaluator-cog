@@ -721,8 +721,27 @@ def check_no_dead_code(repo_path: Path) -> list[Finding]:
     import re
 
     findings = []
+    # Match commented-out code by requiring a code CONSTRUCT at the start of the
+    # payload, not merely a code token anywhere in prose. This avoids false
+    # positives from explanatory comments that reference function names or use
+    # prepositions like "if" or "for" mid-sentence.
+    #
+    # True positives caught: assignments (x = y), def/class declarations,
+    # if/for statements with a colon, return/import statements, and standalone
+    # function calls (must end the line — trailing prose indicates it's a
+    # reference, not a call being commented out).
     code_like = re.compile(
-        r"(=|\(|\)|\bdef\b|\bfunction\b|\bimport\b|\breturn\b|\bif\b|\bfor\b)"
+        r"^("
+        r"\w+\s*="  # assignment: x = ...
+        r"|def\s+\w+"  # function definition
+        r"|class\s+\w+"  # class definition
+        r"|if\s+\w+.*:"  # if statement with colon
+        r"|for\s+\w+\s+in\b"  # for loop
+        r"|return\s+\w+"  # return statement
+        r"|import\s+\w+"  # import statement
+        r"|from\s+\w+"  # from import
+        r"|\w+\(.*\)\s*$"  # standalone function call ending the line
+        r")"
     )
     paths = []
     for pattern in ("*.py", "*.ts", "*.tsx", "*.astro"):
@@ -739,7 +758,7 @@ def check_no_dead_code(repo_path: Path) -> list[Finding]:
             stripped = line.strip()
             if stripped.startswith("#") or stripped.startswith("//"):
                 payload = stripped.lstrip("#/ ").strip()
-                if code_like.search(payload):
+                if code_like.match(payload):
                     run += 1
                 else:
                     run = 0
