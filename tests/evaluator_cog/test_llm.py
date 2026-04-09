@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -12,6 +15,7 @@ from evaluator_cog.engine.llm import (
     _anthropic_messages_create,
     _normalize_finding,
     _parse_findings_from_claude,
+    build_conformance_prompt,
 )
 
 # ---------------------------------------------------------------------------
@@ -194,3 +198,193 @@ def test_anthropic_messages_create_raises_on_4xx() -> None:
             max_tokens=100,
             user_prompt="x",
         )
+
+
+# ---------------------------------------------------------------------------
+# _parse_findings_from_claude — edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_parse_findings_valid_json_wrong_type_returns_empty() -> None:
+    """Valid JSON that is neither dict nor list (e.g. a number) returns []."""
+    findings, _ = _parse_findings_from_claude("42")
+    assert findings == []
+
+
+def test_parse_findings_json_string_returns_empty() -> None:
+    """A bare JSON string is not a valid findings payload."""
+    findings, _ = _parse_findings_from_claude('"just a string"')
+    assert findings == []
+
+
+def test_normalize_finding_empty_string_values_use_sentinel() -> None:
+    """All recognisable keys present but empty — falls through to sentinel text."""
+    item = {
+        "finding": "",
+        "message": "",
+        "description": "",
+        "detail": "",
+        "text": "",
+        "severity": "WARN",
+    }
+    result = _normalize_finding(item)
+    assert result["finding"] == "No finding text returned by evaluator."
+
+
+# ---------------------------------------------------------------------------
+# build_conformance_prompt — branch coverage
+# ---------------------------------------------------------------------------
+
+
+def test_build_conformance_prompt_includes_monorepo_context(tmp_path: Path) -> None:
+    """Monorepo context block appears in the prompt when monorepo_context is provided."""
+    (tmp_path / "README.md").write_text("# Test repo\n")
+
+    monorepo_ctx = {
+        "monorepo_id": "deejaytools-com",
+        "package_manager": "pnpm",
+        "workspace_deps": ["kaiano-ts-utils"],
+        "sibling_apps": [
+            {"service_id": "deejaytools-com-api", "path": "apps/api"},
+            {"service_id": "deejaytools-com-app", "path": "apps/app"},
+        ],
+    }
+
+    prompt = build_conformance_prompt(
+        repo_id="deejaytools-com-app",
+        service_type="worker",
+        language="typescript",
+        standards_version="3.0.1",
+        deterministic_findings=[],
+        standards_rules=[],
+        monorepo_context=monorepo_ctx,
+        repo_path=tmp_path,
+    )
+
+    assert "deejaytools-com" in prompt
+    assert "pnpm" in prompt
+    assert "kaiano-ts-utils" in prompt
+    assert "XSTACK-001" in prompt
+    assert "MONO-001" in prompt
+    assert "deejaytools-com-api" in prompt
+
+
+def test_build_conformance_prompt_truncates_long_readme(tmp_path: Path) -> None:
+    """README files over 4000 chars are truncated and marked as such."""
+    long_readme = "# Title\n" + ("x" * 4100)
+    (tmp_path / "README.md").write_text(long_readme)
+
+    prompt = build_conformance_prompt(
+        repo_id="test-repo",
+        service_type="worker",
+        language="python",
+        standards_version="3.0.1",
+        deterministic_findings=[],
+        standards_rules=[],
+        repo_path=tmp_path,
+    )
+
+    assert "(truncated)" in prompt
+    assert "README.md CONTENT (first 4000 chars" in prompt
+
+
+# ---------------------------------------------------------------------------
+# evaluate_pipeline_run — no API key early return
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_pipeline_run_no_anthropic_key_does_not_post(monkeypatch) -> None:
+    """Without ANTHROPIC_API_KEY, non-direct-finding calls return without posting."""
+    from evaluator_cog.flows.pipeline_eval import evaluate_pipeline_run
+
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://x")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    posted: list = []
+    api = SimpleNamespace(post=MagicMock(side_effect=lambda *a, **_: posted.append(a)))
+
+    with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
+        m.from_env.return_value = api
+        evaluate_pipeline_run(
+            run_id="r-no-key",
+            repo="deejay-cog",
+            sets_imported=1,
+            sets_failed=0,
+            sets_skipped=0,
+            total_tracks=10,
+            failed_set_labels=[],
+            api_ingest_success=True,
+            sets_attempted=1,
+            direct_finding_text=None,
+        )
+
+    assert posted == []
+
+
+# ---------------------------------------------------------------------------
+# _extract_flow_run_event_fields — nested resource payload
+# ---------------------------------------------------------------------------
+
+
+def test_extract_flow_run_event_fields_nested_resource() -> None:
+    """Prefect Cloud nested resource format is unwrapped correctly."""
+    from evaluator_cog.flows.pipeline_eval import _extract_flow_run_event_fields
+
+    payload = {
+        "resource": {
+            "flow_run_id": "nested-run-id",
+            "flow_name": "process-transcript",
+            "state_name": "Failed",
+            "state_type": "FAILED",
+            "start_time": "2026-04-01T10:00:00Z",
+            "end_time": "2026-04-01T10:01:00Z",
+        }
+    }
+
+    fields = _extract_flow_run_event_fields(payload)
+
+    assert fields["flow_run_id"] == "nested-run-id"
+    assert fields["flow_name"] == "process-transcript"
+    assert fields["state_type"] == "FAILED"
+
+
+def test_extract_flow_run_event_fields_flat_payload() -> None:
+    """Flat (non-nested) payload is parsed directly."""
+    from evaluator_cog.flows.pipeline_eval import _extract_flow_run_event_fields
+
+    payload = {
+        "flow_run_id": "flat-run-id",
+        "flow_name": "update-dj-set-collection",
+        "state_name": "Completed",
+        "state_type": "COMPLETED",
+        "start_time": "2026-04-01T10:00:00Z",
+        "end_time": "2026-04-01T10:01:00Z",
+    }
+
+    fields = _extract_flow_run_event_fields(payload)
+
+    assert fields["flow_run_id"] == "flat-run-id"
+    assert fields["state_type"] == "COMPLETED"
+
+
+# ---------------------------------------------------------------------------
+# _flow_name_to_repo — unknown flow returns "unknown"
+# ---------------------------------------------------------------------------
+
+
+def test_flow_name_to_repo_unknown_returns_unknown() -> None:
+    """Unknown flow names now return 'unknown' instead of 'deejay-cog'."""
+    from evaluator_cog.flows.pipeline_eval import _flow_name_to_repo
+
+    assert _flow_name_to_repo("some-brand-new-flow") == "unknown"
+    assert _flow_name_to_repo("") == "unknown"
+    assert _flow_name_to_repo("watcher-flow") == "unknown"
+
+
+def test_flow_name_to_repo_known_flows_unchanged() -> None:
+    """Known flow names still map to their correct repos."""
+    from evaluator_cog.flows.pipeline_eval import _flow_name_to_repo
+
+    assert _flow_name_to_repo("process-transcript") == "notes-ingest-cog"
+    assert _flow_name_to_repo("conformance-check") == "evaluator-cog"
+    assert _flow_name_to_repo("update-dj-set-collection") == "deejay-cog"

@@ -22,22 +22,32 @@ from evaluator_cog.engine.api_client import post_findings
 log = logger_mod.get_logger()
 
 _FLOW_REPO_MAP: dict[str, str] = {
+    # evaluator-cog flows
     "conformance-check": "evaluator-cog",
     "pipeline-eval": "evaluator-cog",
+    # notes-ingest-cog flows
     "process-transcript": "notes-ingest-cog",
+    # deejay-cog flows
     "update-dj-set-collection": "deejay-cog",
     "generate-summaries": "deejay-cog",
     "process-set": "deejay-cog",
+    # Add new flow->repo mappings here as cogs are added.
+    # Any flow name not in this map will be reported as "unknown"
+    # and the finding will be tagged with the unknown flow name
+    # so it is visible on the pipeline health dashboard.
 }
+
+_UNKNOWN_REPO = "unknown"
 
 
 def _flow_name_to_repo(flow_name: str) -> str:
     """Map a Prefect flow name to its ecosystem repo id.
 
-    Falls back to 'deejay-cog' for unknown flows to preserve existing
-    behaviour for legacy flows not yet in the map.
+    Returns 'unknown' for flow names not in the map so that findings are
+    attributed visibly rather than silently misattributed to a known repo.
+    Add new entries to _FLOW_REPO_MAP when new cogs are deployed.
     """
-    return _FLOW_REPO_MAP.get(flow_name, "deejay-cog")
+    return _FLOW_REPO_MAP.get(flow_name, _UNKNOWN_REPO)
 
 
 def evaluate_pipeline_run(
@@ -233,10 +243,18 @@ def _apply_prefect_flow_run_event(payload: dict[str, Any]) -> None:
     state_type = fields["state_type"] or "UNKNOWN"
     collection_update = flow_name == "update-dj-set-collection"
 
+    repo = _flow_name_to_repo(flow_name)
+    if repo == _UNKNOWN_REPO:
+        log.warning(
+            "evaluation_webhook: unknown flow name %r — finding will be posted "
+            "under repo='unknown'. Add this flow to _FLOW_REPO_MAP.",
+            flow_name,
+        )
+
     if state_type in {"FAILED", "CRASHED", "CANCELLED"}:
         evaluate_pipeline_run(
             run_id=flow_run_id,
-            repo=_flow_name_to_repo(flow_name),
+            repo=repo,
             flow_name=flow_name,
             sets_imported=0,
             sets_failed=0,
@@ -254,7 +272,7 @@ def _apply_prefect_flow_run_event(payload: dict[str, Any]) -> None:
 
     evaluate_pipeline_run(
         run_id=flow_run_id,
-        repo=_flow_name_to_repo(flow_name),
+        repo=repo,
         flow_name=flow_name,
         sets_imported=0,
         sets_failed=0,

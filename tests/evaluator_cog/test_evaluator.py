@@ -379,6 +379,9 @@ def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:
         call.args and "⏭️ Skipping duplicate finding:" in str(call.args[0])
         for call in mock_info.call_args_list
     )
+    # After the dedup hoist, _get_latest_stored_finding is called exactly once
+    # (before the loop) not once per finding. Verify the fetch happened.
+    api.get.assert_called_once()
 
 
 def test_build_conformance_prompt_includes_evaluator_yaml_exemptions(

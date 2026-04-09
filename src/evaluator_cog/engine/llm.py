@@ -97,12 +97,6 @@ def _parse_findings_from_claude(text: str) -> tuple[list[dict[str, Any]], bool]:
     return [_normalize_finding(item) for item in validated], False
 
 
-def _parse_findings_json(text: str) -> list[dict[str, Any]]:
-    """Backward-compatible alias; returns findings list only."""
-    findings, _ = _parse_findings_from_claude(text)
-    return findings
-
-
 def _build_prompt_csv(
     *,
     run_id: str,

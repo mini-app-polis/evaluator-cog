@@ -788,6 +788,26 @@ def conformance_check_flow(run_llm: bool = False) -> None:
 
                     if run_llm:
                         try:
+                            # Load evaluator.yaml for this app, mirroring the
+                            # deterministic branch below. Monorepo root takes
+                            # precedence; fall back to app path if absent.
+                            _check_root = monorepo_root
+                            _evaluator_cfg = load_evaluator_config(
+                                _check_root,
+                                fallback_type=service.get("type") or dod_type,
+                                fallback_exceptions=check_exceptions,
+                                fallback_exception_reasons=exception_reasons,
+                            )
+                            if (
+                                monorepo_root
+                                and not (_check_root / "evaluator.yaml").exists()
+                            ):
+                                _evaluator_cfg = load_evaluator_config(
+                                    repo_path,
+                                    fallback_type=service.get("type") or dod_type,
+                                    fallback_exceptions=check_exceptions,
+                                    fallback_exception_reasons=exception_reasons,
+                                )
                             run_conformance_check(
                                 repo_id=repo_id,
                                 repo_path=repo_path,
@@ -805,6 +825,7 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                                 monorepo_context=monorepo_context,
                                 post=True,
                                 post_llm_only=True,
+                                evaluator_config=_evaluator_cfg,
                             )
                             prefect_log.info(
                                 "conformance: posted LLM findings for monorepo app %s",

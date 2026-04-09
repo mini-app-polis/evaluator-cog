@@ -11,7 +11,7 @@ def test_flow_name_to_repo_known_flows() -> None:
     assert _flow_name_to_repo("process-set") == "deejay-cog"
 
 
-def test_flow_name_to_repo_unknown_falls_back() -> None:
-    """Unknown flow names fall back to deejay-cog."""
-    assert _flow_name_to_repo("some-unknown-flow") == "deejay-cog"
-    assert _flow_name_to_repo("") == "deejay-cog"
+def test_flow_name_to_repo_unknown_returns_unknown() -> None:
+    """Unknown flow names return 'unknown' rather than being silently misattributed."""
+    assert _flow_name_to_repo("some-unknown-flow") == "unknown"
+    assert _flow_name_to_repo("") == "unknown"
