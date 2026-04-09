@@ -198,3 +198,12 @@ def test_evaluator_config_boolean_properties(
     assert cfg.is_react_app is react
     assert cfg.is_standards_repo is std
     assert cfg.is_frontend is front
+
+
+def test_language_property_returns_typescript_for_non_python_types() -> None:
+    """Repo types that are not Python services return 'typescript' from .language."""
+    for repo_type in ("react-app", "static-site", "frontend"):
+        cfg = EvaluatorConfig(repo_type=repo_type)
+        assert cfg.language == "typescript", (
+            f"Expected 'typescript' for repo_type={repo_type!r}, got {cfg.language!r}"
+        )

@@ -388,3 +388,66 @@ def test_flow_name_to_repo_known_flows_unchanged() -> None:
     assert _flow_name_to_repo("process-transcript") == "notes-ingest-cog"
     assert _flow_name_to_repo("conformance-check") == "evaluator-cog"
     assert _flow_name_to_repo("update-dj-set-collection") == "deejay-cog"
+
+
+def test_parse_findings_findings_value_not_list_returns_empty() -> None:
+    """When 'findings' key exists but value is not a list, returns []."""
+    raw = '{"findings": "this should be a list not a string"}'
+    findings, _ = _parse_findings_from_claude(raw)
+    assert findings == []
+
+
+def test_build_conformance_prompt_with_check_exceptions_and_reasons() -> None:
+    """check_exceptions with reason strings appear formatted in the prompt."""
+    prompt = build_conformance_prompt(
+        repo_id="test-repo",
+        service_type="worker",
+        language="python",
+        standards_version="3.0.1",
+        deterministic_findings=[],
+        standards_rules=[],
+        check_exceptions=["CD-015", "PIPE-008"],
+        exception_reasons={
+            "CD-015": "Multi-flow structure",
+            "PIPE-008": "String literal only",
+        },
+        repo_path=None,
+    )
+    assert "CD-015" in prompt
+    assert "Multi-flow structure" in prompt
+    assert "PIPE-008" in prompt
+    assert "String literal only" in prompt
+
+
+def test_build_conformance_prompt_with_no_repo_path_omits_inventory() -> None:
+    """When repo_path is None, no file inventory or README block appears."""
+    prompt = build_conformance_prompt(
+        repo_id="test-repo",
+        service_type="worker",
+        language="python",
+        standards_version="3.0.1",
+        deterministic_findings=[],
+        standards_rules=[],
+        repo_path=None,
+    )
+    assert "REPO FILE INVENTORY" not in prompt
+    assert "README.md CONTENT" not in prompt
+
+
+def test_build_conformance_prompt_inventory_truncated_beyond_60_files(
+    tmp_path: Path,
+) -> None:
+    """Repos with more than 60 files get a truncation marker in the inventory."""
+    for i in range(65):
+        (tmp_path / f"file_{i:03d}.py").write_text("")
+
+    prompt = build_conformance_prompt(
+        repo_id="test-repo",
+        service_type="worker",
+        language="python",
+        standards_version="3.0.1",
+        deterministic_findings=[],
+        standards_rules=[],
+        repo_path=tmp_path,
+    )
+    assert "more files" in prompt

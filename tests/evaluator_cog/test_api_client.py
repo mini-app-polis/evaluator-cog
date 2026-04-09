@@ -130,3 +130,74 @@ def test_post_findings_skips_empty_finding_text(monkeypatch) -> None:
 
     assert len(posted) == 1
     assert posted[0]["finding"] == "real finding"
+
+
+def test_post_findings_normalises_warning_to_warn(monkeypatch) -> None:
+    """'WARNING' severity in a finding dict is normalised to 'WARN' in the payload."""
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")
+
+    posted: list[dict] = []
+
+    def _fake_post(path: str, payload: dict) -> dict:
+        posted.append(payload)
+        return {}
+
+    api = SimpleNamespace(post=_fake_post, get=lambda *_, **__: None)
+
+    with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
+        m.from_env.return_value = api
+        post_findings(
+            findings=[
+                {
+                    "dimension": "pipeline_consistency",
+                    "severity": "WARNING",
+                    "finding": "Something is off.",
+                    "suggestion": None,
+                }
+            ],
+            run_id="run-warn-norm",
+            repo="test-repo",
+            flow_name=None,
+            source="conformance_check",
+            standards_version="3.0.1",
+        )
+
+    assert len(posted) == 1
+    assert posted[0]["severity"] == "WARN"
+
+
+def test_post_findings_handles_post_exception_gracefully(monkeypatch) -> None:
+    """When api_client.post raises, the exception is caught, logged, and execution continues."""
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")
+
+    api = SimpleNamespace(
+        post=MagicMock(side_effect=RuntimeError("connection refused")),
+        get=lambda *_, **__: None,
+    )
+
+    with (
+        patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m,
+        patch("evaluator_cog.engine.api_client.log") as mock_log,
+    ):
+        m.from_env.return_value = api
+        post_findings(
+            findings=[
+                {
+                    "dimension": "structural_conformance",
+                    "severity": "ERROR",
+                    "finding": "Sentry missing.",
+                    "suggestion": None,
+                }
+            ],
+            run_id="run-post-fail",
+            repo="test-repo",
+            flow_name=None,
+            source="conformance_check",
+            standards_version="3.0.1",
+        )
+
+    api.post.assert_called_once()
+    assert any(
+        "failed to POST finding" in str(call.args)
+        for call in mock_log.warning.call_args_list
+    )
