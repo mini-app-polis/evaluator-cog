@@ -1,3 +1,10 @@
+## [3.1.11](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.10...v3.1.11) (2026-04-09)
+
+
+### Bug Fixes
+
+* tighten DOC-008 dead code heuristic to require statement-anchored patterns ([686f4cd](https://github.com/mini-app-polis/evaluator-cog/commit/686f4cd82943ce25f59365e6fa148f522794740c))
+
 ## [3.1.10](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.9...v3.1.10) (2026-04-09)
 
 
