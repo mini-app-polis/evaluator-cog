@@ -25,6 +25,9 @@ def _normalize_finding(item: dict) -> dict:
                 break
     if not item.get("finding"):
         item["finding"] = "No finding text returned by evaluator."
+    rule_id = item.get("rule_id", "") or ""
+    if "violation_id" not in item:
+        item["violation_id"] = rule_id or None
     return item
 
 

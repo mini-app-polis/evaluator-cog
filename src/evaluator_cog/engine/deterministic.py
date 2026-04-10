@@ -37,6 +37,7 @@ def _finding(
 ) -> Finding:
     return {
         "rule_id": rule_id,
+        "violation_id": rule_id or None,
         "severity": severity,
         "dimension": dimension,
         "finding": finding,

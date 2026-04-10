@@ -35,6 +35,7 @@ def test_finding_model_has_all_required_fields() -> None:
     assert len(f.finding) > 0
     # suggestion is optional — must be str or None
     assert f.suggestion is None or isinstance(f.suggestion, str)
+    assert f.violation_id is None or isinstance(f.violation_id, str)
 
 
 def test_finding_model_severity_values() -> None:
@@ -48,6 +49,7 @@ def test_finding_model_optional_rule_id_defaults_to_empty_string() -> None:
     """rule_id defaults to empty string when omitted (STATUS findings)."""
     f = Finding(dimension="structural_conformance", severity="INFO", finding="Passed.")
     assert f.rule_id == ""
+    assert f.violation_id is None
 
 
 def test_finding_model_optional_suggestion_defaults_to_none() -> None:
@@ -143,6 +145,8 @@ def test_post_payload_contains_all_required_contract_fields(monkeypatch) -> None
     assert payload["standards_version"] == "3.0.1"
     assert isinstance(payload["finding"], str)
     assert len(payload["finding"]) > 0
+    assert "violation_id" in payload
+    assert payload["violation_id"] is None
 
 
 def test_post_payload_severity_normalisation(monkeypatch) -> None:

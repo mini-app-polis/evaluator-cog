@@ -9,6 +9,11 @@ class Finding(BaseModel):
     """A single evaluation finding to be posted to pipeline_evaluations."""
 
     rule_id: str = Field(default="", description="Standards rule ID, e.g. 'CD-010'.")
+    violation_id: str | None = Field(
+        default=None,
+        description="Machine-readable violation code, e.g. 'CD-010'. "
+        "Absent for success/info findings not tied to a specific rule.",
+    )
     dimension: str = Field(
         description="Evaluation dimension, e.g. 'structural_conformance'."
     )

@@ -100,6 +100,7 @@ def post_findings(
             log.warning("Skipping finding with empty finding text")
             continue
 
+        violation_id = f.get("violation_id") or None
         payload = {
             "run_id": run_id,
             "repo": repo,
@@ -110,6 +111,7 @@ def post_findings(
             "suggestion": f.get("suggestion") or None,
             "standards_version": standards_version,
             "source": "flow_hook" if direct_finding_text else source,
+            "violation_id": violation_id,
         }
         if latest and (
             str(latest.get("finding") or "").strip() == finding_text
