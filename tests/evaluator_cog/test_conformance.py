@@ -39,7 +39,7 @@ def test_post_llm_only_posts_only_llm_findings(monkeypatch) -> None:
         "rule_id": "DOC-006",
         "dimension": "documentation_coverage",
         "severity": "WARN",
-        "finding": "DOC-006: Public functions lack docstrings.",
+        "finding": "Public functions lack docstrings.",
         "suggestion": "Add docstrings.",
     }
 
@@ -48,7 +48,7 @@ def test_post_llm_only_posts_only_llm_findings(monkeypatch) -> None:
     with (
         patch(
             "evaluator_cog.flows.conformance._anthropic_messages_create",
-            return_value='{"findings":[{"rule_id":"DOC-006","dimension":"documentation_coverage","severity":"WARN","finding":"DOC-006: Public functions lack docstrings.","suggestion":"Add docstrings."}]}',
+            return_value='{"findings":[{"rule_id":"DOC-006","dimension":"documentation_coverage","severity":"WARN","finding":"Public functions lack docstrings.","suggestion":"Add docstrings."}]}',
         ),
         patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client,
         patch(

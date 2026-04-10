@@ -25,9 +25,6 @@ def _normalize_finding(item: dict) -> dict:
                 break
     if not item.get("finding"):
         item["finding"] = "No finding text returned by evaluator."
-    rule_id = item.get("rule_id", "") or ""
-    if rule_id and not item["finding"].startswith(f"{rule_id}:"):
-        item["finding"] = f"{rule_id}: {item['finding']}"
     return item
 
 
