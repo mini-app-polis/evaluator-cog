@@ -425,6 +425,37 @@ def test_check_healthchecks_integration_flags_trigger_cog_missing_url() -> None:
     assert any(f["rule_id"] == "CD-007" for f in findings)
 
 
+def test_check_healthchecks_integration_passes_evaluator_suffix() -> None:
+    repo = _make_repo(
+        {
+            ".env.example": "HEALTHCHECKS_URL_EVALUATOR=\n",
+            "src/my_pkg/heartbeat.py": 'url = os.getenv("HEALTHCHECKS_URL_EVALUATOR", "")\n',
+        }
+    )
+    assert check_healthchecks_integration(repo, cog_subtype="trigger") == []
+
+
+def test_check_healthchecks_integration_passes_watcher_suffix() -> None:
+    repo = _make_repo(
+        {
+            ".env.example": "HEALTHCHECKS_URL_WATCHER=\n",
+            "src/my_pkg/heartbeat.py": 'url = os.getenv("HEALTHCHECKS_URL_WATCHER", "")\n',
+        }
+    )
+    assert check_healthchecks_integration(repo, cog_subtype="trigger") == []
+
+
+def test_check_healthchecks_integration_passes_healthchecks_in_src() -> None:
+    """src reference via 'healthchecks' keyword (case-insensitive) is sufficient."""
+    repo = _make_repo(
+        {
+            ".env.example": "HEALTHCHECKS_URL_CUSTOM=\n",
+            "src/my_pkg/heartbeat.py": "import healthchecks\n",
+        }
+    )
+    assert check_healthchecks_integration(repo, cog_subtype="trigger") == []
+
+
 def test_check_structured_logging_flags_import_logging() -> None:
     repo = _make_repo(
         {"src/my_pkg/logs.py": "import logging\nlog = logging.getLogger(__name__)\n"}

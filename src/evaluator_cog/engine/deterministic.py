@@ -35,6 +35,8 @@ def _finding(
     finding: str,
     suggestion: str = "",
 ) -> Finding:
+    if rule_id and not finding.startswith(f"{rule_id}:"):
+        finding = f"{rule_id}: {finding}"
     return {
         "rule_id": rule_id,
         "severity": severity,
