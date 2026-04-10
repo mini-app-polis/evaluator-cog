@@ -1,3 +1,21 @@
+# [3.2.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.11...v3.2.0) (2026-04-10)
+
+
+### Bug Fixes
+
+* **deterministic:** CD-007 pattern-match HEALTHCHECKS_URL_ prefix instead of requiring _EVALUATOR suffix ([3dd997f](https://github.com/mini-app-polis/evaluator-cog/commit/3dd997f1b610e204ed8e77a40492fc64ab10f65e))
+
+
+### Features
+
+* **findings:** add violation_id as optional field on Finding model and POST payload ([e89dedb](https://github.com/mini-app-polis/evaluator-cog/commit/e89dedb357db589b67e2258a1225674fca3bab3f))
+* **findings:** always prepend rule ID to finding text in deterministic and LLM paths ([d65dca9](https://github.com/mini-app-polis/evaluator-cog/commit/d65dca90f7210ad87f8f5318e3d03cfe5c5d104a))
+
+
+### Reverts
+
+* remove rule_id prefix injection from finding text — superseded by violation_id field ([73cae54](https://github.com/mini-app-polis/evaluator-cog/commit/73cae542f4e1da650cb5d6aee665e7061e325117))
+
 ## [3.1.11](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.10...v3.1.11) (2026-04-09)
 
 
