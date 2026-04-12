@@ -1,3 +1,11 @@
+# [3.3.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.2.0...v3.3.0) (2026-04-12)
+
+
+### Features
+
+* **llm:** filter auto-excepted and type-scoped rules from LLM prompt to reduce noise ([b50c76f](https://github.com/mini-app-polis/evaluator-cog/commit/b50c76fba2e3dea9953ae01469383ace92d469d2))
+* **severity:** expand to 5 values — CRITICAL, ERROR, WARN, INFO, SUCCESS; update state mappings and normalization ([865fdea](https://github.com/mini-app-polis/evaluator-cog/commit/865fdea2e846b98f22bbdd248cafeeb08f81a350))
+
 # [3.2.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.1.11...v3.2.0) (2026-04-10)
 
 
