@@ -34,9 +34,9 @@ deferrals:
   - rule: PIPE-002
     reason: >
       Client-side deduplication in api_client.py is intentionally best-effort (compares
-      against the most recent stored finding). Hard idempotency is enforced server-side
-      via the pipeline_evaluations unique constraint. This is a known architectural
-      decision documented in api_client.py.
+      against the most recent stored finding). A server-side idempotency guard is
+      backlogged — deferred due to complexity of constraining TEXT columns and cleaning
+      up existing duplicate rows.
     until: null
 
 # TEST-001/002/004 covered by pipeline-cog type scoping (evaluator has no
