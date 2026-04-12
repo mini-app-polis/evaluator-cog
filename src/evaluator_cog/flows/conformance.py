@@ -404,7 +404,7 @@ def run_conformance_check(
             {
                 "rule_id": "STATUS",
                 "dimension": "structural_conformance",
-                "severity": "INFO",
+                "severity": "SUCCESS",
                 "finding": f"{repo_id} passed all {'LLM' if post_llm_only else 'conformance'} checks for standards v{standards_version}.",
                 "suggestion": "",
             }
@@ -579,7 +579,7 @@ def _run_standalone_deterministic(
             {
                 "rule_id": "STATUS",
                 "dimension": "structural_conformance",
-                "severity": "INFO",
+                "severity": "SUCCESS",
                 "finding": f"{repo_id} passed all deterministic checks for standards v{standards_version}.",
                 "suggestion": "",
             }
@@ -891,7 +891,7 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                                 {
                                     "rule_id": "STATUS",
                                     "dimension": "structural_conformance",
-                                    "severity": "INFO",
+                                    "severity": "SUCCESS",
                                     "finding": (
                                         f"{service_id} passed all deterministic checks for "
                                         f"standards v{standards_version}."

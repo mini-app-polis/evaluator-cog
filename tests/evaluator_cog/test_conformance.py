@@ -115,7 +115,7 @@ def test_post_llm_only_false_posts_all_findings(monkeypatch) -> None:
 
 
 def test_post_llm_only_empty_llm_posts_status(monkeypatch) -> None:
-    """When post_llm_only=True and LLM returns no findings, a STATUS INFO is posted."""
+    """When post_llm_only=True and LLM returns no findings, a STATUS SUCCESS is posted."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test.example.com")
 
@@ -149,7 +149,7 @@ def test_post_llm_only_empty_llm_posts_status(monkeypatch) -> None:
         )
 
     assert len(posted) == 1
-    assert posted[0]["severity"] == "INFO"
+    assert posted[0]["severity"] == "SUCCESS"
     assert "passed all LLM checks" in posted[0]["finding"]
     assert posted[0]["source"] == "conformance_check"
 
@@ -288,13 +288,13 @@ def test_run_standalone_deterministic_calls_load_evaluator_config(
         evaluator_config=cfg,
     )
     # run_all_checks returns empty findings, so _run_standalone_deterministic
-    # substitutes a STATUS INFO finding before posting.
+    # substitutes a STATUS SUCCESS finding before posting.
     mock_post.assert_called_once_with(
         findings=[
             {
                 "rule_id": "STATUS",
                 "dimension": "structural_conformance",
-                "severity": "INFO",
+                "severity": "SUCCESS",
                 "finding": "svc-test passed all deterministic checks for standards v2.5.0.",
                 "suggestion": "",
             }
