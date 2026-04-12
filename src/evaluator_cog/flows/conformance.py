@@ -669,13 +669,22 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                     )
                     continue
 
-                if run_llm:
-                    _run_standalone_conformance(
-                        service, repo_path, standards_version, run_id, prefect_log
-                    )
-                else:
-                    _run_standalone_deterministic(
-                        service, repo_path, standards_version, run_id, prefect_log
+                try:
+                    if run_llm:
+                        _run_standalone_conformance(
+                            service, repo_path, standards_version, run_id, prefect_log
+                        )
+                    else:
+                        _run_standalone_deterministic(
+                            service, repo_path, standards_version, run_id, prefect_log
+                        )
+                except Exception as exc:
+                    prefect_log.error(
+                        "%s: unhandled error processing %s — skipping: %s",
+                        flow_label,
+                        repo_id,
+                        exc,
+                        exc_info=True,
                     )
 
             for mono_id, services in monorepo_service_groups.items():
@@ -697,13 +706,22 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                         rp = _download_repo(rname, tmp_dir)
                         if rp is None:
                             continue
-                        if run_llm:
-                            _run_standalone_conformance(
-                                svc, rp, standards_version, run_id, prefect_log
-                            )
-                        else:
-                            _run_standalone_deterministic(
-                                svc, rp, standards_version, run_id, prefect_log
+                        try:
+                            if run_llm:
+                                _run_standalone_conformance(
+                                    svc, rp, standards_version, run_id, prefect_log
+                                )
+                            else:
+                                _run_standalone_deterministic(
+                                    svc, rp, standards_version, run_id, prefect_log
+                                )
+                        except Exception as exc:
+                            prefect_log.error(
+                                "%s: unhandled error processing %s — skipping: %s",
+                                flow_label,
+                                rid,
+                                exc,
+                                exc_info=True,
                             )
                     continue
 
