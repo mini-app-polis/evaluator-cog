@@ -1,3 +1,10 @@
+## [3.3.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.3.0...v3.3.1) (2026-04-12)
+
+
+### Bug Fixes
+
+* **conformance:** change pass findings from INFO to SUCCESS severity ([73110f5](https://github.com/mini-app-polis/evaluator-cog/commit/73110f57e7e863dd213e2fa78a05d1ce9702275c))
+
 # [3.3.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.2.0...v3.3.0) (2026-04-12)
 
 
