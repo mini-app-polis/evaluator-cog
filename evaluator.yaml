@@ -23,5 +23,21 @@ exemptions:
   - rule: PIPE-004
     reason: "Concurrency guard implemented via prefect.concurrency.sync concurrency('evaluator-cog-writes', occupy=1) wrapping the full write path in conformance_check_flow."
 
+deferrals:
+  - rule: PIPE-006
+    reason: >
+      pipeline_eval.py is not a @flow-decorated function — it is a library module called
+      in-process by other cogs. The dual get_run_logger()/stdlib fallback pattern applies
+      to @flow entry points only. The module uses the shared mini_app_polis logger directly,
+      which is correct for library code.
+    until: null
+  - rule: PIPE-002
+    reason: >
+      Client-side deduplication in api_client.py is intentionally best-effort (compares
+      against the most recent stored finding). Hard idempotency is enforced server-side
+      via the pipeline_evaluations unique constraint. This is a known architectural
+      decision documented in api_client.py.
+    until: null
+
 # TEST-001/002/004 covered by pipeline-cog type scoping (evaluator has no
 # normalization/deduplication of external data — its output is evaluation findings).
