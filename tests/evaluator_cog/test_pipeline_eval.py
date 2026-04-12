@@ -82,6 +82,39 @@ def test_evaluate_pipeline_run_direct_severity_warning_normalised(
     assert posted[0]["severity"] == "WARN"
 
 
+def test_evaluate_pipeline_run_direct_severity_critical_passes_through(
+    monkeypatch,
+) -> None:
+    """direct_severity='CRITICAL' is accepted and posted as CRITICAL."""
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://x")
+
+    posted: list[dict] = []
+
+    def _fake_post(path: str, payload: dict) -> dict:
+        posted.append(payload)
+        return {}
+
+    api = SimpleNamespace(post=_fake_post, get=lambda *_, **__: None)
+
+    with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
+        m.from_env.return_value = api
+        evaluate_pipeline_run(
+            run_id="r-critical-sev",
+            repo="deejay-cog",
+            sets_imported=0,
+            sets_failed=0,
+            sets_skipped=0,
+            total_tracks=0,
+            failed_set_labels=[],
+            api_ingest_success=True,
+            direct_finding_text="Something happened.",
+            direct_severity="CRITICAL",
+        )
+
+    assert len(posted) == 1
+    assert posted[0]["severity"] == "CRITICAL"
+
+
 def test_evaluate_pipeline_run_direct_severity_invalid_defaults_to_warn(
     monkeypatch,
 ) -> None:
@@ -108,7 +141,7 @@ def test_evaluate_pipeline_run_direct_severity_invalid_defaults_to_warn(
             failed_set_labels=[],
             api_ingest_success=True,
             direct_finding_text="Something happened.",
-            direct_severity="CRITICAL",
+            direct_severity="NOT_A_CANONICAL_SEVERITY",
         )
 
     assert len(posted) == 1
@@ -152,7 +185,10 @@ def test_evaluate_pipeline_run_claude_exception_returns_without_posting(
 
 
 def test_state_to_severity_completed_returns_info() -> None:
-    """Any state other than CRASHED/FAILED/CANCELLED maps to INFO."""
+    """CRASHED/FAILED/CANCELLED map to CRITICAL/ERROR/WARN; other states map to INFO."""
+    assert _state_to_severity("CRASHED") == "CRITICAL"
+    assert _state_to_severity("FAILED") == "ERROR"
+    assert _state_to_severity("CANCELLED") == "WARN"
     assert _state_to_severity("COMPLETED") == "INFO"
     assert _state_to_severity("RUNNING") == "INFO"
     assert _state_to_severity("SCHEDULED") == "INFO"

@@ -3,7 +3,7 @@ from unittest.mock import patch
 from evaluator_cog.flows.pipeline_eval import handle_prefect_flow_run_event
 
 
-def test_crashed_flow_posts_error_finding() -> None:
+def test_crashed_flow_posts_critical_finding() -> None:
     payload = {
         "flow_run_id": "run-1",
         "flow_name": "process-new-csv-files",
@@ -22,7 +22,7 @@ def test_crashed_flow_posts_error_finding() -> None:
     assert kw["repo"] == "unknown"
     assert kw["flow_name"] == "process-new-csv-files"
     assert kw["collection_update"] is False
-    assert kw["direct_severity"] == "ERROR"
+    assert kw["direct_severity"] == "CRITICAL"
     assert "entered Crashed state" in kw["direct_finding_text"]
     assert kw["source"] == "prefect_webhook"
 
@@ -47,7 +47,7 @@ def test_process_transcript_maps_to_notes_ingest_cog() -> None:
     assert kw["source"] == "prefect_webhook"
 
 
-def test_failed_flow_posts_warn_finding() -> None:
+def test_failed_flow_posts_error_finding() -> None:
     payload = {
         "flow_run_id": "run-2",
         "flow_name": "update-dj-set-collection",
@@ -66,7 +66,7 @@ def test_failed_flow_posts_warn_finding() -> None:
     assert kw["repo"] == "deejay-cog"
     assert kw["flow_name"] == "update-dj-set-collection"
     assert kw["collection_update"] is True
-    assert kw["direct_severity"] == "WARN"
+    assert kw["direct_severity"] == "ERROR"
     assert "entered Failed state" in kw["direct_finding_text"]
     assert kw["source"] == "prefect_webhook"
 

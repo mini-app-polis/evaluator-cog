@@ -87,10 +87,12 @@ def post_findings(
         sev = str(f.get("severity") or "INFO").upper()
         if sev == "WARNING":
             sev = "WARN"
-        if sev == "ERROR":
+        if sev in {"CRITICAL", "ERROR"}:
             err_ct += 1
         elif sev == "WARN":
             warn_ct += 1
+        elif sev == "SUCCESS":
+            info_ct += 1
         else:
             sev = "INFO"
             info_ct += 1

@@ -17,7 +17,7 @@ class Finding(BaseModel):
     dimension: str = Field(
         description="Evaluation dimension, e.g. 'structural_conformance'."
     )
-    severity: str = Field(description="One of INFO, WARN, or ERROR.")
+    severity: str = Field(description="One of CRITICAL, ERROR, WARN, INFO, or SUCCESS.")
     finding: str = Field(description="Human-readable finding text.")
     suggestion: str | None = Field(
         default=None, description="Actionable remediation suggestion."

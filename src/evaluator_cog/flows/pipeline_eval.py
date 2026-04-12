@@ -89,7 +89,7 @@ def evaluate_pipeline_run(
         sev = str(direct_severity or "WARN").upper()
         if sev == "WARNING":
             sev = "WARN"
-        if sev not in {"INFO", "WARN", "ERROR"}:
+        if sev not in {"CRITICAL", "ERROR", "WARN", "INFO", "SUCCESS"}:
             sev = "WARN"
         findings = [
             {
@@ -224,12 +224,17 @@ def _extract_flow_run_event_fields(payload: dict[str, Any]) -> dict[str, str]:
 def _state_to_severity(state_type: str) -> str:
     """Map a Prefect flow run state type string to an evaluation severity level.
 
-    CRASHED -> ERROR, FAILED -> WARN, CANCELLED -> WARN, anything else -> INFO.
+    CRASHED -> CRITICAL (process-level failure, likely unrecoverable),
+    FAILED -> ERROR (flow logic failed, needs attention),
+    CANCELLED -> WARN (intentional but worth noting),
+    anything else -> INFO.
     """
     normalized = (state_type or "").upper()
     if normalized == "CRASHED":
+        return "CRITICAL"
+    if normalized == "FAILED":
         return "ERROR"
-    if normalized in {"FAILED", "CANCELLED"}:
+    if normalized == "CANCELLED":
         return "WARN"
     return "INFO"
 
