@@ -371,6 +371,9 @@ def run_conformance_check(
                 checked_rule_ids=checked_rule_ids,
                 check_exceptions=check_exceptions,
                 exception_reasons=exception_reasons,
+                all_skipped_ids=evaluator_config.all_skipped_ids
+                if evaluator_config is not None
+                else None,
                 monorepo_context=monorepo_context,
                 repo_path=repo_path,
             )

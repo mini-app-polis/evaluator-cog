@@ -202,6 +202,7 @@ def build_conformance_prompt(
     checked_rule_ids: set[str] | None = None,
     check_exceptions: list[str] | None = None,
     exception_reasons: dict[str, str] | None = None,
+    all_skipped_ids: frozenset[str] | None = None,
     monorepo_context: dict | None = None,
     repo_path: Path | None = None,
 ) -> str:
@@ -244,7 +245,15 @@ def build_conformance_prompt(
     # EVAL-002 is assessed deterministically via the standards_version field check.
     # Always mark it as checked so the LLM does not re-assess it.
     all_checked.add("EVAL-002")
-    soft_rules = [r for r in standards_rules if r["id"] not in all_checked]
+    # Also exclude rules that are auto-excepted for this repo type/traits or
+    # explicitly excepted via check_exceptions — the LLM should only see rules
+    # that are genuinely in scope and not already resolved.
+    all_excepted = (all_skipped_ids or frozenset()) | set(check_exceptions or [])
+    soft_rules = [
+        r
+        for r in standards_rules
+        if r["id"] not in all_checked and r["id"] not in all_excepted
+    ]
     soft_rules_text = (
         "\n".join(
             f"- {r['id']} [{r['severity']}]: {r['title']}\n"
@@ -437,7 +446,7 @@ When all soft rules are clean: emit exactly ONE INFO summarising
 overall repo health. Do not emit one finding per rule.
 
 Respond with ONLY valid JSON (no markdown) in this exact shape:
-{{"findings":[{{"rule_id":"...","dimension":"structural_conformance","severity":"INFO|WARN|ERROR","finding":"...","suggestion":"..."}}]}}
+{{"findings":[{{"rule_id":"...","dimension":"structural_conformance","severity":"CRITICAL|ERROR|WARN|INFO|SUCCESS","finding":"...","suggestion":"..."}}]}}
 
 Rules:
 - severity must be INFO, WARN, or ERROR (uppercase).
