@@ -1,3 +1,10 @@
+# [3.4.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.3.2...v3.4.0) (2026-04-17)
+
+
+### Features
+
+* upgrade common for auth ([4bd8a9c](https://github.com/mini-app-polis/evaluator-cog/commit/4bd8a9cfc1a65ce0f17f00125d45a06b5618669b))
+
 ## [3.3.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.3.1...v3.3.2) (2026-04-17)
 
 
