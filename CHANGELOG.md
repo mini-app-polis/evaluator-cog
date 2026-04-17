@@ -1,3 +1,10 @@
+# [3.6.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.5.0...v3.6.0) (2026-04-17)
+
+
+### Features
+
+* common upgrade ([74301f8](https://github.com/mini-app-polis/evaluator-cog/commit/74301f8f3fc1ca76dca188b2f23f1ce65a39d1ab))
+
 # [3.5.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.4.0...v3.5.0) (2026-04-17)
 
 
