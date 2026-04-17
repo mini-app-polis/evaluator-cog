@@ -1,3 +1,10 @@
+## [3.3.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.3.1...v3.3.2) (2026-04-17)
+
+
+### Bug Fixes
+
+* **conformance:** wrap per-repo _run_standalone calls in try/except for PRIN-002 isolation ([acc8916](https://github.com/mini-app-polis/evaluator-cog/commit/acc8916991988ab362d419fa41a6720f4950bfb4))
+
 ## [3.3.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.3.0...v3.3.1) (2026-04-12)
 
 
