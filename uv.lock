@@ -461,8 +461,8 @@ wheels = [
 
 [[package]]
 name = "common-python-utils"
-version = "2.4.0"
-source = { git = "https://github.com/mini-app-polis/common-python-utils.git?rev=main#c142af4699c429fec3865be4e2d5b76dc04905a1" }
+version = "2.5.0"
+source = { git = "https://github.com/mini-app-polis/common-python-utils.git?rev=main#e2dd7e8ea85a52a820729279bcc517c8af0f53fc" }
 dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
