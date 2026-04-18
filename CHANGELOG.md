@@ -1,3 +1,10 @@
+# [3.8.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.7.0...v3.8.0) (2026-04-18)
+
+
+### Features
+
+* supporting fix findings from deejay cog ([39d2d6a](https://github.com/mini-app-polis/evaluator-cog/commit/39d2d6af80194cabf6cc7807cb2cc6430017baf1))
+
 # [3.7.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.6.0...v3.7.0) (2026-04-18)
 
 
