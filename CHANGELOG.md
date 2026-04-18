@@ -1,3 +1,10 @@
+# [3.7.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.6.0...v3.7.0) (2026-04-18)
+
+
+### Features
+
+* bump common-python-utils ([dcfa5da](https://github.com/mini-app-polis/evaluator-cog/commit/dcfa5da989eb423865e235e8f4be488e3e7fc54c))
+
 # [3.6.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.5.0...v3.6.0) (2026-04-17)
 
 
