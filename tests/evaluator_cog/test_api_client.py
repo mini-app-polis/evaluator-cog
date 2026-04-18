@@ -166,6 +166,139 @@ def test_post_findings_normalises_warning_to_warn(monkeypatch) -> None:
     assert posted[0]["severity"] == "WARN"
 
 
+def test_post_findings_skips_duplicate_when_same_run_finding_severity_dimension(
+    monkeypatch,
+) -> None:
+    """Latest stored row matches run_id + finding + severity + dimension — skip POST."""
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")
+
+    mock_post = MagicMock(return_value={})
+
+    api = SimpleNamespace(
+        post=mock_post,
+        get=MagicMock(
+            return_value={
+                "data": [
+                    {
+                        "run_id": "run-dedup-1",
+                        "dimension": "pipeline_consistency",
+                        "severity": "SUCCESS",
+                        "finding": "Run completed successfully.",
+                    }
+                ]
+            }
+        ),
+    )
+
+    with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
+        m.from_env.return_value = api
+        post_findings(
+            findings=[
+                {
+                    "dimension": "pipeline_consistency",
+                    "severity": "SUCCESS",
+                    "finding": "Run completed successfully.",
+                    "suggestion": None,
+                }
+            ],
+            run_id="run-dedup-1",
+            repo="test-repo",
+            flow_name="process-new-csv-files",
+            source="flow_inline",
+            standards_version="6.0.0",
+        )
+
+    mock_post.assert_not_called()
+
+
+def test_post_findings_posts_when_same_text_but_different_run_id(monkeypatch) -> None:
+    """Identical finding text as latest row but different run_id — POST once."""
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")
+
+    posted: list[dict] = []
+
+    def _fake_post(path: str, payload: dict) -> dict:
+        posted.append(payload)
+        return {}
+
+    mock_post = MagicMock(side_effect=_fake_post)
+
+    api = SimpleNamespace(
+        post=mock_post,
+        get=MagicMock(
+            return_value={
+                "data": [
+                    {
+                        "run_id": "run-previous",
+                        "dimension": "pipeline_consistency",
+                        "severity": "SUCCESS",
+                        "finding": "Run completed successfully.",
+                    }
+                ]
+            }
+        ),
+    )
+
+    with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
+        m.from_env.return_value = api
+        post_findings(
+            findings=[
+                {
+                    "dimension": "pipeline_consistency",
+                    "severity": "SUCCESS",
+                    "finding": "Run completed successfully.",
+                    "suggestion": None,
+                }
+            ],
+            run_id="run-new",
+            repo="test-repo",
+            flow_name="process-new-csv-files",
+            source="flow_inline",
+            standards_version="6.0.0",
+        )
+
+    mock_post.assert_called_once()
+    assert len(posted) == 1
+    assert posted[0]["run_id"] == "run-new"
+
+
+def test_post_findings_respects_caller_source_with_direct_finding_text_kwarg(
+    monkeypatch,
+) -> None:
+    """direct_finding_text kwarg does not override source — payload uses caller source."""
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")
+
+    posted: list[dict] = []
+
+    def _fake_post(path: str, payload: dict) -> dict:
+        posted.append(payload)
+        return {}
+
+    api = SimpleNamespace(post=_fake_post, get=MagicMock(return_value=None))
+
+    with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
+        m.from_env.return_value = api
+        post_findings(
+            findings=[
+                {
+                    "dimension": "pipeline_consistency",
+                    "severity": "INFO",
+                    "finding": "Direct body text.",
+                    "suggestion": None,
+                }
+            ],
+            run_id="run-src",
+            repo="test-repo",
+            flow_name=None,
+            source="flow_inline",
+            standards_version="6.0.0",
+            direct_finding_text="ignored for payload; findings carry text",
+        )
+
+    assert len(posted) == 1
+    assert posted[0]["source"] == "flow_inline"
+
+
 def test_post_findings_handles_post_exception_gracefully(monkeypatch) -> None:
     """When api_client.post raises, the exception is caught, logged, and execution continues."""
     monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")

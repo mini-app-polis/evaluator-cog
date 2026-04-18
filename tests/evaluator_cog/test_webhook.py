@@ -19,7 +19,7 @@ def test_crashed_flow_posts_critical_finding() -> None:
     mock_eval.assert_called_once()
     kw = mock_eval.call_args.kwargs
     assert kw["run_id"] == "run-1"
-    assert kw["repo"] == "unknown"
+    assert kw["repo"] == "deejay-cog"
     assert kw["flow_name"] == "process-new-csv-files"
     assert kw["collection_update"] is False
     assert kw["direct_severity"] == "CRITICAL"

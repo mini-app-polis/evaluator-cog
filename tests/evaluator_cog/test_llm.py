@@ -387,7 +387,12 @@ def test_flow_name_to_repo_known_flows_unchanged() -> None:
 
     assert _flow_name_to_repo("process-transcript") == "notes-ingest-cog"
     assert _flow_name_to_repo("conformance-check") == "evaluator-cog"
+    assert _flow_name_to_repo("pipeline-eval") == "evaluator-cog"
+    assert _flow_name_to_repo("process-new-csv-files") == "deejay-cog"
+    assert _flow_name_to_repo("ingest-live-history") == "deejay-cog"
+    assert _flow_name_to_repo("generate-summaries") == "deejay-cog"
     assert _flow_name_to_repo("update-dj-set-collection") == "deejay-cog"
+    assert _flow_name_to_repo("retag-music") == "deejay-cog"
 
 
 def test_parse_findings_findings_value_not_list_returns_empty() -> None:

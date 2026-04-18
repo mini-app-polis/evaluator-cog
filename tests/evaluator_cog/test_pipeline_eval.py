@@ -3,25 +3,77 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from evaluator_cog.flows.pipeline_eval import (
+    _FLOW_REPO_MAP,
+    _fetch_current_standards_version,
     _flow_name_to_repo,
+    _resolve_standards_version,
     _state_to_severity,
     evaluate_pipeline_run,
 )
 
 
-def test_flow_name_to_repo_known_flows() -> None:
-    """Known flow names map to the correct repo."""
-    assert _flow_name_to_repo("process-transcript") == "notes-ingest-cog"
-    assert _flow_name_to_repo("update-dj-set-collection") == "deejay-cog"
-    assert _flow_name_to_repo("generate-summaries") == "deejay-cog"
-    assert _flow_name_to_repo("process-set") == "deejay-cog"
+@pytest.mark.parametrize("flow_name,expected_repo", sorted(_FLOW_REPO_MAP.items()))
+def test_flow_name_to_repo_map_entries(flow_name: str, expected_repo: str) -> None:
+    """Every _FLOW_REPO_MAP entry resolves to its repo id."""
+    assert _flow_name_to_repo(flow_name) == expected_repo
 
 
 def test_flow_name_to_repo_unknown_returns_unknown() -> None:
     """Unknown flow names return 'unknown' rather than being silently misattributed."""
     assert _flow_name_to_repo("some-unknown-flow") == "unknown"
+    assert _flow_name_to_repo("process-set") == "unknown"
     assert _flow_name_to_repo("") == "unknown"
+
+
+def test_resolve_standards_version_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """STANDARDS_VERSION env wins over index fetch."""
+    _fetch_current_standards_version.cache_clear()
+    monkeypatch.setenv("STANDARDS_VERSION", "9.0.0")
+    assert _resolve_standards_version() == "9.0.0"
+
+
+def test_resolve_standards_version_uses_fetch_when_no_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without env override, _resolve_standards_version uses the cached fetch helper."""
+    _fetch_current_standards_version.cache_clear()
+    monkeypatch.delenv("STANDARDS_VERSION", raising=False)
+    with patch(
+        "evaluator_cog.flows.pipeline_eval._fetch_current_standards_version",
+        return_value="6.2.0",
+    ):
+        assert _resolve_standards_version() == "6.2.0"
+
+
+def test_resolve_standards_version_unknown_when_fetch_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty env and fetch returning unknown yields unknown."""
+    _fetch_current_standards_version.cache_clear()
+    monkeypatch.delenv("STANDARDS_VERSION", raising=False)
+    with patch(
+        "evaluator_cog.flows.pipeline_eval._fetch_current_standards_version",
+        return_value="unknown",
+    ):
+        assert _resolve_standards_version() == "unknown"
+
+
+def test_fetch_current_standards_version_unknown_on_urlopen_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fetch_current_standards_version.cache_clear()
+    monkeypatch.delenv("STANDARDS_VERSION", raising=False)
+    with patch(
+        "evaluator_cog.flows.pipeline_eval.urlopen",
+        side_effect=OSError("network down"),
+    ):
+        assert _fetch_current_standards_version() == "unknown"
+    _fetch_current_standards_version.cache_clear()
 
 
 def test_evaluate_pipeline_run_no_kaiano_url_returns_early(monkeypatch) -> None:

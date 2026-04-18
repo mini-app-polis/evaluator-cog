@@ -71,10 +71,11 @@ def post_findings(
     evaluator_failed = False
 
     # Fetch once before the loop — avoids one GET per finding.
-    # Note: this compares against the single most-recent stored finding.
-    # Multi-finding batches may still accumulate duplicates if an earlier
-    # finding in the batch is not the most recent record for the repo.
-    # Known limitation — tracked for future improvement via composite key lookup.
+    # Dedup key: (run_id, finding_text, severity, dimension). Collisions on all
+    # four fields are treated as duplicate posts (e.g. a retry); different
+    # run_id means a new run regardless of identical text. This matters
+    # because client helpers may emit identical default text (e.g. "Run
+    # completed successfully.") across many runs.
     latest = _get_latest_stored_finding(
         api_client=api_client,
         api_base_url=api_base_url,
@@ -112,15 +113,20 @@ def post_findings(
             "finding": finding_text,
             "suggestion": f.get("suggestion") or None,
             "standards_version": standards_version,
-            "source": "flow_hook" if direct_finding_text else source,
+            "source": source,
             "violation_id": violation_id,
         }
         if latest and (
-            str(latest.get("finding") or "").strip() == finding_text
+            str(latest.get("run_id") or "").strip() == str(run_id).strip()
+            and str(latest.get("finding") or "").strip() == finding_text
             and str(latest.get("severity") or "").upper() == sev
             and str(latest.get("dimension") or "").strip() == str(payload["dimension"])
         ):
-            log.info("⏭️ Skipping duplicate finding: %s", finding_text[:60])
+            log.info(
+                "⏭️ Skipping duplicate finding for run_id=%s: %s",
+                run_id,
+                finding_text[:60],
+            )
             continue
         try:
             api_client.post("/v1/evaluations", payload)

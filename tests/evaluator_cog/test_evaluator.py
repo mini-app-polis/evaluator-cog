@@ -291,7 +291,10 @@ def test_evaluate_pipeline_run_flow_name_defaults_to_none(monkeypatch) -> None:
     assert body["flow_name"] is None
 
 
-def test_evaluate_pipeline_run_uses_flow_hook_source(monkeypatch) -> None:
+def test_evaluate_pipeline_run_respects_caller_source_with_direct_finding(
+    monkeypatch,
+) -> None:
+    """post_findings uses the caller's source; direct_finding_text does not force flow_hook."""
     monkeypatch.setenv("KAIANO_API_BASE_URL", "https://x")
 
     posted: list[tuple[str, dict]] = []
@@ -320,7 +323,7 @@ def test_evaluate_pipeline_run_uses_flow_hook_source(monkeypatch) -> None:
 
     assert len(posted) == 1
     _, body = posted[0]
-    assert body["source"] == "flow_hook"
+    assert body["source"] == "flow_inline"
 
 
 def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:
@@ -343,6 +346,7 @@ def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:
             return_value={
                 "data": [
                     {
+                        "run_id": "r-dup",
                         "dimension": "pipeline_consistency",
                         "severity": "WARN",
                         "finding": "duplicate finding text",
@@ -376,7 +380,7 @@ def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:
 
     api.post.assert_not_called()
     assert any(
-        call.args and "⏭️ Skipping duplicate finding:" in str(call.args[0])
+        call.args and "⏭️ Skipping duplicate finding for run_id=" in str(call.args[0])
         for call in mock_info.call_args_list
     )
     # After the dedup hoist, _get_latest_stored_finding is called exactly once

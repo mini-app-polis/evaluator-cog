@@ -10,9 +10,11 @@ handler embedded in conformance_check_flow.
 
 from __future__ import annotations
 
+import functools
 import os
 from collections.abc import Iterable
 from typing import Any
+from urllib.request import urlopen
 
 from mini_app_polis import logger as logger_mod
 
@@ -21,20 +23,69 @@ from evaluator_cog.engine.api_client import post_findings
 
 log = logger_mod.get_logger()
 
+_INDEX_YAML_URL = os.environ.get(
+    "ECOSYSTEM_STANDARDS_INDEX_URL",
+    "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml",
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _fetch_current_standards_version() -> str:
+    """
+    Fetch the current standards version from ecosystem-standards/index.yaml.
+    Cached for process lifetime. Returns 'unknown' on any fetch or parse
+    failure — findings will land with standards_version='unknown' rather
+    than a stale hardcoded value.
+    """
+    try:
+        import yaml
+
+        with urlopen(_INDEX_YAML_URL, timeout=10) as resp:
+            data = yaml.safe_load(resp.read())
+        version = data.get("version") if isinstance(data, dict) else None
+        if isinstance(version, str) and version.strip():
+            return version.strip()
+        return "unknown"
+    except Exception:
+        log.warning("Could not fetch standards version from %s", _INDEX_YAML_URL)
+        return "unknown"
+
+
+def _resolve_standards_version() -> str:
+    """
+    Prefer STANDARDS_VERSION env var (explicit override), then fall back
+    to fetching from index.yaml, then to 'unknown'.
+    """
+    override = os.environ.get("STANDARDS_VERSION", "").strip()
+    if override:
+        return override
+    return _fetch_current_standards_version()
+
+
+# Maps Prefect flow names (from @flow(name=...) decorators) to ecosystem
+# repo IDs. Used by the prefect_webhook handler to attribute findings
+# to the correct repo in pipeline_evaluations. The inline helper path
+# (deejay-cog/_pipeline_eval.post_run_finding) stamps repo directly and
+# does not consult this map — this map exists for the webhook-only path,
+# where the repo is not carried in the Prefect event payload.
+#
+# Include every flow that MIGHT produce a webhook event, including
+# local-only or WIP flows. Missing entries fall through to "unknown"
+# and produce findings with repo="unknown" in Pipeline Health.
 _FLOW_REPO_MAP: dict[str, str] = {
     # evaluator-cog flows
     "conformance-check": "evaluator-cog",
     "pipeline-eval": "evaluator-cog",
     # notes-ingest-cog flows
     "process-transcript": "notes-ingest-cog",
-    # deejay-cog flows
-    "update-dj-set-collection": "deejay-cog",
+    # deejay-cog flows (production)
+    "process-new-csv-files": "deejay-cog",
+    "ingest-live-history": "deejay-cog",
+    # deejay-cog flows (local-only; kept in map for correct attribution if ever seen)
     "generate-summaries": "deejay-cog",
-    "process-set": "deejay-cog",
-    # Add new flow->repo mappings here as cogs are added.
-    # Any flow name not in this map will be reported as "unknown"
-    # and the finding will be tagged with the unknown flow name
-    # so it is visible on the pipeline health dashboard.
+    "update-dj-set-collection": "deejay-cog",
+    # deejay-cog flows (WIP, not served in production)
+    "retag-music": "deejay-cog",
 }
 
 _UNKNOWN_REPO = "unknown"
@@ -81,7 +132,7 @@ def evaluate_pipeline_run(
     if not os.environ.get("KAIANO_API_BASE_URL"):
         return
 
-    standards_version = os.environ.get("STANDARDS_VERSION", "3.0.1")
+    standards_version = _resolve_standards_version()
     model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
     findings: list[dict[str, Any]] = []
 
