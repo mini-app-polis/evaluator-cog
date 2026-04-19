@@ -41,11 +41,15 @@ from evaluator_cog.engine.llm import (
     _parse_findings_from_claude,
     build_conformance_prompt,
 )
+from evaluator_cog.engine.routing import classify_check_mode
 
 log = logger_mod.get_logger()
 
 _ECOSYSTEM_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/ecosystem.yaml"
-_STANDARDS_VERSION_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json"
+_STANDARDS_VERSION_URL = os.environ.get(
+    "ECOSYSTEM_STANDARDS_VERSION_URL",
+    "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json",
+)
 _STANDARDS_BASE_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/standards"
 
 
@@ -124,7 +128,10 @@ def _fetch_standards_for_service(
     """
     Fetch checkable rules from all standards domains, filtered by
     the service's repo type using the applies_to field on each rule.
-    Returns a list of rule dicts with id, title, severity, check_notes.
+    Returns a list of rule dicts with id, title, severity, check_notes,
+    check_mode. `check_mode` is one of "deterministic" or "llm", derived
+    from the DETERMINISTIC CHECK / LLM CHECK marker on the rule's
+    check_notes; rules missing the marker default to "deterministic".
     Never raises — returns [] on failure.
     """
     # Prefer new type from evaluator_config, fall back to dod_type for migration period
@@ -144,7 +151,20 @@ def _fetch_standards_for_service(
         "principles",
         "cross-stack",
         "monorepo",
+        "meta",
     ]
+
+    def _to_rule_dict(rule: dict) -> dict:
+        check_notes = (rule.get("check_notes") or "").strip()
+        rule_id = str(rule.get("id") or "")
+        return {
+            "id": rule_id,
+            "title": rule.get("title", ""),
+            "severity": rule.get("severity", "INFO"),
+            "check_notes": check_notes,
+            "check_mode": classify_check_mode(rule_id, check_notes),
+        }
+
     for domain in domains:
         url = f"{_STANDARDS_BASE_URL}/{domain}.yaml"
         data = _fetch_yaml(url)
@@ -154,30 +174,13 @@ def _fetch_standards_for_service(
             applies_to = rule.get("applies_to", [])
             # "all" applies to every type
             if "all" in applies_to:
-                all_rules.append(
-                    {
-                        "id": rule.get("id", ""),
-                        "title": rule.get("title", ""),
-                        "severity": rule.get("severity", "INFO"),
-                        "check_notes": rule.get("check_notes", "").strip(),
-                    }
-                )
+                all_rules.append(_to_rule_dict(rule))
                 continue
             # Match on new repo type (v3.0.0) or legacy dod_type (migration period)
-            if (
-                repo_type
-                and repo_type in applies_to
-                or dod_type
-                and dod_type in applies_to
+            if (repo_type and repo_type in applies_to) or (
+                dod_type and dod_type in applies_to
             ):
-                all_rules.append(
-                    {
-                        "id": rule.get("id", ""),
-                        "title": rule.get("title", ""),
-                        "severity": rule.get("severity", "INFO"),
-                        "check_notes": rule.get("check_notes", "").strip(),
-                    }
-                )
+                all_rules.append(_to_rule_dict(rule))
     return all_rules
 
 

@@ -249,10 +249,19 @@ def build_conformance_prompt(
     # explicitly excepted via check_exceptions — the LLM should only see rules
     # that are genuinely in scope and not already resolved.
     all_excepted = (all_skipped_ids or frozenset()) | set(check_exceptions or [])
+    # Exclude rules the catalog has routed to the deterministic engine. Those
+    # belong to engine/deterministic.py regardless of whether the check
+    # function has been implemented yet — forwarding them to the LLM would
+    # invite inconsistent judgements on rules that have a single, canonical
+    # deterministic interpretation. Rules without a routing marker (legacy
+    # pre-audit rules) are classified as deterministic by default, which
+    # preserves existing behaviour for the rules the engine already runs.
     soft_rules = [
         r
         for r in standards_rules
-        if r["id"] not in all_checked and r["id"] not in all_excepted
+        if r["id"] not in all_checked
+        and r["id"] not in all_excepted
+        and r.get("check_mode", "deterministic") == "llm"
     ]
     soft_rules_text = (
         "\n".join(

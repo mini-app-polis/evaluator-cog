@@ -456,3 +456,180 @@ def test_build_conformance_prompt_inventory_truncated_beyond_60_files(
         repo_path=tmp_path,
     )
     assert "more files" in prompt
+
+
+# ---------------------------------------------------------------------------
+# build_conformance_prompt — DETERMINISTIC/LLM routing filter
+# ---------------------------------------------------------------------------
+
+
+def _rule(
+    rule_id: str,
+    *,
+    title: str = "",
+    severity: str = "WARN",
+    check_notes: str = "",
+    check_mode: str | None = "llm",
+) -> dict:
+    """Construct a minimal standards_rules dict for prompt-filter tests."""
+    d = {
+        "id": rule_id,
+        "title": title or f"{rule_id} title",
+        "severity": severity,
+        "check_notes": check_notes or f"How to check {rule_id}.",
+    }
+    if check_mode is not None:
+        d["check_mode"] = check_mode
+    return d
+
+
+def test_llm_marked_rule_reaches_the_prompt() -> None:
+    """A rule with check_mode='llm' appears in the RULES TO ASSESS block."""
+    rules = [_rule("PIPE-013", check_mode="llm")]
+    prompt = build_conformance_prompt(
+        repo_id="r",
+        service_type="worker",
+        language="python",
+        standards_version="3.0.1",
+        deterministic_findings=[],
+        standards_rules=rules,
+    )
+    # Isolate the soft-rules listing — the block between 'RULES TO ASSESS:'
+    # and the 'WHAT YOU ARE AND ARE NOT RESPONSIBLE FOR' divider. This is
+    # what Claude is asked to judge.
+    assess_section = prompt.split("RULES TO ASSESS:", 1)[1]
+    listing_block, _, _ = assess_section.partition("WHAT YOU ARE AND ARE NOT")
+    assert "PIPE-013" in listing_block
+    assert "none — all checkable rules covered" not in listing_block
+
+
+def test_deterministic_marked_rule_is_filtered_out_even_when_not_checked() -> None:
+    """
+    A rule the catalog has marked DETERMINISTIC should NOT reach the LLM
+    prompt's soft-rule assessment list, even if no deterministic finding
+    exists for it (i.e. the engine has not yet implemented the check).
+    This is the leak the routing change exists to close.
+    """
+    rules = [_rule("PIPE-002", check_mode="deterministic")]
+    prompt = build_conformance_prompt(
+        repo_id="r",
+        service_type="worker",
+        language="python",
+        standards_version="3.0.1",
+        deterministic_findings=[],
+        # checked_rule_ids deliberately empty — simulates the engine not
+        # having run or not having a check for this rule yet.
+        checked_rule_ids=set(),
+        standards_rules=rules,
+    )
+    assess_section = prompt.split("RULES TO ASSESS:", 1)[1]
+    listing_block, _, _ = assess_section.partition("WHAT YOU ARE AND ARE NOT")
+    assert "PIPE-002" not in listing_block
+
+
+def test_rule_without_check_mode_defaults_to_deterministic_filter() -> None:
+    """
+    A rule dict missing the check_mode field is treated as deterministic
+    for filtering purposes. This matches the classifier's default and
+    guards against regressions if the fetch layer ever forgets to
+    attach check_mode.
+    """
+    rules = [_rule("LEGACY-001", check_mode=None)]
+    prompt = build_conformance_prompt(
+        repo_id="r",
+        service_type="worker",
+        language="python",
+        standards_version="3.0.1",
+        deterministic_findings=[],
+        standards_rules=rules,
+    )
+    assess_section = prompt.split("RULES TO ASSESS:", 1)[1]
+    listing_block, _, _ = assess_section.partition("WHAT YOU ARE AND ARE NOT")
+    assert "LEGACY-001" not in listing_block
+
+
+def test_mixed_rules_partition_correctly_between_context_and_assessment() -> None:
+    """
+    In a mixed bag of rules, only LLM-marked ones land in the soft-rule
+    assessment block; both kinds remain visible in the context list.
+    """
+    rules = [
+        _rule("DOC-005", check_mode="deterministic"),
+        _rule("PIPE-013", check_mode="llm"),
+        _rule("XSTACK-005", check_mode="llm"),
+        _rule("API-001", check_mode="deterministic"),
+    ]
+    prompt = build_conformance_prompt(
+        repo_id="r",
+        service_type="worker",
+        language="python",
+        standards_version="3.0.1",
+        deterministic_findings=[],
+        standards_rules=rules,
+    )
+
+    # All four rules appear in the context block ("STANDARDS RULES FOR
+    # THIS SERVICE TYPE") — that block is informational, not the filter.
+    context_block, _, assess_section = prompt.partition("RULES TO ASSESS:")
+    for rid in ("DOC-005", "PIPE-013", "XSTACK-005", "API-001"):
+        assert rid in context_block
+
+    # Only LLM-marked rules reach the assessment listing.
+    listing_block, _, _ = assess_section.partition("WHAT YOU ARE AND ARE NOT")
+    assert "PIPE-013" in listing_block
+    assert "XSTACK-005" in listing_block
+    assert "DOC-005" not in listing_block
+    assert "API-001" not in listing_block
+
+
+def test_llm_rule_already_covered_by_deterministic_finding_is_filtered() -> None:
+    """
+    An LLM-marked rule that nevertheless received a deterministic finding
+    (e.g. during a split rollout where the old deterministic check still
+    fires) should not be re-assessed by the LLM. Existing "already checked"
+    semantics take precedence over the routing marker.
+    """
+    rules = [_rule("PIPE-013", check_mode="llm")]
+    prompt = build_conformance_prompt(
+        repo_id="r",
+        service_type="worker",
+        language="python",
+        standards_version="3.0.1",
+        deterministic_findings=[
+            {
+                "rule_id": "PIPE-013",
+                "severity": "WARN",
+                "dimension": "structural_conformance",
+                "finding": "something",
+            }
+        ],
+        standards_rules=rules,
+    )
+    # Isolate the soft-rules listing block — the section between
+    # 'RULES TO ASSESS:' and the trailing 'WHAT YOU ARE AND ARE NOT RESPONSIBLE FOR'
+    # divider. PIPE-013 may legitimately appear elsewhere in the prompt
+    # (the deterministic-findings summary, the resolved list, etc.);
+    # what matters is that it's not in the list Claude is asked to judge.
+    assess_section = prompt.split("RULES TO ASSESS:", 1)[1]
+    listing_block, _, _ = assess_section.partition("WHAT YOU ARE AND ARE NOT")
+    assert "PIPE-013" not in listing_block
+    # And the block should explicitly say there is nothing to assess.
+    assert "none — all checkable rules covered" in listing_block
+
+
+def test_excepted_llm_rule_is_filtered() -> None:
+    """An LLM-marked rule in check_exceptions should not reach the prompt."""
+    rules = [_rule("PIPE-013", check_mode="llm")]
+    prompt = build_conformance_prompt(
+        repo_id="r",
+        service_type="worker",
+        language="python",
+        standards_version="3.0.1",
+        deterministic_findings=[],
+        standards_rules=rules,
+        check_exceptions=["PIPE-013"],
+        exception_reasons={"PIPE-013": "does not apply here"},
+    )
+    assess_section = prompt.split("RULES TO ASSESS:", 1)[1]
+    listing_block, _, _ = assess_section.partition("WHAT YOU ARE AND ARE NOT")
+    assert "PIPE-013" not in listing_block
