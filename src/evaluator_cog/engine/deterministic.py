@@ -13,6 +13,7 @@ Checks are grouped by what they inspect:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1176,6 +1177,356 @@ def check_react_hook_form_zod(repo_path: Path) -> list[Finding]:
     return findings
 
 
+def check_railway_hosted_api(
+    repo_path: Path, *, language: str = "python"
+) -> list[Finding]:
+    """API-001: API services are hosted on Railway (deterministic slice).
+
+    Implements Railway deployment artifact presence (condition 1) and
+    framework dependency presence (condition 3). Workflow-based checks for
+    competing hosts belong to other rules.
+
+    TODO(API-001-condition-2): ecosystem.yaml per-service ``host: railway`` is
+    deferred — requires threading service context through deterministic checks.
+    """
+    CHECK_ID = "API-001"
+    findings: list[Finding] = []
+    has_railway = (
+        (repo_path / "railway.toml").exists()
+        or (repo_path / "railway.json").exists()
+        or (repo_path / "nixpacks.toml").exists()
+    )
+    if not has_railway:
+        findings.append(
+            _finding(
+                "API-001",
+                "WARN",
+                "structural_conformance",
+                "Railway deployment configuration is missing (expected railway.toml, railway.json, or nixpacks.toml at repo root).",
+                "Add Railway configuration so deployments are explicit and reviewable.",
+            )
+        )
+
+    if language == "python":
+        pyproject = repo_path / "pyproject.toml"
+        py_text = pyproject.read_text().lower() if pyproject.exists() else ""
+        req = repo_path / "requirements.txt"
+        req_text = req.read_text().lower() if req.exists() else ""
+        if "fastapi" not in py_text + "\n" + req_text:
+            findings.append(
+                _finding(
+                    "API-001",
+                    "WARN",
+                    "structural_conformance",
+                    "FastAPI is not declared for this Python API service.",
+                    "Declare fastapi in pyproject.toml or requirements.txt dependencies.",
+                )
+            )
+    else:
+        pkg = repo_path / "package.json"
+        pkg_text = pkg.read_text().lower() if pkg.exists() else ""
+        if "hono" not in pkg_text:
+            findings.append(
+                _finding(
+                    "API-001",
+                    "WARN",
+                    "structural_conformance",
+                    "Hono is not declared for this TypeScript API service.",
+                    "Add hono to package.json dependencies.",
+                )
+            )
+    return findings
+
+
+_NON_POSTGRES_STORE_MARKERS_PY = (
+    "mysql",
+    "mysqlclient",
+    "pymysql",
+    "aiosqlite",
+    "sqlite3",
+    "sqlalchemy[sqlite]",
+    "mongodb",
+    "motor",
+    "pymongo",
+    "dynamodb",
+    "boto3",
+)
+
+
+def check_postgres_only_data_store(
+    repo_path: Path, *, language: str = "python"
+) -> list[Finding]:
+    """API-002: PostgreSQL as the only primary relational data store.
+
+    Scans declared Python and Node dependencies for obvious non-Postgres
+    primary-store clients. Redis as a cache alongside Postgres is a judgment
+    call — a bare ``redis`` dependency still flags here; narrow exemptions
+    belong in evaluator.yaml when justified.
+    """
+    CHECK_ID = "API-002"
+    findings: list[Finding] = []
+    if language == "python":
+        combined = ""
+        for rel in (
+            "pyproject.toml",
+            "requirements.txt",
+            "requirements/base.txt",
+            "requirements/prod.txt",
+        ):
+            p = repo_path / rel
+            if p.exists():
+                combined += "\n" + p.read_text().lower()
+        for marker in _NON_POSTGRES_STORE_MARKERS_PY:
+            if marker in combined:
+                findings.append(
+                    _finding(
+                        "API-002",
+                        "ERROR",
+                        "structural_conformance",
+                        f"Non-Postgres data-store client or driver signal detected ({marker!r}).",
+                        "Standardize on PostgreSQL as the primary relational store; remove alternate DB drivers unless formally excepted.",
+                    )
+                )
+                break
+    else:
+        pkg = repo_path / "package.json"
+        if not pkg.exists():
+            return findings
+        text = pkg.read_text().lower()
+        node_markers = (
+            '"mysql"',
+            '"mysql2"',
+            '"sqlite3"',
+            '"better-sqlite3"',
+            '"mongodb"',
+            '"mongoose"',
+            '"redis"',
+            '"ioredis"',
+            '"dynamodb"',
+        )
+        for marker in node_markers:
+            if marker in text:
+                findings.append(
+                    _finding(
+                        "API-002",
+                        "ERROR",
+                        "structural_conformance",
+                        f"Non-Postgres data-store dependency present ({marker}).",
+                        "Use PostgreSQL with an approved client (e.g. drizzle + postgres).",
+                    )
+                )
+                break
+    return findings
+
+
+def _pyproject_and_requirements_text(repo_path: Path) -> str:
+    parts: list[str] = []
+    py = repo_path / "pyproject.toml"
+    if py.exists():
+        parts.append(py.read_text().lower())
+    for rel in ("requirements.txt", "requirements/base.txt"):
+        p = repo_path / rel
+        if p.exists():
+            parts.append(p.read_text().lower())
+    return "\n".join(parts)
+
+
+def check_prefect_present(
+    repo_path: Path,
+    cog_subtype: str = "pipeline",
+) -> list[Finding]:
+    """PIPE-001: Prefect dependency and usage signals.
+
+    Pipeline cogs must declare ``prefect`` and use ``@flow`` in Python sources.
+    Trigger cogs must declare ``prefect`` and call into deployment APIs such as
+    ``run_deployment``.
+
+    If ``prefect`` is not declared, emit only the dependency finding — do not
+    also flag missing usage (the dependency gap is the root cause).
+    """
+    CHECK_ID = "PIPE-001"
+    findings: list[Finding] = []
+    blob = _pyproject_and_requirements_text(repo_path)
+    if "prefect" not in blob:
+        findings.append(
+            _finding(
+                "PIPE-001",
+                "WARN",
+                "pipeline_consistency",
+                "Prefect is not declared as a dependency.",
+                "Add prefect to pyproject.toml (or requirements.txt) for orchestrated flows.",
+            )
+        )
+        return findings
+
+    src = repo_path / "src"
+    if not src.is_dir():
+        findings.append(
+            _finding(
+                "PIPE-001",
+                "WARN",
+                "pipeline_consistency",
+                "src/ tree missing — cannot verify Prefect usage in application code.",
+                "Add a src/ package with flow entrypoints.",
+            )
+        )
+        return findings
+
+    py_src = "\n".join(f.read_text() for f in src.rglob("*.py"))
+    if cog_subtype == "trigger":
+        if "run_deployment" not in py_src:
+            findings.append(
+                _finding(
+                    "PIPE-001",
+                    "WARN",
+                    "pipeline_consistency",
+                    "Trigger cog source does not reference run_deployment (Prefect deployment API).",
+                    "Use Prefect's Python client to trigger downstream deployments from the watcher/trigger cog.",
+                )
+            )
+    elif "@flow" not in py_src:
+        findings.append(
+            _finding(
+                "PIPE-001",
+                "WARN",
+                "pipeline_consistency",
+                "Pipeline cog source has no @flow-decorated Prefect flow.",
+                "Define orchestration entrypoints with @flow and register them from the cog main module.",
+            )
+        )
+    return findings
+
+
+def check_prefect_cloud_observability(
+    repo_path: Path,
+    cog_subtype: str = "pipeline",
+) -> list[Finding]:
+    """CD-005: Prefect Cloud wiring is documented for orchestrated cogs.
+
+    When ``prefect`` is declared as a dependency, ``.env.example`` should
+    document how the process reaches Prefect Cloud (``PREFECT_API_URL`` or
+    equivalent). If Prefect is not a declared dependency, return no findings —
+    PIPE-001 already covers the missing-dependency case.
+
+    Competing schedulers referenced from application source (for example
+    APScheduler) are surfaced at INFO with a manual review prompt — a
+    deterministic scan cannot tell dev-only fallback from primary scheduling.
+
+    GitHub Actions workflow scanning for competing orchestrators is owned by
+    CD-006 (future wave) to avoid double-reporting once that check lands.
+    """
+    CHECK_ID = "CD-005"
+    findings: list[Finding] = []
+    blob = _pyproject_and_requirements_text(repo_path)
+    if "prefect" not in blob:
+        return findings
+
+    env_example = repo_path / ".env.example"
+    env_text = env_example.read_text() if env_example.exists() else ""
+    lowered = env_text.lower()
+    if not any(
+        token in lowered
+        for token in (
+            "prefect_api_url",
+            "prefect_api_key",
+            "api.prefect.cloud",
+            "prefect_cloud",
+        )
+    ):
+        findings.append(
+            _finding(
+                "CD-005",
+                "WARN",
+                "cd_readiness",
+                "Prefect Cloud connection is not documented in .env.example (expected PREFECT_API_URL or equivalent).",
+                "Document Prefect Cloud API URL / workspace auth vars for operators.",
+            )
+        )
+
+    src = repo_path / "src"
+    if src.is_dir():
+        py_src = "\n".join(f.read_text() for f in src.rglob("*.py"))
+        if "apscheduler" in py_src.lower():
+            findings.append(
+                _finding(
+                    "CD-005",
+                    "INFO",
+                    "cd_readiness",
+                    "APScheduler is referenced — confirm it is only a local dev fallback, not the primary scheduler.",
+                    "Primary orchestration should remain Prefect Cloud; document intentional APScheduler use if applicable.",
+                )
+            )
+    return findings
+
+
+def _fe008_version_is_pinned_exact(version: str) -> bool:
+    v = str(version).strip().strip('"').strip("'")
+    if not v or v in ("*", "latest"):
+        return False
+    if v.startswith(("^", "~", ">", "<")):
+        return False
+    return not re.search(r"\d+\.[xX](?:\D|$)", v)
+
+
+def check_astro_pinned_versions(repo_path: Path) -> list[Finding]:
+    """FE-008: Astro-related npm dependencies use exact semver pins.
+
+    Flags range markers (^, ~, >=, …), ``latest``, wildcards, and ``1.x``-style
+    placeholders in dependency strings for packages whose names contain
+    ``astro``.
+    """
+    CHECK_ID = "FE-008"
+    findings: list[Finding] = []
+    pkg = repo_path / "package.json"
+    if not pkg.exists():
+        return findings
+    try:
+        import json as _json
+
+        data = _json.loads(pkg.read_text())
+    except Exception:
+        findings.append(
+            _finding(
+                "FE-008",
+                "WARN",
+                "structural_conformance",
+                "package.json is not valid JSON — cannot validate Astro pin policy.",
+                "Repair package.json syntax.",
+            )
+        )
+        return findings
+
+    for section in ("dependencies", "devDependencies"):
+        block = data.get(section)
+        if not isinstance(block, dict):
+            continue
+        for name, raw_ver in block.items():
+            if "astro" not in str(name).lower():
+                continue
+            if not isinstance(raw_ver, str):
+                findings.append(
+                    _finding(
+                        "FE-008",
+                        "WARN",
+                        "structural_conformance",
+                        f"{section}: {name} version must be a string semver for FE-008 scanning.",
+                        "Use explicit string versions for Astro-related packages.",
+                    )
+                )
+                continue
+            if not _fe008_version_is_pinned_exact(raw_ver):
+                findings.append(
+                    _finding(
+                        "FE-008",
+                        "WARN",
+                        "structural_conformance",
+                        f"{section}: {name} is not pinned to an exact version ({raw_ver!r}).",
+                        "Pin Astro-related packages to exact versions (no ^, ~, >=, *, latest, or x-range placeholders).",
+                    )
+                )
+    return findings
+
+
 def check_retry_logic(repo_path: Path) -> list[Finding]:
     """PIPE-007: Retry logic on external API calls."""
     CHECK_ID = "PIPE-007"
@@ -1507,6 +1858,204 @@ def check_standards_freshness(repo_path: Path) -> list[Finding]:
     return findings
 
 
+# -- META checks (standards-repo type only) -----------------------------------
+
+
+def check_meta_release_pipeline_wired(repo_path: Path) -> list[Finding]:
+    """META-001: Release automation for the standards repo is wired end-to-end."""
+    CHECK_ID = "META-001"
+    findings: list[Finding] = []
+    workflows_dir = repo_path / ".github" / "workflows"
+    workflow_blob = ""
+    if workflows_dir.is_dir():
+        for wf in list(workflows_dir.rglob("*.yml")) + list(
+            workflows_dir.rglob("*.yaml")
+        ):
+            try:
+                workflow_blob += "\n" + wf.read_text().lower()
+            except OSError:
+                continue
+
+    has_sem_rel_wf = any(
+        s in workflow_blob
+        for s in (
+            "semantic-release",
+            "npx semantic-release",
+            "semantic_release",
+        )
+    )
+    has_rel_hook = (
+        (repo_path / ".releaserc.json").exists()
+        or (repo_path / ".releaserc.cjs").exists()
+        or (repo_path / ".releaserc.yaml").exists()
+    )
+    pkg = repo_path / "package.json"
+    pkg_ok = False
+    if pkg.exists():
+        try:
+            import json as _json
+
+            pdata = _json.loads(pkg.read_text())
+            scripts = pdata.get("scripts") or {}
+            dev = pdata.get("devDependencies") or {}
+            deps = pdata.get("dependencies") or {}
+            scripts_blob = str(scripts).lower()
+            pkg_ok = "semantic-release" in scripts_blob or any(
+                "semantic-release" in str(k).lower() for k in {**dev, **deps}
+            )
+        except Exception:
+            pkg_ok = False
+
+    push_to_main = "push:" in workflow_blob and "main" in workflow_blob
+
+    if not has_sem_rel_wf:
+        findings.append(
+            _finding(
+                "META-001",
+                "WARN",
+                "structural_conformance",
+                "No GitHub Actions workflow references semantic-release.",
+                "Add a workflow that executes semantic-release on the mainline branch.",
+            )
+        )
+    if not has_rel_hook:
+        findings.append(
+            _finding(
+                "META-001",
+                "WARN",
+                "structural_conformance",
+                "Missing .releaserc.* configuration alongside semantic-release.",
+                "Add .releaserc.json (or .releaserc.cjs / .yaml) describing branches and plugins.",
+            )
+        )
+    if not pkg_ok:
+        findings.append(
+            _finding(
+                "META-001",
+                "WARN",
+                "structural_conformance",
+                "package.json lacks semantic-release wiring (script or dependency).",
+                "Declare semantic-release in devDependencies and expose an npm script if required by the catalog.",
+            )
+        )
+    if not push_to_main:
+        findings.append(
+            _finding(
+                "META-001",
+                "WARN",
+                "structural_conformance",
+                "No workflow appears to trigger on push to main.",
+                "Ensure release automation runs when main updates (push trigger with main branch).",
+            )
+        )
+    return findings
+
+
+def check_meta_no_scattered_metadata(repo_path: Path) -> list[Finding]:
+    """META-002: Version metadata is not scattered outside canonical files."""
+    CHECK_ID = "META-002"
+    findings: list[Finding] = []
+    index_path = repo_path / "index.yaml"
+    if index_path.exists():
+        try:
+            text = index_path.read_text()
+            if re.search(r"(?m)^version\s*:", text):
+                findings.append(
+                    _finding(
+                        "META-002",
+                        "WARN",
+                        "structural_conformance",
+                        "index.yaml still declares a top-level version: field.",
+                        "Remove version from index.yaml — package.json is the single version of record.",
+                    )
+                )
+            if re.search(r"(?m)^updated\s*:", text):
+                findings.append(
+                    _finding(
+                        "META-002",
+                        "WARN",
+                        "structural_conformance",
+                        "index.yaml still declares a top-level updated: field.",
+                        "Remove updated metadata from index.yaml; rely on git history and package.json.",
+                    )
+                )
+        except OSError as exc:
+            findings.append(
+                _finding(
+                    "META-002",
+                    "WARN",
+                    "structural_conformance",
+                    f"index.yaml could not be read: {exc}",
+                    "Fix permissions/encoding so META-002 can scan for scattered metadata.",
+                )
+            )
+
+    for stray in ("VERSION.txt", "VERSION", "version.txt"):
+        candidate = repo_path / stray
+        if candidate.is_file():
+            findings.append(
+                _finding(
+                    "META-002",
+                    "WARN",
+                    "structural_conformance",
+                    f"Stray plaintext version file exists at repo root ({stray}).",
+                    "Delete ad-hoc version files — package.json must remain canonical.",
+                )
+            )
+            break
+    return findings
+
+
+_CANONICAL_ENUM_KEYS = (
+    "repo_types",
+    "traits",
+    "dod_types",
+    "service_statuses",
+    "rule_severities",
+)
+
+
+def check_meta_canonical_enums_are_dicts(repo_path: Path) -> list[Finding]:
+    """META-003: Schema enumerations are dict maps, not YAML lists."""
+    CHECK_ID = "META-003"
+    findings: list[Finding] = []
+    index_path = repo_path / "index.yaml"
+    if not index_path.exists():
+        return findings
+    try:
+        import yaml as _yaml
+
+        data = _yaml.safe_load(index_path.read_text()) or {}
+    except Exception:
+        findings.append(
+            _finding(
+                "META-003",
+                "WARN",
+                "structural_conformance",
+                "index.yaml is not parseable YAML — cannot validate canonical enum dict shapes.",
+                "Fix YAML syntax errors reported by the standards CI job.",
+            )
+        )
+        return findings
+
+    schema = data.get("schema") or {}
+    for key in _CANONICAL_ENUM_KEYS:
+        val = schema.get(key)
+        if val is None:
+            continue
+        if isinstance(val, list):
+            findings.append(
+                _finding(
+                    "META-003",
+                    "WARN",
+                    "structural_conformance",
+                    f"schema.{key} is a YAML list — canonical enums must be dict maps.",
+                    "Convert the enumeration to a mapping keyed by stable identifiers.",
+                )
+            )
+    return findings
+
+
 # -- Test checks --------------------------------------------------------------
 
 
@@ -1828,6 +2377,9 @@ def run_all_checks(
         # the same PIPE-* / CD-015 / pipeline-cog-shaped tests as pipeline-cog.
         is_pipeline_cog = cfg.is_pipeline_style
         is_fastapi = cfg.is_api_service and language == "python"
+        # Language-agnostic api-service flag — for rules that apply to both
+        # FastAPI (Python) and Hono (TypeScript) API services.
+        is_api_service = cfg.is_api_service
         is_frontend = cfg.is_frontend
         _exceptions = cfg.all_skipped_ids
         _exception_reasons = {**cfg.exemption_reasons}
@@ -1848,6 +2400,7 @@ def run_all_checks(
             is_python and service_type == "worker" and cog_subtype == "pipeline"
         )
         is_fastapi = dod_type == "new_fastapi_service"
+        is_api_service = dod_type in ("new_fastapi_service", "new_hono_service")
         is_frontend = dod_type in ("new_frontend_site", "new_react_app")
         _exceptions = frozenset(check_exceptions or [])
         _exception_reasons = exception_reasons or {}
@@ -1977,6 +2530,9 @@ def run_all_checks(
     if evaluator_config is not None:
         if evaluator_config.is_standards_repo:
             _run(check_standards_freshness, "PRIN-009")
+            _run(check_meta_release_pipeline_wired, "META-001")
+            _run(check_meta_no_scattered_metadata, "META-002")
+            _run(check_meta_canonical_enums_are_dicts, "META-003")
     elif dod_type is None:
         _run(check_standards_freshness, "PRIN-009")
 
@@ -2038,6 +2594,7 @@ def run_all_checks(
     if evaluator_config is not None:
         if evaluator_config.is_static_site:
             _run(check_astro_framework, "FE-001")
+            _run(check_astro_pinned_versions, "FE-008")
         elif evaluator_config.is_react_app:
             _run(check_vite_react_ts, "FE-002")
             _run(check_shadcn, "FE-004")
@@ -2045,6 +2602,7 @@ def run_all_checks(
     else:
         if dod_type == "new_frontend_site":
             _run(check_astro_framework, "FE-001")
+            _run(check_astro_pinned_versions, "FE-008")
         if dod_type == "new_react_app":
             _run(check_vite_react_ts, "FE-002")
             _run(check_shadcn, "FE-004")
@@ -2068,6 +2626,37 @@ def run_all_checks(
         _run(check_no_retired_trigger_patterns, "PIPE-008")
         _run(check_evaluation_step, "PIPE-009")
         _run(check_prefect_serve_pattern, "CD-015")
+
+    # PIPE-001 applies to both pipeline-cogs and trigger-cogs — Prefect is
+    # required on both, with slightly different usage patterns (see the
+    # check function for the pipeline-vs-trigger branch).
+    if is_pipeline_cog or is_trigger_cog:
+        _cog_subtype = "trigger" if is_trigger_cog else "pipeline"
+
+        def _pipe_001_check(p: Path) -> list[Finding]:
+            return check_prefect_present(p, cog_subtype=_cog_subtype)
+
+        _run(_pipe_001_check, "PIPE-001")
+
+        # CD-005 also covers pipeline-cogs and trigger-cogs. It overlaps with
+        # PIPE-001's condition 1 by design (see the rule body) — a repo missing
+        # prefect entirely will produce two findings, which is correct.
+        def _cd_005_check(p: Path) -> list[Finding]:
+            return check_prefect_cloud_observability(p, cog_subtype=_cog_subtype)
+
+        _run(_cd_005_check, "CD-005")
+
+    # API-001 / API-002 apply to api-service repos regardless of language.
+    if is_api_service:
+
+        def _api_001_check(p: Path) -> list[Finding]:
+            return check_railway_hosted_api(p, language=language)
+
+        def _api_002_check(p: Path) -> list[Finding]:
+            return check_postgres_only_data_store(p, language=language)
+
+        _run(_api_001_check, "API-001")
+        _run(_api_002_check, "API-002")
 
     _run(
         lambda p: check_releaserc_assets(p, monorepo_root=monorepo_root),

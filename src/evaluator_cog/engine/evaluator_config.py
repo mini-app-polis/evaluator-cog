@@ -141,7 +141,11 @@ _TYPE_AUTO_EXCEPTIONS: dict[str, set[str]] = {
         "TEST-002",
         "TEST-003",
         "TEST-004",
-        "PIPE-001",
+        # PIPE-001 is NOT auto-excepted — its applies_to list in the standards
+        # catalog includes `trigger-cog` because trigger cogs need Prefect too
+        # (to call the Prefect client for downstream flow runs). The other
+        # PIPE rules below are excepted because they target data-processing
+        # behavior that trigger cogs don't have.
         "PIPE-002",
         "PIPE-003",
         "PIPE-004",
