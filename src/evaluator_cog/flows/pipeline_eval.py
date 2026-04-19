@@ -11,6 +11,7 @@ handler embedded in conformance_check_flow.
 from __future__ import annotations
 
 import functools
+import json
 import os
 from collections.abc import Iterable
 from typing import Any
@@ -23,38 +24,36 @@ from evaluator_cog.engine.api_client import post_findings
 
 log = logger_mod.get_logger()
 
-_INDEX_YAML_URL = os.environ.get(
+_STANDARDS_VERSION_URL = os.environ.get(
     "ECOSYSTEM_STANDARDS_INDEX_URL",
-    "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml",
+    "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json",
 )
 
 
 @functools.lru_cache(maxsize=1)
 def _fetch_current_standards_version() -> str:
     """
-    Fetch the current standards version from ecosystem-standards/index.yaml.
+    Fetch the current standards version from ecosystem-standards/package.json.
     Cached for process lifetime. Returns 'unknown' on any fetch or parse
     failure — findings will land with standards_version='unknown' rather
     than a stale hardcoded value.
     """
     try:
-        import yaml
-
-        with urlopen(_INDEX_YAML_URL, timeout=10) as resp:
-            data = yaml.safe_load(resp.read())
+        with urlopen(_STANDARDS_VERSION_URL, timeout=10) as resp:
+            data = json.loads(resp.read())
         version = data.get("version") if isinstance(data, dict) else None
         if isinstance(version, str) and version.strip():
             return version.strip()
         return "unknown"
     except Exception:
-        log.warning("Could not fetch standards version from %s", _INDEX_YAML_URL)
+        log.warning("Could not fetch standards version from %s", _STANDARDS_VERSION_URL)
         return "unknown"
 
 
 def _resolve_standards_version() -> str:
     """
     Prefer STANDARDS_VERSION env var (explicit override), then fall back
-    to fetching from index.yaml, then to 'unknown'.
+    to fetching from package.json, then to 'unknown'.
     """
     override = os.environ.get("STANDARDS_VERSION", "").strip()
     if override:

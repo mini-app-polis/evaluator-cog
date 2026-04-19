@@ -99,10 +99,10 @@ def test_fetch_yaml_returns_empty_on_network_error() -> None:
 
 @respx.mock
 def test_get_standards_version_returns_version_string() -> None:
-    """Valid index.yaml with version field returns the version string."""
+    """Valid package.json with version field returns the version string."""
     respx.get(
-        "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml"
-    ).mock(return_value=httpx.Response(200, text="version: 3.0.1\n"))
+        "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json"
+    ).mock(return_value=httpx.Response(200, text='{"version": "3.0.1"}'))
 
     version = _get_standards_version()
     assert version == "3.0.1"
@@ -110,12 +110,12 @@ def test_get_standards_version_returns_version_string() -> None:
 
 @respx.mock
 def test_get_standards_version_raises_when_version_absent() -> None:
-    """index.yaml missing version field raises RuntimeError."""
+    """package.json missing version field raises RuntimeError."""
     respx.get(
-        "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml"
-    ).mock(return_value=httpx.Response(200, text="name: ecosystem-standards\n"))
+        "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json"
+    ).mock(return_value=httpx.Response(200, text='{"name": "ecosystem-standards"}'))
 
-    with pytest.raises(RuntimeError, match="index.yaml fetch failed"):
+    with pytest.raises(RuntimeError, match="package.json fetch failed"):
         _get_standards_version()
 
 
@@ -123,10 +123,10 @@ def test_get_standards_version_raises_when_version_absent() -> None:
 def test_get_standards_version_raises_on_http_failure() -> None:
     """HTTP failure raises RuntimeError."""
     respx.get(
-        "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml"
+        "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json"
     ).mock(return_value=httpx.Response(503))
 
-    with pytest.raises(RuntimeError, match="index.yaml fetch failed"):
+    with pytest.raises(RuntimeError, match="package.json fetch failed"):
         _get_standards_version()
 
 

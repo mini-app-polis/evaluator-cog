@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime
 import io
+import json
 import os
 import shutil
 import tempfile
@@ -44,7 +45,7 @@ from evaluator_cog.engine.llm import (
 log = logger_mod.get_logger()
 
 _ECOSYSTEM_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/ecosystem.yaml"
-_INDEX_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml"
+_STANDARDS_VERSION_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json"
 _STANDARDS_BASE_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/standards"
 
 
@@ -71,21 +72,21 @@ def _fetch_yaml(url: str) -> dict:
 
 
 def _get_standards_version() -> str:
-    """Fetch current standards version from live index.yaml. Raises on failure."""
+    """Fetch current standards version from live package.json. Raises on failure."""
     try:
-        r = httpx.get(_INDEX_YAML_URL, timeout=20.0)
+        r = httpx.get(_STANDARDS_VERSION_URL, timeout=20.0)
         r.raise_for_status()
-        data = yaml.safe_load(r.text) or {}
+        data = json.loads(r.text) or {}
         version = data.get("version")
         if not version:
-            raise ValueError("version field absent from index.yaml")
+            raise ValueError("version field absent from package.json")
         return str(version)
     except Exception as exc:
         log.error(
-            "conformance: failed to fetch standards version from index.yaml: %s", exc
+            "conformance: failed to fetch standards version from package.json: %s", exc
         )
         raise RuntimeError(
-            f"Cannot determine standards version — index.yaml fetch failed: {exc}"
+            f"Cannot determine standards version — package.json fetch failed: {exc}"
         ) from exc
 
 
