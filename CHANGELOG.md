@@ -1,3 +1,10 @@
+# [3.9.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.8.1...v3.9.0) (2026-04-19)
+
+
+### Features
+
+* route standards rules by DETERMINISTIC/LLM marker ([670ade1](https://github.com/mini-app-polis/evaluator-cog/commit/670ade1482f15ec440b2d71e43d4f3cea443f362))
+
 ## [3.8.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.8.0...v3.8.1) (2026-04-19)
 
 
