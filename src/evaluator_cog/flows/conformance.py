@@ -17,12 +17,11 @@ run_llm=True (triggered manually or via Prefect automation, weekly):
 from __future__ import annotations
 
 import datetime
-import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
-import zipfile
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -262,43 +261,58 @@ def _deduplicate_sibling_findings(
 
 def _download_repo(repo_id: str, tmp_dir: str) -> Path | None:
     """
-    Download a repo from GitHub as a zip archive and extract it.
-    Returns the extracted repo path or None on failure.
+    Clone a repo from GitHub via HTTPS with the GITHUB_TOKEN.
+
+    Uses a full clone (not shallow) so git history is available for
+    rules like VER-001 (conventional commits on last 20), VER-002
+    (BREAKING CHANGE footers on major tags), and PRIN-008 (fix
+    commits touch tests, last 90 days).
+
+    Returns the cloned repo path or None on failure.
     """
     github_token = os.environ.get("GITHUB_TOKEN", "")
-    headers = {"Accept": "application/vnd.github+json"}
     if github_token:
-        headers["Authorization"] = f"Bearer {github_token}"
+        # Token-authenticated HTTPS for private/rate-limited clones
+        url = f"https://x-access-token:{github_token}@github.com/mini-app-polis/{repo_id}.git"
+    else:
+        url = f"https://github.com/mini-app-polis/{repo_id}.git"
 
-    url = f"https://api.github.com/repos/mini-app-polis/{repo_id}/zipball/main"
     dest = Path(tmp_dir) / repo_id
+    if dest.exists():
+        shutil.rmtree(dest)
 
     try:
-        with httpx.Client(timeout=60.0, follow_redirects=True) as client:
-            r = client.get(url, headers=headers)
-            r.raise_for_status()
-            content = r.content  # capture before client context closes
-
-        with zipfile.ZipFile(io.BytesIO(content)) as zf:
-            zf.extractall(tmp_dir)
-            top_level = next(
-                (
-                    p
-                    for p in [Path(tmp_dir) / n.split("/")[0] for n in zf.namelist()]
-                    if p.is_dir()
-                ),
-                None,
+        result = subprocess.run(
+            ["git", "clone", "--quiet", url, str(dest)],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if result.returncode != 0:
+            # Scrub token from any error message that might get logged
+            stderr = (
+                result.stderr.replace(github_token, "***")
+                if github_token
+                else result.stderr
             )
-            if top_level:
-                if dest.exists():
-                    shutil.rmtree(dest)
-                top_level.rename(dest)
-
-        log.info("conformance: downloaded %s", repo_id)
-        return dest
-    except Exception as exc:
-        log.warning("conformance: failed to download %s: %s", repo_id, exc)
+            log.warning(
+                "conformance: git clone failed for %s: %s", repo_id, stderr.strip()
+            )
+            return None
+    except subprocess.TimeoutExpired:
+        log.warning("conformance: git clone timed out for %s", repo_id)
         return None
+    except FileNotFoundError:
+        log.error("conformance: git binary not available")
+        return None
+    except Exception as exc:
+        log.warning(
+            "conformance: git clone raised %s for %s", type(exc).__name__, repo_id
+        )
+        return None
+
+    log.info("conformance: cloned %s", repo_id)
+    return dest
 
 
 def run_conformance_check(

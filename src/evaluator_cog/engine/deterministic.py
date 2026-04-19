@@ -14,6 +14,7 @@ Checks are grouped by what they inspect:
 from __future__ import annotations
 
 import re
+import subprocess
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -1626,8 +1627,13 @@ def check_gha_not_trigger_relay(repo_path: Path) -> list[Finding]:
 
 
 def check_adrs_present(repo_path: Path) -> list[Finding]:
-    """DOC-005: ADR trail for non-trivial repos (LOC heuristic under src/)."""
-    CHECK_ID = "DOC-005"
+    """DOC-005: ADR trail for non-trivial repos.
+
+    The catalog spec asks for "fewer than 20 commits on main OR fewer than
+    500 lines of source code" as the skip threshold. We use a LOC heuristic
+    under src/ when git history is unavailable (zipball path), and also
+    consult git log when it is available.
+    """
     findings: list[Finding] = []
     src = repo_path / "src"
     loc = 0
@@ -1639,7 +1645,26 @@ def check_adrs_present(repo_path: Path) -> list[Finding]:
                 continue
             with suppress(OSError, UnicodeDecodeError):
                 loc += len(p.read_text().splitlines())
-    if loc < 50:
+
+    # Git-history threshold when .git is present
+    commit_count: int | None = None
+    if (repo_path / ".git").is_dir():
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(repo_path), "rev-list", "--count", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                commit_count = int(result.stdout.strip())
+        except (subprocess.TimeoutExpired, FileNotFoundError, ValueError, OSError):
+            commit_count = None
+
+    # Skip thresholds per catalog: <500 LOC OR <20 commits → repo too young
+    if loc < 500:
+        return findings
+    if commit_count is not None and commit_count < 20:
         return findings
 
     dec = repo_path / "docs" / "decisions"
@@ -2398,7 +2423,6 @@ def check_cors_config(repo_path: Path, language: str = "python") -> list[Finding
 
 def check_health_endpoint(repo_path: Path, language: str = "python") -> list[Finding]:
     """API-010: GET /health endpoint present."""
-    CHECK_ID = "API-010"
     findings: list[Finding] = []
     src = repo_path / "src"
     if not src.is_dir():
@@ -2430,6 +2454,70 @@ def check_health_endpoint(repo_path: Path, language: str = "python") -> list[Fin
                 "and no DB queries.",
             )
         )
+    return findings
+
+
+def check_migration_in_ci(
+    repo_path: Path,
+    language: str = "python",
+    monorepo_root: Path | None = None,
+) -> list[Finding]:
+    """API-011: CI runs database migrations on deploy.
+
+    Python (Alembic): ci.yml contains 'alembic upgrade head' in a deploy job.
+    TypeScript (Drizzle): ci.yml contains 'drizzle-kit push' or 'drizzle-kit migrate'.
+    For monorepo services, also checks the workspace root ci.yml.
+    """
+    findings: list[Finding] = []
+
+    ci_texts = []
+    ci = repo_path / ".github" / "workflows" / "ci.yml"
+    if ci.exists():
+        with suppress(Exception):
+            ci_texts.append(ci.read_text())
+    if monorepo_root is not None:
+        root_ci = monorepo_root / ".github" / "workflows" / "ci.yml"
+        if root_ci.exists():
+            with suppress(Exception):
+                ci_texts.append(root_ci.read_text())
+
+    if not ci_texts:
+        findings.append(
+            _finding(
+                "API-011",
+                "ERROR",
+                "structural_conformance",
+                "api-service has no .github/workflows/ci.yml — migration steps cannot be verified.",
+                "Add a ci.yml with deploy job including migration step.",
+            )
+        )
+        return findings
+
+    combined = "\n".join(ci_texts)
+
+    if language == "python":
+        if "alembic upgrade head" not in combined and "alembic upgrade" not in combined:
+            findings.append(
+                _finding(
+                    "API-011",
+                    "ERROR",
+                    "structural_conformance",
+                    "ci.yml has no 'alembic upgrade head' step.",
+                    "Add 'alembic upgrade head' to the deploy job so migrations run "
+                    "automatically on release.",
+                )
+            )
+    else:
+        if "drizzle-kit push" not in combined and "drizzle-kit migrate" not in combined:
+            findings.append(
+                _finding(
+                    "API-011",
+                    "ERROR",
+                    "structural_conformance",
+                    "ci.yml has no 'drizzle-kit push' or 'drizzle-kit migrate' step.",
+                    "Add a Drizzle migration step to the deploy job.",
+                )
+            )
     return findings
 
 
@@ -5205,6 +5293,13 @@ def run_all_checks(
         _run(_api_009, "API-009")
         _run(_api_010, "API-010")
 
+        def _api_011(p: Path) -> list[Finding]:
+            return check_migration_in_ci(
+                p, language=language, monorepo_root=monorepo_root
+            )
+
+        _run(_api_011, "API-011")
+
         # API-006 and AUTH-002 — Python-only shape checks
         if language == "python":
             _run(check_owner_id_column, "API-006")
@@ -5327,6 +5422,30 @@ def run_all_checks(
         or is_api_service
     ):
         _run(check_env_var_prefix, "XSTACK-004")
+
+    # Git-history-dependent checks. Require the repo to be git-cloned
+    # (not zipball-extracted). The check functions return [] silently if
+    # no .git directory is present, so this wiring is safe even against
+    # older code paths.
+    from evaluator_cog.engine.git_history import (
+        check_breaking_change_on_major_tags,
+        check_conventional_commits,
+        check_fix_commits_touch_tests,
+    )
+
+    if (
+        is_pipeline_cog
+        or is_trigger_cog
+        or is_api_service
+        or _is_static
+        or (evaluator_config is not None and evaluator_config.is_react_app)
+        or dod_type == "new_react_app"
+    ):
+        _run(check_conventional_commits, "VER-001")
+        _run(check_breaking_change_on_major_tags, "VER-002")
+
+    if is_pipeline_cog or is_trigger_cog or is_api_service or is_library:
+        _run(check_fix_commits_touch_tests, "PRIN-008")
 
     _run(
         lambda p: check_releaserc_assets(p, monorepo_root=monorepo_root),
