@@ -1,3 +1,10 @@
+# [3.11.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.10.0...v3.11.0) (2026-04-19)
+
+
+### Features
+
+* in progress additions ([f378522](https://github.com/mini-app-polis/evaluator-cog/commit/f3785220c1f5961dc0250255fd9f86a1950ae242))
+
 # [3.10.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.9.0...v3.10.0) (2026-04-19)
 
 
