@@ -1,7 +1,7 @@
 # evaluator-cog / evaluator.yaml
 # Per-repo evaluation configuration — ecosystem-standards ADR-001, ADR-002
 
-type: pipeline-cog
+type: evaluator-service
 
 traits:
   - multi-flow

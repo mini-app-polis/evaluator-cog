@@ -31,6 +31,7 @@ VALID_REPO_TYPES = {
     "static-site",
     "react-app",
     "standards-repo",
+    "evaluator-service",
 }
 
 # Valid traits per index.yaml schema.traits (v3.0.0)
@@ -154,6 +155,7 @@ _TYPE_AUTO_EXCEPTIONS: dict[str, set[str]] = {
         "CD-015",
     },
     "pipeline-cog": set(),  # All rules apply — no automatic exceptions
+    "evaluator-service": set(),  # All rules apply — mirrors pipeline-cog
     "standards-repo": {
         "CD-002",
         "CD-009",
@@ -225,6 +227,7 @@ class EvaluatorConfig:
             "api-service",
             "shared-library",
             "standards-repo",
+            "evaluator-service",
         ):
             return "python"
         return "typescript"
@@ -236,11 +239,30 @@ class EvaluatorConfig:
             "trigger-cog",
             "api-service",
             "shared-library",
+            "evaluator-service",
         )
 
     @property
     def is_pipeline_cog(self) -> bool:
         return self.repo_type == "pipeline-cog"
+
+    @property
+    def is_evaluator_service(self) -> bool:
+        return self.repo_type == "evaluator-service"
+
+    @property
+    def is_pipeline_style(self) -> bool:
+        """
+        True for types that run Prefect flows and carry pipeline-shaped
+        rule applicability (tests for normalization/dedup, retry logic,
+        prefect.serve pattern, etc.). Distinct from `is_pipeline_cog`,
+        which answers the narrower "is this specifically the pipeline-cog
+        type?" question. Engine branches that ask the broader question
+        should prefer this property so that new pipeline-style types
+        (currently just `evaluator-service`) inherit the same checks
+        without broadening the semantics of `is_pipeline_cog`.
+        """
+        return self.repo_type in ("pipeline-cog", "evaluator-service")
 
     @property
     def is_trigger_cog(self) -> bool:
@@ -396,6 +418,7 @@ def _map_legacy_type(legacy: str | None) -> str:
         "static-site": "static-site",
         "react-app": "react-app",
         "standards-repo": "standards-repo",
+        "evaluator-service": "evaluator-service",
     }
     if legacy is None:
         return "shared-library"

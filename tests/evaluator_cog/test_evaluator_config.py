@@ -148,6 +148,7 @@ def test_is_skipped_auto_and_explicit() -> None:
         ("static-site", "static-site"),
         ("react-app", "react-app"),
         ("standards-repo", "standards-repo"),
+        ("evaluator-service", "evaluator-service"),
         (None, "shared-library"),
         ("unknown-legacy-value", "pipeline-cog"),
     ],
@@ -176,6 +177,10 @@ def test_map_legacy_type(legacy: str | None, expected: str) -> None:
         ("static-site", False, False, False, False, True, False, False, True),
         ("react-app", False, False, False, False, False, True, False, True),
         ("standards-repo", False, False, False, False, False, False, True, False),
+        # evaluator-service shares no narrow boolean with any of the others — it
+        # is its own category. is_pipeline_style coverage lives in a dedicated
+        # test below.
+        ("evaluator-service", False, False, False, False, False, False, False, False),
     ],
 )
 def test_evaluator_config_boolean_properties(
@@ -207,3 +212,68 @@ def test_language_property_returns_typescript_for_non_python_types() -> None:
         assert cfg.language == "typescript", (
             f"Expected 'typescript' for repo_type={repo_type!r}, got {cfg.language!r}"
         )
+
+
+def test_is_evaluator_service_is_strict() -> None:
+    """is_evaluator_service is True only for the evaluator-service type."""
+    assert EvaluatorConfig(repo_type="evaluator-service").is_evaluator_service is True
+    for other in (
+        "pipeline-cog",
+        "trigger-cog",
+        "api-service",
+        "shared-library",
+        "static-site",
+        "react-app",
+        "standards-repo",
+    ):
+        assert EvaluatorConfig(repo_type=other).is_evaluator_service is False
+
+
+def test_is_pipeline_style_covers_pipeline_cog_and_evaluator_service() -> None:
+    """
+    is_pipeline_style is the engine-level predicate meaning "runs Prefect
+    flows and carries pipeline-cog-shaped rule applicability." It must
+    return True for both pipeline-cog and evaluator-service, and False
+    for every other type — otherwise pipeline rules leak to non-pipeline
+    repos or miss evaluator-service.
+    """
+    assert EvaluatorConfig(repo_type="pipeline-cog").is_pipeline_style is True
+    assert EvaluatorConfig(repo_type="evaluator-service").is_pipeline_style is True
+    for other in (
+        "trigger-cog",
+        "api-service",
+        "shared-library",
+        "static-site",
+        "react-app",
+        "standards-repo",
+    ):
+        assert EvaluatorConfig(repo_type=other).is_pipeline_style is False
+
+
+def test_evaluator_service_is_python_service_and_language() -> None:
+    """evaluator-service is a Python service and reports language='python'."""
+    cfg = EvaluatorConfig(repo_type="evaluator-service")
+    assert cfg.is_python_service is True
+    assert cfg.language == "python"
+
+
+def test_evaluator_service_auto_exceptions_are_empty() -> None:
+    """
+    evaluator-service mirrors pipeline-cog: no automatic exceptions at the
+    type level. Every rule applies unless excepted by trait or explicit
+    exemption. This guards against future drift where someone might be
+    tempted to silence PIPE rules for the evaluator on the theory that
+    'the evaluator evaluates, it doesn't run pipelines' — the evaluator
+    IS a pipeline (a @flow that writes to the database).
+    """
+    cfg = EvaluatorConfig(repo_type="evaluator-service")
+    assert cfg.all_skipped_ids == frozenset()
+
+
+def test_load_evaluator_yaml_accepts_evaluator_service_type(tmp_path: Path) -> None:
+    """A fresh evaluator.yaml declaring type: evaluator-service parses cleanly."""
+    (tmp_path / "evaluator.yaml").write_text("type: evaluator-service\n")
+    cfg = load_evaluator_config(tmp_path)
+    assert cfg.repo_type == "evaluator-service"
+    assert cfg.is_evaluator_service is True
+    assert cfg.is_pipeline_style is True
