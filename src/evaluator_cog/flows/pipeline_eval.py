@@ -25,7 +25,7 @@ from evaluator_cog.engine.api_client import post_findings
 log = logger_mod.get_logger()
 
 _STANDARDS_VERSION_URL = os.environ.get(
-    "ECOSYSTEM_STANDARDS_INDEX_URL",
+    "ECOSYSTEM_STANDARDS_VERSION_URL",
     "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json",
 )
 

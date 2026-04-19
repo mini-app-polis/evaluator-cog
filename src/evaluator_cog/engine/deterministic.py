@@ -1455,37 +1455,51 @@ def check_shared_library_used(
 
 
 def check_standards_freshness(repo_path: Path) -> list[Finding]:
-    """PRIN-009: Standards are a living document."""
+    """PRIN-009: Standards are a living document.
+
+    Checks the timestamp of the most recent commit on main in the
+    ecosystem-standards repo via the GitHub API. Flags if more than
+    90 days have elapsed. Degrades gracefully on fetch failure
+    (rate limit, network, etc.) — returns empty rather than a false
+    positive, matching the pre-existing behavior of this check.
+    """
     CHECK_ID = "PRIN-009"
     import datetime
 
-    findings = []
+    findings: list[Finding] = []
     try:
         import httpx
-        import yaml
 
-        url = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml"
-        r = httpx.get(url, timeout=20.0)
+        url = "https://api.github.com/repos/mini-app-polis/ecosystem-standards/commits/main"
+        r = httpx.get(
+            url,
+            timeout=20.0,
+            headers={"Accept": "application/vnd.github+json"},
+        )
         r.raise_for_status()
-        data = yaml.safe_load(r.text) or {}
-        updated = str(data.get("updated") or "").strip()
-        if not updated:
+        data = r.json() or {}
+        committer = (data.get("commit") or {}).get("committer") or {}
+        date_str = str(committer.get("date") or "").strip()
+        if not date_str:
             return findings
 
-        # Support YYYY-MM and YYYY-MM-DD
-        if len(updated) == 7:
-            updated_dt = datetime.datetime.strptime(updated + "-01", "%Y-%m-%d")
-        else:
-            updated_dt = datetime.datetime.strptime(updated[:10], "%Y-%m-%d")
-        age_days = (datetime.datetime.utcnow() - updated_dt).days
+        # GitHub returns ISO-8601 with trailing 'Z' (e.g. "2026-04-18T14:23:01Z").
+        # Python's fromisoformat handles 'Z' natively as of 3.11.
+        try:
+            commit_dt = datetime.datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        except ValueError:
+            return findings
+
+        now = datetime.datetime.now(datetime.UTC)
+        age_days = (now - commit_dt).days
         if age_days > 90:
             findings.append(
                 _finding(
                     "PRIN-009",
                     "WARN",
                     "standards_currency",
-                    f"Standards index appears stale ({age_days} days since update).",
-                    "Refresh ecosystem-standards and publish an updated standards revision.",
+                    f"Standards repo appears stale ({age_days} days since last commit).",
+                    "Review ecosystem-standards — if no recent changes are warranted, commit an explicit review-attestation entry.",
                 )
             )
     except Exception:
