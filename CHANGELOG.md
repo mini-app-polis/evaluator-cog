@@ -1,3 +1,10 @@
+## [3.8.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.8.0...v3.8.1) (2026-04-19)
+
+
+### Bug Fixes
+
+* PRIN-009 staleness check reads commit timestamp via GitHub API ([b7c613f](https://github.com/mini-app-polis/evaluator-cog/commit/b7c613fc55e22f171344ab17a64c86443daba145))
+
 # [3.8.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.7.0...v3.8.0) (2026-04-18)
 
 
