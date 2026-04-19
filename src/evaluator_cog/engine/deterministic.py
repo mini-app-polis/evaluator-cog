@@ -14,7 +14,6 @@ Checks are grouped by what they inspect:
 from __future__ import annotations
 
 import re
-import subprocess
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -1627,13 +1626,7 @@ def check_gha_not_trigger_relay(repo_path: Path) -> list[Finding]:
 
 
 def check_adrs_present(repo_path: Path) -> list[Finding]:
-    """DOC-005: ADR trail for non-trivial repos.
-
-    The catalog spec asks for "fewer than 20 commits on main OR fewer than
-    500 lines of source code" as the skip threshold. We use a LOC heuristic
-    under src/ when git history is unavailable (zipball path), and also
-    consult git log when it is available.
-    """
+    """DOC-005: ADR trail for non-trivial repos (LOC heuristic under src/)."""
     findings: list[Finding] = []
     src = repo_path / "src"
     loc = 0
@@ -1645,26 +1638,7 @@ def check_adrs_present(repo_path: Path) -> list[Finding]:
                 continue
             with suppress(OSError, UnicodeDecodeError):
                 loc += len(p.read_text().splitlines())
-
-    # Git-history threshold when .git is present
-    commit_count: int | None = None
-    if (repo_path / ".git").is_dir():
-        try:
-            result = subprocess.run(
-                ["git", "-C", str(repo_path), "rev-list", "--count", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                commit_count = int(result.stdout.strip())
-        except (subprocess.TimeoutExpired, FileNotFoundError, ValueError, OSError):
-            commit_count = None
-
-    # Skip thresholds per catalog: <500 LOC OR <20 commits → repo too young
-    if loc < 500:
-        return findings
-    if commit_count is not None and commit_count < 20:
+    if loc < 50:
         return findings
 
     dec = repo_path / "docs" / "decisions"
@@ -5422,30 +5396,6 @@ def run_all_checks(
         or is_api_service
     ):
         _run(check_env_var_prefix, "XSTACK-004")
-
-    # Git-history-dependent checks. Require the repo to be git-cloned
-    # (not zipball-extracted). The check functions return [] silently if
-    # no .git directory is present, so this wiring is safe even against
-    # older code paths.
-    from evaluator_cog.engine.git_history import (
-        check_breaking_change_on_major_tags,
-        check_conventional_commits,
-        check_fix_commits_touch_tests,
-    )
-
-    if (
-        is_pipeline_cog
-        or is_trigger_cog
-        or is_api_service
-        or _is_static
-        or (evaluator_config is not None and evaluator_config.is_react_app)
-        or dod_type == "new_react_app"
-    ):
-        _run(check_conventional_commits, "VER-001")
-        _run(check_breaking_change_on_major_tags, "VER-002")
-
-    if is_pipeline_cog or is_trigger_cog or is_api_service or is_library:
-        _run(check_fix_commits_touch_tests, "PRIN-008")
 
     _run(
         lambda p: check_releaserc_assets(p, monorepo_root=monorepo_root),

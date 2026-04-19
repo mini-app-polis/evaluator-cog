@@ -25,8 +25,7 @@ def _write(repo: Path, rel: str, body: str) -> None:
 
 
 def _nontrivial_src_py() -> str:
-    # DOC-005 threshold is 500 LOC per the catalog spec; produce comfortably above.
-    return "".join(f"x_{i} = {i}\n" for i in range(600))
+    return "".join(f"x_{i} = {i}\n" for i in range(55))
 
 
 # --- DOC-005 -----------------------------------------------------------------
