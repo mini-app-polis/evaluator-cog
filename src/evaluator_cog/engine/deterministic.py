@@ -14,6 +14,7 @@ Checks are grouped by what they inspect:
 from __future__ import annotations
 
 import re
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1527,6 +1528,443 @@ def check_astro_pinned_versions(repo_path: Path) -> list[Finding]:
     return findings
 
 
+def check_gha_not_trigger_relay(repo_path: Path) -> list[Finding]:
+    """CD-006: GitHub Actions must not relay repository triggers into app code.
+
+    Scans ``.github/workflows`` for ``repository_dispatch`` paired with
+    Prefect/deployment invocations, scheduled jobs calling Prefect Cloud, and
+    internal trigger HTTP paths. Handles malformed YAML and the YAML 1.1
+    ``on:`` → ``true`` quirk via ``suppress`` around ``yaml.safe_load``.
+    """
+    CHECK_ID = "CD-006"
+    findings: list[Finding] = []
+    import yaml as _yaml
+
+    wf_dir = repo_path / ".github" / "workflows"
+    if wf_dir.is_dir():
+        for wf in sorted(wf_dir.rglob("*.yml")) + sorted(wf_dir.rglob("*.yaml")):
+            try:
+                text = wf.read_text()
+            except OSError:
+                continue
+            low = text.lower()
+            rel = str(wf.relative_to(repo_path))
+            with suppress(Exception):
+                _yaml.safe_load(text)
+
+            if "repository_dispatch" in low:
+                relay = any(
+                    k in low
+                    for k in (
+                        "prefect deployment run",
+                        "prefect deploy",
+                        "run_deployment(",
+                        "npx prefect",
+                    )
+                ) or (
+                    "/dispatches" in text
+                    and any(k in low for k in ("curl ", "httpx.", "requests."))
+                )
+                pure_ci = ("pytest" in low or "ruff" in low) and not relay
+                if relay and not pure_ci:
+                    findings.append(
+                        _finding(
+                            "CD-006",
+                            "WARN",
+                            "structural_conformance",
+                            f"repository_dispatch workflow appears to relay into automation ({rel}).",
+                            "Prefer watcher-cog + Prefect; do not chain GitHub Actions into app invocations.",
+                        )
+                    )
+
+            if ("schedule" in low or "cron:" in low) and "api.prefect.cloud" in low:
+                findings.append(
+                    _finding(
+                        "CD-006",
+                        "WARN",
+                        "structural_conformance",
+                        f"Scheduled workflow references Prefect Cloud API ({rel}).",
+                        "Avoid cron-driven Prefect Cloud calls from GitHub Actions; use Prefect-native scheduling.",
+                    )
+                )
+
+            if re.search(r"['\"]/v1/(trigger|runs)", text):
+                findings.append(
+                    _finding(
+                        "CD-006",
+                        "WARN",
+                        "structural_conformance",
+                        f"Workflow references internal trigger HTTP path ({rel}).",
+                        "Do not POST to internal trigger endpoints from GitHub Actions.",
+                    )
+                )
+
+    src = repo_path / "src"
+    if src.is_dir():
+        for py in src.rglob("*.py"):
+            if "tests/" in str(py).replace("\\", "/"):
+                continue
+            try:
+                t = py.read_text()
+            except OSError:
+                continue
+            if re.search(
+                r"(httpx|requests)\.(post|put)\([^\)]*api\.github\.com/[^\"'\)]+/dispatches",
+                t,
+                re.I,
+            ):
+                findings.append(
+                    _finding(
+                        "CD-006",
+                        "WARN",
+                        "structural_conformance",
+                        f"Python source posts to GitHub dispatches API ({py.relative_to(repo_path)}).",
+                        "Use watcher-cog + Prefect instead of repository_dispatch relays.",
+                    )
+                )
+    return findings
+
+
+def check_adrs_present(repo_path: Path) -> list[Finding]:
+    """DOC-005: ADR trail for non-trivial repos (LOC heuristic under src/)."""
+    CHECK_ID = "DOC-005"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    loc = 0
+    if src.is_dir():
+        for p in src.rglob("*"):
+            if not p.is_file():
+                continue
+            if p.suffix.lower() not in {".py", ".ts", ".tsx", ".js", ".mjs"}:
+                continue
+            with suppress(OSError, UnicodeDecodeError):
+                loc += len(p.read_text().splitlines())
+    if loc < 50:
+        return findings
+
+    dec = repo_path / "docs" / "decisions"
+    if not dec.is_dir():
+        findings.append(
+            _finding(
+                "DOC-005",
+                "WARN",
+                "documentation_coverage",
+                "docs/decisions/ directory is missing for a non-trivial codebase.",
+                "Add architecture decision records under docs/decisions/.",
+            )
+        )
+        return findings
+
+    if not any(dec.glob("ADR-*.md")):
+        findings.append(
+            _finding(
+                "DOC-005",
+                "WARN",
+                "documentation_coverage",
+                "docs/decisions/ exists but no ADR-NNN-*.md files were found.",
+                "Author numbered ADR markdown files for significant decisions.",
+            )
+        )
+    return findings
+
+
+def check_response_shape_parity(
+    repo_path: Path, *, language: str = "python"
+) -> list[Finding]:
+    """XSTACK-002: HTTP handlers expose typed response models / helpers."""
+    CHECK_ID = "XSTACK-002"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    if language == "python":
+        for py in src.rglob("*.py"):
+            if "tests/" in str(py).replace("\\", "/"):
+                continue
+            try:
+                text = py.read_text()
+            except OSError:
+                continue
+            if not re.search(
+                r"@(?:router|app)\.(get|post|put|delete|patch)\s*\(", text
+            ):
+                continue
+            if "response_model=" not in text:
+                findings.append(
+                    _finding(
+                        "XSTACK-002",
+                        "WARN",
+                        "structural_conformance",
+                        f"FastAPI route missing response_model= in {py.relative_to(repo_path)}.",
+                        "Declare response_model (or return type) for every public route.",
+                    )
+                )
+                break
+    else:
+        for ts in list(src.rglob("*.ts")) + list(src.rglob("*.tsx")):
+            if "tests/" in str(ts).replace("\\", "/"):
+                continue
+            try:
+                text = ts.read_text()
+            except OSError:
+                continue
+            if not re.search(r"\bc\.json\s*\(", text):
+                continue
+            if "success(" in text or re.search(
+                r"from\s+['\"][^'\"]*success", text, re.I
+            ):
+                continue
+            findings.append(
+                _finding(
+                    "XSTACK-002",
+                    "WARN",
+                    "structural_conformance",
+                    f"Hono handler uses raw c.json without success()/error() helper ({ts.relative_to(repo_path)}).",
+                    "Wrap JSON responses with the shared success()/error() helpers.",
+                )
+            )
+            break
+    return findings
+
+
+def _parse_astro_file(path: Path) -> dict[str, Any]:
+    """Split an Astro file into frontmatter, <script> bodies, and client flags."""
+    try:
+        text = path.read_text()
+    except OSError:
+        return {"frontmatter": "", "scripts": [], "has_client": False, "body": ""}
+    frontmatter = ""
+    body = text
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter = parts[1]
+            body = parts[2]
+    scripts = re.findall(r"<script[^>]*>([\s\S]*?)</script>", body, flags=re.IGNORECASE)
+    has_client = bool(re.search(r"\bclient:[^\s=]+", body))
+    return {
+        "frontmatter": frontmatter,
+        "scripts": scripts,
+        "has_client": has_client,
+        "body": body,
+    }
+
+
+def _extract_fetch_urls(chunk: str) -> list[str]:
+    return re.findall(r"""fetch\s*\(\s*['"]([^'"]+)['"]""", chunk)
+
+
+def check_astro_build_time_data(repo_path: Path) -> list[Finding]:
+    """FE-009: Runtime fetch URLs must not duplicate build-time fetches."""
+    CHECK_ID = "FE-009"
+    findings: list[Finding] = []
+    build_urls: set[str] = set()
+    astro_files = list(repo_path.rglob("*.astro"))
+    if not astro_files:
+        return findings
+
+    for path in astro_files:
+        parsed = _parse_astro_file(path)
+        for url in _extract_fetch_urls(parsed["frontmatter"]):
+            build_urls.add(url)
+
+    for path in astro_files:
+        parsed = _parse_astro_file(path)
+        if parsed["has_client"]:
+            continue
+        combined = "\n".join(parsed["scripts"])
+        for url in _extract_fetch_urls(combined):
+            if url in build_urls:
+                findings.append(
+                    _finding(
+                        "FE-009",
+                        "WARN",
+                        "structural_conformance",
+                        f"Astro component performs runtime fetch of URL also used in frontmatter ({path.relative_to(repo_path)}).",
+                        "Move data to build-time fetch or isolate client-only access with client:* directives.",
+                    )
+                )
+                break
+    return findings
+
+
+def check_astro_runtime_queries(repo_path: Path) -> list[Finding]:
+    """FE-010: Undocumented runtime fetches in Astro islands."""
+    CHECK_ID = "FE-010"
+    findings: list[Finding] = []
+    docs_blob = ""
+    readme = repo_path / "README.md"
+    if readme.exists():
+        with suppress(OSError):
+            docs_blob += readme.read_text().lower()
+    for md in (
+        (repo_path / "docs").rglob("*.md") if (repo_path / "docs").is_dir() else []
+    ):
+        with suppress(OSError):
+            docs_blob += md.read_text().lower()
+
+    for path in repo_path.rglob("*.astro"):
+        parsed = _parse_astro_file(path)
+        if parsed["has_client"]:
+            continue
+        combined = "\n".join(parsed["scripts"])
+        if "fetch(" not in combined:
+            continue
+        for url in _extract_fetch_urls(combined):
+            if url not in docs_blob:
+                findings.append(
+                    _finding(
+                        "FE-010",
+                        "WARN",
+                        "structural_conformance",
+                        f"Runtime fetch URL not documented in README/docs ({path.relative_to(repo_path)}: {url}).",
+                        "Document external endpoints or mark the island as client:* when intentional.",
+                    )
+                )
+                break
+    return findings
+
+
+def check_clerk_m2m_auth(repo_path: Path, *, language: str = "python") -> list[Finding]:
+    """CD-012: Internal calls should use Clerk M2M JWTs, not static API keys."""
+    CHECK_ID = "CD-012"
+    findings: list[Finding] = []
+    if language != "python":
+        return findings
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+    for py in src.rglob("*.py"):
+        if "tests/" in str(py).replace("\\", "/"):
+            continue
+        try:
+            text = py.read_text()
+        except OSError:
+            continue
+        if "X-Internal-API-Key" in text:
+            findings.append(
+                _finding(
+                    "CD-012",
+                    "WARN",
+                    "cd_readiness",
+                    f"X-Internal-API-Key header referenced in {py.relative_to(repo_path)}.",
+                    "Replace static internal API keys with Clerk machine-to-machine JWT acquisition.",
+                )
+            )
+        elif (
+            ("api.kaianolevine" in text or '"/v1/' in text)
+            and "httpx" in text
+            and not any(
+                token in text.lower()
+                for token in ("clerk", "jwt", "get_token", "authenticate")
+            )
+        ):
+            findings.append(
+                _finding(
+                    "CD-012",
+                    "WARN",
+                    "cd_readiness",
+                    f"Internal HTTP client without Clerk/JWT acquisition pattern ({py.relative_to(repo_path)}).",
+                    "Acquire Clerk M2M JWTs before calling internal APIs.",
+                )
+            )
+    return findings
+
+
+def check_db_writes_use_upserts(repo_path: Path) -> list[Finding]:
+    """PIPE-002: Database writes should use upsert / ON CONFLICT patterns."""
+    CHECK_ID = "PIPE-002"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+    for py in src.rglob("*.py"):
+        if "tests/" in str(py).replace("\\", "/"):
+            continue
+        try:
+            text = py.read_text()
+        except OSError:
+            continue
+        if (
+            "session.add(" in text
+            and "on_conflict" not in text.lower()
+            and "merge(" not in text
+        ):
+            findings.append(
+                _finding(
+                    "PIPE-002",
+                    "WARN",
+                    "pipeline_consistency",
+                    f"session.add() without merge()/on_conflict in {py.relative_to(repo_path)}.",
+                    "Prefer upsert patterns (merge or ON CONFLICT) for idempotent writes.",
+                )
+            )
+        if (
+            re.search(r"\bINSERT\s+INTO\b", text, re.I)
+            and "ON CONFLICT" not in text.upper()
+        ):
+            findings.append(
+                _finding(
+                    "PIPE-002",
+                    "WARN",
+                    "pipeline_consistency",
+                    f"Raw INSERT without ON CONFLICT in {py.relative_to(repo_path)}.",
+                    "Use INSERT ... ON CONFLICT for idempotent persistence.",
+                )
+            )
+    return findings
+
+
+def check_inputs_not_deleted(repo_path: Path) -> list[Finding]:
+    """PIPE-005: Input files must not be deleted or moved to trash."""
+    CHECK_ID = "PIPE-005"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+    for path in list(src.rglob("*.py")) + list(src.rglob("*.ts")):
+        if "tests/" in str(path).replace("\\", "/"):
+            continue
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        if ".files().delete(" in text or "files().delete(" in text:
+            findings.append(
+                _finding(
+                    "PIPE-005",
+                    "WARN",
+                    "pipeline_consistency",
+                    f"Drive files().delete() referenced in {path.relative_to(repo_path)}.",
+                    "Never delete raw input artifacts from Drive — move to derived outputs only.",
+                )
+            )
+        if "trashed" in text.lower() and "update" in text.lower() and "files()" in text:
+            findings.append(
+                _finding(
+                    "PIPE-005",
+                    "WARN",
+                    "pipeline_consistency",
+                    f"Potential Drive trash update on input file in {path.relative_to(repo_path)}.",
+                    "Avoid trashing upstream inputs; operate on copies.",
+                )
+            )
+        if re.search(r"os\.(remove|unlink)\(|shutil\.rmtree\(", text) and re.search(
+            r"\b(input_path|input_file|source_path|src_path|local_path)\b", text
+        ):
+            findings.append(
+                _finding(
+                    "PIPE-005",
+                    "WARN",
+                    "pipeline_consistency",
+                    f"os.remove/unlink/rmtree may target input paths ({path.relative_to(repo_path)}).",
+                    "Only remove scratch/temp paths — never input variables.",
+                )
+            )
+    return findings
+
+
 def check_retry_logic(repo_path: Path) -> list[Finding]:
     """PIPE-007: Retry logic on external API calls."""
     CHECK_ID = "PIPE-007"
@@ -1588,36 +2026,113 @@ def check_retry_logic(repo_path: Path) -> list[Finding]:
 
 
 def check_no_retired_trigger_patterns(repo_path: Path) -> list[Finding]:
-    """PIPE-008: watcher-cog as canonical Drive trigger."""
+    """PIPE-008: Narrowed retired GitHub / GAS / gh CLI trigger patterns (2026-04).
+
+    Fires only when: (1) a workflow uses ``repository_dispatch`` together with
+    app-invoking steps, (2) Python/JS source actively POSTs to GitHub
+    ``/dispatches``, (3) the retired ``google-app-script-trigger`` string appears,
+    or (4) ``gh workflow run`` is invoked (shell or argv list form). Bare URL
+    literals are intentionally ignored — see LLM rule PIPE-014 for consistency
+    reasoning across input types.
+    """
     CHECK_ID = "PIPE-008"
-    findings = []
-    retired_patterns = (
-        "repository_dispatch",
-        "google-app-script-trigger",
-        "workflow_dispatch",
-        "api.github.com/repos",
-    )
+    findings: list[Finding] = []
+    wf_dir = repo_path / ".github" / "workflows"
+    if wf_dir.is_dir():
+        for wf in sorted(wf_dir.rglob("*.yml")) + sorted(wf_dir.rglob("*.yaml")):
+            try:
+                text = wf.read_text()
+            except OSError:
+                continue
+            low = text.lower()
+            if "repository_dispatch" not in low:
+                continue
+            relay = any(
+                k in low
+                for k in (
+                    "prefect deployment run",
+                    "prefect deploy",
+                    "run_deployment(",
+                    "npx prefect",
+                )
+            ) or (
+                "/dispatches" in text
+                and any(k in low for k in ("curl ", "httpx.", "requests."))
+            )
+            pure_ci = ("pytest" in low or "ruff" in low) and not relay
+            if relay and not pure_ci:
+                findings.append(
+                    _finding(
+                        "PIPE-008",
+                        "WARN",
+                        "structural_conformance",
+                        f"repository_dispatch in GitHub workflow with app-triggering steps ({wf.relative_to(repo_path)}).",
+                        "Use watcher-cog + Prefect instead of GHA repository_dispatch relays.",
+                    )
+                )
+
+    code_exts = {".py", ".ts", ".tsx", ".js"}
     for path in repo_path.rglob("*"):
         if not path.is_file():
             continue
-        if ".github/workflows/" in str(path).replace("\\", "/"):
-            continue
         if "tests/" in str(path).replace("\\", "/"):
             continue
-        if path.suffix.lower() not in {".py", ".ts", ".tsx", ".js"}:
+        if path.suffix.lower() not in code_exts:
             continue
-        text = path.read_text()
-        if any(p in text for p in retired_patterns):
+        if ".github/workflows/" in str(path).replace("\\", "/"):
+            continue
+        try:
+            body = path.read_text()
+        except OSError:
+            continue
+        low = body.lower()
+        if re.search(
+            r"(httpx|requests)\.(post|put)\([^\)]*api\.github\.com/[^\"'\)]+/dispatches",
+            body,
+            re.I,
+        ):
             findings.append(
                 _finding(
                     "PIPE-008",
                     "WARN",
                     "structural_conformance",
-                    f"Retired trigger pattern detected in {path.relative_to(repo_path)}.",
-                    "Use watcher-cog + Prefect trigger model instead of legacy dispatch patterns.",
+                    f"Active HTTP client call to GitHub dispatches API ({path.relative_to(repo_path)}).",
+                    "Use watcher-cog + Prefect instead of repository_dispatch HTTP relays.",
                 )
             )
-            break
+        if "google-app-script-trigger" in body:
+            findings.append(
+                _finding(
+                    "PIPE-008",
+                    "WARN",
+                    "structural_conformance",
+                    f"Retired google-app-script-trigger reference in {path.relative_to(repo_path)}.",
+                    "Use watcher-cog + Prefect; remove legacy Apps Script trigger hooks.",
+                )
+            )
+        if re.search(r"\bgh\s+workflow\s+run\b", low):
+            findings.append(
+                _finding(
+                    "PIPE-008",
+                    "WARN",
+                    "structural_conformance",
+                    f"gh workflow run invocation in {path.relative_to(repo_path)}.",
+                    "Use watcher-cog + Prefect instead of driving workflows via gh CLI.",
+                )
+            )
+        if re.search(
+            r"\[\s*['\"]gh['\"]\s*,\s*['\"]workflow['\"]\s*,\s*['\"]run['\"]",
+            body,
+        ):
+            findings.append(
+                _finding(
+                    "PIPE-008",
+                    "WARN",
+                    "structural_conformance",
+                    f"gh workflow run argv-style invocation in {path.relative_to(repo_path)}.",
+                    "Use watcher-cog + Prefect instead of subprocess gh workflow relays.",
+                )
+            )
     return findings
 
 
@@ -1729,19 +2244,17 @@ def check_shared_library_used(
     language: str = "python",
     workspace_package_json_text: str | None = None,
 ) -> list[Finding]:
-    """XSTACK-001: Use shared library — do not reimplement shared behaviors."""
+    """XSTACK-001: Shared library dependency must be declared (2026-04 narrow).
+
+    Hand-rolled logger/auth/response reimplementation heuristics moved to LLM
+    rule XSTACK-005; this check only verifies the dependency is present in
+    ``pyproject.toml`` / workspace ``package.json`` (MONO-001).
+    """
     CHECK_ID = "XSTACK-001"
-    findings = []
+    findings: list[Finding] = []
     if language == "python":
         pyproject = repo_path / "pyproject.toml"
         py_text = pyproject.read_text().lower() if pyproject.exists() else ""
-        src = repo_path / "src"
-        src_text = (
-            "\n".join(f.read_text() for f in src.rglob("*.py")) if src.is_dir() else ""
-        )
-        has_shared_import = (
-            "common_python_utils" in src_text or "mini_app_polis" in src_text
-        )
         if "common-python-utils" not in py_text:
             findings.append(
                 _finding(
@@ -1752,34 +2265,10 @@ def check_shared_library_used(
                     "Depend on common-python-utils and consume shared behaviors from it.",
                 )
             )
-        if (
-            "logging.basicconfig" in src_text.lower()
-            or "def verify_token" in src_text.lower()
-        ) and not has_shared_import:
-            findings.append(
-                _finding(
-                    "XSTACK-001",
-                    "ERROR",
-                    "cross_repo_coherence",
-                    "Hand-rolled shared behavior detected without shared library usage.",
-                    "Replace custom logger/auth/response helpers with shared library implementations.",
-                )
-            )
     else:
         pkg = repo_path / "package.json"
         per_app_text = pkg.read_text().lower() if pkg.exists() else ""
-        # Workspace deps satisfy XSTACK-001 per MONO-001
         pkg_text = per_app_text + (workspace_package_json_text or "").lower()
-        src = repo_path / "src"
-        src_text = (
-            "\n".join(
-                f.read_text()
-                for f in list(src.rglob("*.ts")) + list(src.rglob("*.tsx"))
-            )
-            if src.is_dir()
-            else ""
-        )
-        has_ts_shared_import = "common-typescript-utils" in src_text
         if "common-typescript-utils" not in pkg_text:
             findings.append(
                 _finding(
@@ -1788,18 +2277,6 @@ def check_shared_library_used(
                     "cross_repo_coherence",
                     "common-typescript-utils is not declared for this TypeScript service.",
                     "Depend on common-typescript-utils to avoid re-implementing shared utilities.",
-                )
-            )
-        if (
-            "createLogger" in src_text or "verifyToken" in src_text
-        ) and not has_ts_shared_import:
-            findings.append(
-                _finding(
-                    "XSTACK-001",
-                    "ERROR",
-                    "cross_repo_coherence",
-                    "Hand-rolled shared TypeScript helper detected without common-typescript-utils import.",
-                    "Use common-typescript-utils logger/auth/response helpers.",
                 )
             )
     return findings
@@ -2595,6 +3072,8 @@ def run_all_checks(
         if evaluator_config.is_static_site:
             _run(check_astro_framework, "FE-001")
             _run(check_astro_pinned_versions, "FE-008")
+            _run(check_astro_build_time_data, "FE-009")
+            _run(check_astro_runtime_queries, "FE-010")
         elif evaluator_config.is_react_app:
             _run(check_vite_react_ts, "FE-002")
             _run(check_shadcn, "FE-004")
@@ -2603,6 +3082,8 @@ def run_all_checks(
         if dod_type == "new_frontend_site":
             _run(check_astro_framework, "FE-001")
             _run(check_astro_pinned_versions, "FE-008")
+            _run(check_astro_build_time_data, "FE-009")
+            _run(check_astro_runtime_queries, "FE-010")
         if dod_type == "new_react_app":
             _run(check_vite_react_ts, "FE-002")
             _run(check_shadcn, "FE-004")
@@ -2626,6 +3107,8 @@ def run_all_checks(
         _run(check_no_retired_trigger_patterns, "PIPE-008")
         _run(check_evaluation_step, "PIPE-009")
         _run(check_prefect_serve_pattern, "CD-015")
+        _run(check_db_writes_use_upserts, "PIPE-002")
+        _run(check_inputs_not_deleted, "PIPE-005")
 
     # PIPE-001 applies to both pipeline-cogs and trigger-cogs — Prefect is
     # required on both, with slightly different usage patterns (see the
@@ -2657,6 +3140,40 @@ def run_all_checks(
 
         _run(_api_001_check, "API-001")
         _run(_api_002_check, "API-002")
+
+    # CD-006 applies to pipeline-cogs, trigger-cogs, and api-services —
+    # any repo type where GHA relaying would be a genuine anti-pattern.
+    if is_pipeline_cog or is_trigger_cog or is_api_service:
+        _run(check_gha_not_trigger_relay, "CD-006")
+
+    # CD-012 (Clerk M2M JWT) applies to the same set — services that
+    # make or receive internal calls should use JWT, not API keys.
+    if is_pipeline_cog or is_trigger_cog or is_api_service:
+
+        def _cd_012_check(p: Path) -> list[Finding]:
+            return check_clerk_m2m_auth(p, language=language)
+
+        _run(_cd_012_check, "CD-012")
+
+    # XSTACK-002 (response shape parity) applies to api-service only per
+    # the narrowed applies_to in the audit.
+    if is_api_service:
+
+        def _xstack_002_check(p: Path) -> list[Finding]:
+            return check_response_shape_parity(p, language=language)
+
+        _run(_xstack_002_check, "XSTACK-002")
+
+    # DOC-005 (ADRs present) applies to pipeline-cogs, trigger-cogs,
+    # api-services, shared-libraries, and standards-repo per the catalog.
+    if (
+        is_pipeline_cog
+        or is_trigger_cog
+        or is_api_service
+        or is_library
+        or (evaluator_config is not None and evaluator_config.is_standards_repo)
+    ):
+        _run(check_adrs_present, "DOC-005")
 
     _run(
         lambda p: check_releaserc_assets(p, monorepo_root=monorepo_root),

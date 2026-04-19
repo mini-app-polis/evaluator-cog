@@ -8,6 +8,7 @@ from pathlib import Path
 
 from evaluator_cog.engine.deterministic import (
     check_astro_pinned_versions,
+    check_gha_not_trigger_relay,
     check_postgres_only_data_store,
     check_prefect_cloud_observability,
     check_prefect_present,
@@ -419,3 +420,209 @@ def test_fe008_uppercase_x_range() -> None:
     _write_package_json(root, {"dependencies": {"@astrojs/starlight": "3.X"}})
     f = check_astro_pinned_versions(root)
     assert any(x["rule_id"] == "FE-008" for x in f)
+
+
+# --- CD-006 ------------------------------------------------------------------
+
+
+def test_cd006_clean_ci_workflow_passes() -> None:
+    root = _root(
+        {
+            ".github/workflows/ci.yml": """name: CI
+on:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest
+""",
+        }
+    )
+    assert check_gha_not_trigger_relay(root) == []
+
+
+def test_cd006_release_tag_workflow_passes() -> None:
+    root = _root(
+        {
+            ".github/workflows/release.yml": """name: Release
+on:
+  push:
+    tags: ['v*']
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo release
+""",
+        }
+    )
+    assert check_gha_not_trigger_relay(root) == []
+
+
+def test_cd006_missing_workflows_dir_tolerated() -> None:
+    root = _root({"src/x.py": "x = 1\n"})
+    assert check_gha_not_trigger_relay(root) == []
+
+
+def test_cd006_repository_dispatch_pure_ci_passes() -> None:
+    root = _root(
+        {
+            ".github/workflows/dispatch.yml": """on:
+  repository_dispatch:
+    types: [drift]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest
+""",
+        }
+    )
+    assert check_gha_not_trigger_relay(root) == []
+
+
+def test_cd006_repository_dispatch_prefect_deployment_run_flagged() -> None:
+    root = _root(
+        {
+            ".github/workflows/dispatch.yml": """on:
+  repository_dispatch:
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: prefect deployment run my-flow/my-deployment
+""",
+        }
+    )
+    f = check_gha_not_trigger_relay(root)
+    assert any(x["rule_id"] == "CD-006" for x in f)
+
+
+def test_cd006_repository_dispatch_run_deployment_snippet_flagged() -> None:
+    root = _root(
+        {
+            ".github/workflows/dispatch.yml": """on:
+  repository_dispatch:
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo run_deployment(
+""",
+        }
+    )
+    f = check_gha_not_trigger_relay(root)
+    assert any(x["rule_id"] == "CD-006" for x in f)
+
+
+def test_cd006_scheduled_workflow_prefect_cloud_flagged() -> None:
+    root = _root(
+        {
+            ".github/workflows/cron.yml": """on:
+  schedule:
+    - cron: '0 * * * *'
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl https://api.prefect.cloud/api/accounts/x/workspaces/y
+""",
+        }
+    )
+    f = check_gha_not_trigger_relay(root)
+    assert any(x["rule_id"] == "CD-006" for x in f)
+
+
+def test_cd006_scheduled_drift_pytest_only_passes() -> None:
+    root = _root(
+        {
+            ".github/workflows/drift.yml": """on:
+  schedule:
+    - cron: '0 * * * *'
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest tests/
+""",
+        }
+    )
+    assert check_gha_not_trigger_relay(root) == []
+
+
+def test_cd006_workflow_posts_v1_trigger_flagged() -> None:
+    root = _root(
+        {
+            ".github/workflows/t.yml": """jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -X POST "/v1/trigger"
+""",
+        }
+    )
+    f = check_gha_not_trigger_relay(root)
+    assert any(x["rule_id"] == "CD-006" for x in f)
+
+
+def test_cd006_workflow_posts_v1_runs_flagged() -> None:
+    root = _root(
+        {
+            ".github/workflows/t.yml": """jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl '/v1/runs'
+""",
+        }
+    )
+    f = check_gha_not_trigger_relay(root)
+    assert any(x["rule_id"] == "CD-006" for x in f)
+
+
+def test_cd006_dot_yaml_extension_scanned() -> None:
+    root = _root(
+        {
+            ".github/workflows/up.yaml": """on:
+  repository_dispatch:
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: prefect deployment run x
+""",
+        }
+    )
+    f = check_gha_not_trigger_relay(root)
+    assert any(x["rule_id"] == "CD-006" for x in f)
+
+
+def test_cd006_multi_violation_one_workflow_emits_multiple_findings() -> None:
+    root = _root(
+        {
+            ".github/workflows/bad.yml": """on:
+  repository_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: prefect deployment run x
+      - run: curl https://api.prefect.cloud/ping
+""",
+        }
+    )
+    f = check_gha_not_trigger_relay(root)
+    assert sum(1 for x in f if x["rule_id"] == "CD-006") >= 2
+
+
+def test_cd006_malformed_workflow_yaml_does_not_raise() -> None:
+    root = _root(
+        {
+            ".github/workflows/broken.yml": "{{{ not yaml {{{\nrepository_dispatch: x\n",
+        }
+    )
+    check_gha_not_trigger_relay(root)

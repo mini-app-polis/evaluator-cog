@@ -22,6 +22,10 @@ exemptions:
     reason: "sentry_sdk.init() is present in main.py with SENTRY_DSN_EVALUATOR. The LLM conformance pass cannot read source content directly and incorrectly flags this as absent."
   - rule: PIPE-004
     reason: "Concurrency guard implemented via prefect.concurrency.sync concurrency('evaluator-cog-writes', occupy=1) wrapping the full write path in conformance_check_flow."
+  - rule: CD-012
+    reason: "The deterministic checker source contains 'X-Internal-API-Key' as a string literal being scanned against in check_clerk_m2m_auth — not as an active auth pattern. Same self-scan recursion as PIPE-008."
+  - rule: PIPE-005
+    reason: "The deterministic checker source contains 'files().delete()' as a string literal being scanned against in check_inputs_not_deleted — not as an active Drive deletion call. Same self-scan recursion as PIPE-008."
 
 deferrals:
   - rule: PIPE-006

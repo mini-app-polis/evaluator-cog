@@ -626,15 +626,15 @@ def test_check_shared_library_python_passes_when_present() -> None:
     assert check_shared_library_used(repo, language="python") == []
 
 
-def test_check_shared_library_ts_flags_hand_rolled_logger() -> None:
+def test_check_shared_library_ts_hand_rolled_ok_when_dep_declared() -> None:
+    """Narrowed XSTACK-001: hand-rolled helpers no longer fire — only missing deps."""
     repo = _make_repo(
         {
-            "package.json": '{"name":"x","dependencies":{}}\n',
+            "package.json": '{"name":"x","dependencies":{"common-typescript-utils":"1.0.0"}}\n',
             "src/index.ts": "function createLogger(){ return console }\n",
         }
     )
-    findings = check_shared_library_used(repo, language="typescript")
-    assert any(f["rule_id"] == "XSTACK-001" for f in findings)
+    assert check_shared_library_used(repo, language="typescript") == []
 
 
 # ── XSTACK-001 / common-typescript-utils ─────────────────────────────────────
@@ -915,10 +915,14 @@ def test_check_pipeline_cog_tests_flags_missing_normalization(tmp_path: Path) ->
 def test_check_no_retired_trigger_patterns_flags_repository_dispatch(
     tmp_path: Path,
 ) -> None:
+    # Under the narrowed PIPE-008 spec (post-2026-04 audit), a bare URL
+    # string no longer trips the check — it must be an active HTTP call
+    # to the retired dispatches endpoint.
     (tmp_path / "src" / "pkg").mkdir(parents=True)
     (tmp_path / "src" / "pkg" / "trigger.py").write_text(
-        'url = "https://api.github.com/repos/org/repo/dispatches"\n'
-        'payload = {"event_type": "repository_dispatch"}\n'
+        "import httpx\n"
+        "def trigger_remote():\n"
+        "    httpx.post('https://api.github.com/repos/org/repo/dispatches', json={})\n"
     )
     findings = check_no_retired_trigger_patterns(tmp_path)
     assert any(f["rule_id"] == "PIPE-008" for f in findings)
