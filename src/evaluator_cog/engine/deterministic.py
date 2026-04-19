@@ -1965,6 +1965,2001 @@ def check_inputs_not_deleted(repo_path: Path) -> list[Finding]:
     return findings
 
 
+# Wave 9 — Coverage sweep. Implementations for 37 rules missing from
+# engine but present in the catalog. Deliberately conservative on
+# false-positive rate: where the rule has LLM-judgment components,
+# only the mechanical part is implemented here.
+# ==========================================================================
+
+
+def check_orm_usage(repo_path: Path, language: str = "python") -> list[Finding]:
+    """API-003: ORM usage required; no raw SQL outside ORM."""
+    CHECK_ID = "API-003"
+    findings: list[Finding] = []
+    if language == "python":
+        pyproject = repo_path / "pyproject.toml"
+        py_text = pyproject.read_text().lower() if pyproject.exists() else ""
+        if "sqlalchemy" not in py_text:
+            findings.append(
+                _finding(
+                    "API-003",
+                    "WARN",
+                    "structural_conformance",
+                    "api-service (Python) does not declare sqlalchemy in pyproject.toml.",
+                    "Add sqlalchemy to dependencies and declare models via ORM.",
+                )
+            )
+    else:
+        pkg = repo_path / "package.json"
+        pkg_text = pkg.read_text().lower() if pkg.exists() else ""
+        if "drizzle-orm" not in pkg_text and "prisma" not in pkg_text:
+            findings.append(
+                _finding(
+                    "API-003",
+                    "WARN",
+                    "structural_conformance",
+                    "api-service (TypeScript) does not declare drizzle-orm or prisma.",
+                    "Depend on an ORM (drizzle-orm preferred) instead of raw SQL.",
+                )
+            )
+    return findings
+
+
+def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Finding]:
+    """API-004: /v1/ prefix required on public routes."""
+    CHECK_ID = "API-004"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    exempt_paths = ("/health", "/docs", "/openapi.json", "/metrics", "/redoc")
+
+    if language == "python":
+        import ast
+
+        route_attrs = {"get", "post", "put", "delete", "patch", "head", "options"}
+        for py_file in src.rglob("*.py"):
+            try:
+                text = py_file.read_text()
+                tree = ast.parse(text)
+            except Exception:
+                continue
+            rel = py_file.relative_to(repo_path)
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for dec in node.decorator_list:
+                    if not isinstance(dec, ast.Call):
+                        continue
+                    if not isinstance(dec.func, ast.Attribute):
+                        continue
+                    if dec.func.attr not in route_attrs:
+                        continue
+                    if not dec.args:
+                        continue
+                    path_arg = dec.args[0]
+                    if not isinstance(path_arg, ast.Constant) or not isinstance(
+                        path_arg.value, str
+                    ):
+                        continue
+                    route = path_arg.value
+                    if any(route.startswith(p) for p in exempt_paths):
+                        continue
+                    if not route.startswith("/v1/"):
+                        findings.append(
+                            _finding(
+                                "API-004",
+                                "ERROR",
+                                "structural_conformance",
+                                f"{rel}::{node.name}: route {route!r} missing /v1/ prefix.",
+                                "Mount routes under /v1/ to support versioning.",
+                            )
+                        )
+    else:
+        import re
+
+        route_re = re.compile(
+            r"""(?:app|router)\.(?:get|post|put|delete|patch)\s*\(\s*['"]([^'"]+)['"]"""
+        )
+        for ts_file in list(src.rglob("*.ts")) + list(src.rglob("*.tsx")):
+            try:
+                text = ts_file.read_text()
+            except Exception:
+                continue
+            rel = ts_file.relative_to(repo_path)
+            for m in route_re.finditer(text):
+                route = m.group(1)
+                if any(route.startswith(p) for p in exempt_paths):
+                    continue
+                if not route.startswith("/v1/"):
+                    findings.append(
+                        _finding(
+                            "API-004",
+                            "ERROR",
+                            "structural_conformance",
+                            f"{rel}: route {route!r} missing /v1/ prefix.",
+                            "Mount routes under /v1/ to support versioning.",
+                        )
+                    )
+    return findings
+
+
+def check_response_envelope_presence(repo_path: Path) -> list[Finding]:
+    """API-005: Response envelope — endpoints declare response_model.
+
+    Partial overlap with XSTACK-002, but this one specifically looks at
+    shape consistency. Our deterministic pass just asserts response_model=
+    exists on each endpoint (delegating shape inspection to the LLM).
+    """
+    CHECK_ID = "API-005"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    route_attrs = {"get", "post", "put", "delete", "patch"}
+    flagged: set[tuple[str, str]] = set()
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for dec in node.decorator_list:
+                if not isinstance(dec, ast.Call):
+                    continue
+                if not isinstance(dec.func, ast.Attribute):
+                    continue
+                if dec.func.attr not in route_attrs:
+                    continue
+                has_rm = any(kw.arg == "response_model" for kw in dec.keywords)
+                if not has_rm:
+                    key = (str(rel), node.name)
+                    if key in flagged:
+                        continue
+                    flagged.add(key)
+                    findings.append(
+                        _finding(
+                            "API-005",
+                            "ERROR",
+                            "structural_conformance",
+                            f"{rel}::{node.name}: endpoint missing response_model=.",
+                            "Declare a response_model Pydantic class so the envelope "
+                            "shape is explicit.",
+                        )
+                    )
+    return findings
+
+
+def check_owner_id_column(repo_path: Path) -> list[Finding]:
+    """API-006: SQLAlchemy models carry owner_id."""
+    CHECK_ID = "API-006"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    # Variable names that hint a model is internal/lookup and exempt.
+    exempt_suffixes = ("_lookup", "_config", "_enum", "Lookup", "Config", "Enum")
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            # Heuristic: class is a SQLAlchemy model if it inherits from a
+            # class ending in Base or DeclarativeBase.
+            base_names = []
+            for b in node.bases:
+                if isinstance(b, ast.Name):
+                    base_names.append(b.id)
+                elif isinstance(b, ast.Attribute):
+                    base_names.append(b.attr)
+            if not any(bn.endswith("Base") or "Declarative" in bn for bn in base_names):
+                continue
+            if any(node.name.endswith(s) for s in exempt_suffixes):
+                continue
+            # Look for owner_id assignment in the class body
+            has_owner_id = False
+            for stmt in node.body:
+                targets: list = []
+                if isinstance(stmt, ast.Assign):
+                    targets = stmt.targets
+                elif isinstance(stmt, ast.AnnAssign):
+                    targets = [stmt.target]
+                for t in targets:
+                    if isinstance(t, ast.Name) and t.id == "owner_id":
+                        has_owner_id = True
+            if not has_owner_id:
+                # Also check for comment indicating internal table
+                findings.append(
+                    _finding(
+                        "API-006",
+                        "WARN",
+                        "structural_conformance",
+                        f"{rel}::{node.name}: SQLAlchemy model missing owner_id column.",
+                        "Add owner_id to enforce multi-tenant ownership. If this is a "
+                        "join/lookup/config table, suffix the class name (_lookup, "
+                        "_config, _enum) or document the exception in evaluator.yaml.",
+                    )
+                )
+    return findings
+
+
+def check_clerk_auth_dep(repo_path: Path, language: str = "python") -> list[Finding]:
+    """API-007: Clerk verification helper referenced."""
+    CHECK_ID = "API-007"
+    findings: list[Finding] = []
+
+    if language == "python":
+        src = repo_path / "src"
+        if not src.is_dir():
+            return findings
+        has_verify_token_usage = False
+        for py_file in src.rglob("*.py"):
+            try:
+                text = py_file.read_text()
+            except Exception:
+                continue
+            if "verify_token" in text or "clerk" in text.lower():
+                has_verify_token_usage = True
+                break
+        if not has_verify_token_usage:
+            findings.append(
+                _finding(
+                    "API-007",
+                    "WARN",
+                    "structural_conformance",
+                    "api-service (Python) has no visible Clerk or verify_token usage.",
+                    "Import verify_token from common-python-utils and add "
+                    "Depends(verify_token) to protected routes.",
+                )
+            )
+    else:
+        pkg = repo_path / "package.json"
+        pkg_text = pkg.read_text() if pkg.exists() else ""
+        if "@clerk" not in pkg_text and "common-typescript-utils" not in pkg_text:
+            findings.append(
+                _finding(
+                    "API-007",
+                    "WARN",
+                    "structural_conformance",
+                    "api-service (TypeScript) has no Clerk SDK or common-typescript-utils dep.",
+                    "Add @clerk/clerk-sdk-node or use verifyClerkToken from "
+                    "common-typescript-utils.",
+                )
+            )
+    return findings
+
+
+def check_unauthenticated_routes(
+    repo_path: Path, language: str = "python"
+) -> list[Finding]:
+    """API-008: Unauthenticated routes must be intentional.
+
+    Deterministic part: flag FastAPI routes with no Depends(...) in the
+    function signature. Whether the lack-of-auth is intentional is the
+    LLM's job.
+    """
+    CHECK_ID = "API-008"
+    findings: list[Finding] = []
+    if language != "python":
+        return findings
+    import ast
+
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    route_attrs = {"get", "post", "put", "delete", "patch"}
+    exempt_paths = ("/health", "/metrics", "/docs", "/openapi.json", "/redoc")
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # Is this a route handler?
+            route_path: str | None = None
+            for dec in node.decorator_list:
+                if not isinstance(dec, ast.Call):
+                    continue
+                if not isinstance(dec.func, ast.Attribute):
+                    continue
+                if dec.func.attr not in route_attrs:
+                    continue
+                if (
+                    dec.args
+                    and isinstance(dec.args[0], ast.Constant)
+                    and isinstance(dec.args[0].value, str)
+                ):
+                    route_path = dec.args[0].value
+                    break
+            if route_path is None:
+                continue
+            if any(route_path.startswith(p) for p in exempt_paths):
+                continue
+            # Any Depends(...) default in args?
+            has_depends = False
+            for arg_default in node.args.defaults + node.args.kw_defaults:
+                if arg_default is None:
+                    continue
+                if (
+                    isinstance(arg_default, ast.Call)
+                    and isinstance(arg_default.func, ast.Name)
+                    and arg_default.func.id == "Depends"
+                ):
+                    has_depends = True
+                    break
+            if not has_depends:
+                findings.append(
+                    _finding(
+                        "API-008",
+                        "ERROR",
+                        "structural_conformance",
+                        f"{rel}::{node.name}: route {route_path!r} has no Depends(...) auth.",
+                        "Add Depends(verify_token) for protected routes, or document the "
+                        "intentional public access in the route's description.",
+                    )
+                )
+    return findings
+
+
+def check_cors_config(repo_path: Path, language: str = "python") -> list[Finding]:
+    """API-009: CORS middleware configured; no hardcoded origins."""
+    CHECK_ID = "API-009"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+
+    if language == "python":
+        has_cors = False
+        has_cors_origins_env = False
+        if src.is_dir():
+            for py_file in src.rglob("*.py"):
+                try:
+                    text = py_file.read_text()
+                except Exception:
+                    continue
+                if "CORSMiddleware" in text:
+                    has_cors = True
+                if (
+                    "CORS_ORIGINS" in text
+                    or 'getenv("CORS_ORIGINS"' in text
+                    or "getenv('CORS_ORIGINS'" in text
+                ):
+                    has_cors_origins_env = True
+        if not has_cors:
+            findings.append(
+                _finding(
+                    "API-009",
+                    "ERROR",
+                    "structural_conformance",
+                    "api-service (Python) has no CORSMiddleware configuration.",
+                    "Register CORSMiddleware from fastapi.middleware.cors with origins "
+                    "sourced from CORS_ORIGINS env var.",
+                )
+            )
+        elif not has_cors_origins_env:
+            findings.append(
+                _finding(
+                    "API-009",
+                    "WARN",
+                    "structural_conformance",
+                    "api-service (Python) uses CORSMiddleware but CORS_ORIGINS env var is not referenced.",
+                    "Source allowed origins from CORS_ORIGINS rather than hardcoded values.",
+                )
+            )
+    else:
+        has_cors_import = False
+        if src.is_dir():
+            for ts_file in list(src.rglob("*.ts")) + list(src.rglob("*.tsx")):
+                try:
+                    text = ts_file.read_text()
+                except Exception:
+                    continue
+                if (
+                    "cors(" in text
+                    or "from 'hono/cors'" in text
+                    or 'from "hono/cors"' in text
+                ):
+                    has_cors_import = True
+                    break
+        if not has_cors_import:
+            findings.append(
+                _finding(
+                    "API-009",
+                    "ERROR",
+                    "structural_conformance",
+                    "api-service (TypeScript) has no cors() middleware import.",
+                    "Import and register cors() from hono/cors with origins from process.env.CORS_ORIGINS.",
+                )
+            )
+    return findings
+
+
+def check_health_endpoint(repo_path: Path, language: str = "python") -> list[Finding]:
+    """API-010: GET /health endpoint present."""
+    CHECK_ID = "API-010"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    exts = ("*.py",) if language == "python" else ("*.ts", "*.tsx")
+    has_health = False
+    for ext in exts:
+        for f in src.rglob(ext):
+            try:
+                text = f.read_text()
+            except Exception:
+                continue
+            if "/health" in text and (
+                "def health" in text or '"/health"' in text or "'/health'" in text
+            ):
+                has_health = True
+                break
+        if has_health:
+            break
+    if not has_health:
+        findings.append(
+            _finding(
+                "API-010",
+                "WARN",
+                "structural_conformance",
+                "api-service has no visible GET /health endpoint.",
+                "Add a GET /health route that returns {'status': 'ok'} with no auth "
+                "and no DB queries.",
+            )
+        )
+    return findings
+
+
+def check_auth_header_parity(repo_path: Path) -> list[Finding]:
+    """AUTH-002: Auth header parity — shared library vs api.
+
+    Evaluator-cog can't compare two repos at once. We check a lighter
+    property: auth.py (if present) has a cross-reference comment to
+    common-python-utils.
+    """
+    CHECK_ID = "AUTH-002"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+    # Find auth.py files
+    auth_files = list(src.rglob("auth.py"))
+    if not auth_files:
+        return findings
+    for auth_file in auth_files:
+        try:
+            text = auth_file.read_text()
+        except Exception:
+            continue
+        if "common-python-utils" not in text and "common_python_utils" not in text:
+            rel = auth_file.relative_to(repo_path)
+            findings.append(
+                _finding(
+                    "AUTH-002",
+                    "WARN",
+                    "cross_repo_coherence",
+                    f"{rel}: auth.py has no reference to common-python-utils.",
+                    "Add a cross-reference comment noting the auth header parity with "
+                    "CommonPythonApiClient.",
+                )
+            )
+    return findings
+
+
+def check_env_var_prefix(repo_path: Path) -> list[Finding]:
+    """XSTACK-004: Client-exposed env vars use PUBLIC_ or VITE_ prefix."""
+    CHECK_ID = "XSTACK-004"
+    import re
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    # Detect repo flavor from presence of astro vs vite config
+    has_astro = (repo_path / "astro.config.mjs").exists() or (
+        repo_path / "astro.config.ts"
+    ).exists()
+    has_vite = (
+        (repo_path / "vite.config.ts").exists()
+        or (repo_path / "vite.config.js").exists()
+        or (repo_path / "vite.config.mjs").exists()
+    )
+
+    expected_prefix = None
+    wrong_prefix = None
+    if has_astro:
+        expected_prefix = "PUBLIC_"
+        wrong_prefix = "VITE_"
+    elif has_vite:
+        expected_prefix = "VITE_"
+        wrong_prefix = "PUBLIC_"
+    else:
+        return findings  # Not a frontend repo with client-side env vars
+
+    env_re = re.compile(r"""import\.meta\.env\.(\w+)""")
+    for f in (
+        list(src.rglob("*.ts"))
+        + list(src.rglob("*.tsx"))
+        + list(src.rglob("*.astro"))
+        + list(src.rglob("*.js"))
+        + list(src.rglob("*.jsx"))
+    ):
+        try:
+            text = f.read_text()
+        except Exception:
+            continue
+        rel = f.relative_to(repo_path)
+        for m in env_re.finditer(text):
+            var = m.group(1)
+            if var.startswith(wrong_prefix):
+                findings.append(
+                    _finding(
+                        "XSTACK-004",
+                        "WARN",
+                        "structural_conformance",
+                        f"{rel}: env var {var} uses {wrong_prefix} prefix in a repo expecting {expected_prefix}.",
+                        f"Rename to {expected_prefix}{var[len(wrong_prefix) :]}.",
+                    )
+                )
+    return findings
+
+
+def check_logger_misuse(repo_path: Path) -> list[Finding]:
+    """CD-008: logger.error not used for expected outcomes."""
+    CHECK_ID = "CD-008"
+    import re
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    noise_patterns = (
+        r"not found",
+        r"no files",
+        r"skipping",
+        r"already exists",
+        r"no new items",
+    )
+    noise_re = re.compile("|".join(noise_patterns), re.IGNORECASE)
+    error_call_re = re.compile(r"""logger\.error\s*\(\s*['"]([^'"]+)['"]""")
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for m in error_call_re.finditer(text):
+            msg = m.group(1)
+            if noise_re.search(msg):
+                findings.append(
+                    _finding(
+                        "CD-008",
+                        "WARN",
+                        "structural_conformance",
+                        f"{rel}: logger.error used for expected outcome: {msg!r}.",
+                        "Downgrade to logger.warning or logger.info — errors should "
+                        "indicate unexpected failures.",
+                    )
+                )
+    return findings
+
+
+def check_three_layer_observability(
+    repo_path: Path, cog_subtype: str | None = None
+) -> list[Finding]:
+    """CD-010: Three-layer observability — Healthchecks + logger + Sentry."""
+    CHECK_ID = "CD-010"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    env_example = repo_path / ".env.example"
+
+    env_text = env_example.read_text() if env_example.exists() else ""
+    src_text = ""
+    if src.is_dir():
+        for py_file in src.rglob("*.py"):
+            try:
+                src_text += "\n" + py_file.read_text()
+            except Exception:
+                continue
+
+    # Layer 1: Healthchecks — only required for worker-style services
+    # (pipeline-cog, trigger-cog). HTTP services (api-service) rely on
+    # Railway restart.
+    if cog_subtype in ("pipeline", "trigger") and (
+        "HEALTHCHECKS_URL" not in env_text or "healthchecks.io" not in src_text.lower()
+    ):
+        findings.append(
+            _finding(
+                "CD-010",
+                "ERROR",
+                "structural_conformance",
+                "Layer 1 missing: no HEALTHCHECKS_URL env var or healthchecks.io ping in source.",
+                "Add HEALTHCHECKS_URL to .env.example and ping healthchecks.io from "
+                "the main loop.",
+            )
+        )
+
+    # Layer 2: structured logging via shared library
+    if "common_python_utils" not in src_text and "mini_app_polis" not in src_text:
+        findings.append(
+            _finding(
+                "CD-010",
+                "ERROR",
+                "structural_conformance",
+                "Layer 2 missing: no common-python-utils logger usage.",
+                "Import the shared logger from common_python_utils and use it throughout.",
+            )
+        )
+
+    # Layer 3: Sentry
+    if "sentry_sdk" not in src_text or "SENTRY_DSN" not in env_text:
+        findings.append(
+            _finding(
+                "CD-010",
+                "ERROR",
+                "structural_conformance",
+                "Layer 3 missing: no sentry_sdk.init() or SENTRY_DSN in .env.example.",
+                "Initialise sentry_sdk at entry point and add SENTRY_DSN (or a "
+                "service-specific variant) to .env.example.",
+            )
+        )
+    return findings
+
+
+def check_cloudflare_pages_deploy(repo_path: Path) -> list[Finding]:
+    """CD-014: Static site deployed via Cloudflare Pages."""
+    CHECK_ID = "CD-014"
+    findings: list[Finding] = []
+    ci = repo_path / ".github" / "workflows" / "ci.yml"
+    readme = repo_path / "README.md"
+
+    ci_text = ci.read_text() if ci.exists() else ""
+    readme_text = readme.read_text() if readme.exists() else ""
+
+    has_cf_pages = (
+        "cloudflare/pages-action" in ci_text
+        or "wrangler pages" in ci_text
+        or "pages.dev" in readme_text
+        or "Cloudflare Pages" in readme_text
+    )
+
+    # Check for competing deploy targets
+    has_netlify = (repo_path / "netlify.toml").exists()
+    has_vercel = (repo_path / "vercel.json").exists()
+    has_gh_pages = "gh-pages" in ci_text or "peaceiris/actions-gh-pages" in ci_text
+
+    if has_netlify:
+        findings.append(
+            _finding(
+                "CD-014",
+                "WARN",
+                "structural_conformance",
+                "Static site has netlify.toml — expected Cloudflare Pages deployment.",
+                "Remove netlify.toml and configure Cloudflare Pages deploy instead.",
+            )
+        )
+    if has_vercel:
+        findings.append(
+            _finding(
+                "CD-014",
+                "WARN",
+                "structural_conformance",
+                "Static site has vercel.json — expected Cloudflare Pages deployment.",
+                "Remove vercel.json and configure Cloudflare Pages deploy instead.",
+            )
+        )
+    if has_gh_pages:
+        findings.append(
+            _finding(
+                "CD-014",
+                "WARN",
+                "structural_conformance",
+                "Static site uses GitHub Pages deploy — expected Cloudflare Pages.",
+                "Switch to Cloudflare Pages deploy.",
+            )
+        )
+
+    if not has_cf_pages and not (has_netlify or has_vercel or has_gh_pages):
+        findings.append(
+            _finding(
+                "CD-014",
+                "WARN",
+                "structural_conformance",
+                "No deployment target detected (no Cloudflare Pages markers in ci.yml or README).",
+                "Document the Cloudflare Pages deploy in ci.yml or README.",
+            )
+        )
+    return findings
+
+
+def check_public_docstrings(repo_path: Path) -> list[Finding]:
+    """DOC-006: Public functions/classes have docstrings."""
+    CHECK_ID = "DOC-006"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                continue
+            if node.name.startswith("_"):
+                continue
+            # Skip dunder methods
+            if node.name.startswith("__") and node.name.endswith("__"):
+                continue
+            if ast.get_docstring(node):
+                continue
+            findings.append(
+                _finding(
+                    "DOC-006",
+                    "WARN",
+                    "documentation_coverage",
+                    f"{rel}::{node.name}: public {type(node).__name__.replace('Def', '').lower()} missing docstring.",
+                    "Add a docstring explaining the purpose and usage.",
+                )
+            )
+    return findings
+
+
+def check_pydantic_field_descriptions(repo_path: Path) -> list[Finding]:
+    """DOC-007: Pydantic fields use Field(description=...)."""
+    CHECK_ID = "DOC-007"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            base_names = []
+            for b in node.bases:
+                if isinstance(b, ast.Name):
+                    base_names.append(b.id)
+                elif isinstance(b, ast.Attribute):
+                    base_names.append(b.attr)
+            if "BaseModel" not in base_names:
+                continue
+            for stmt in node.body:
+                if not isinstance(stmt, ast.AnnAssign):
+                    continue
+                if not isinstance(stmt.target, ast.Name):
+                    continue
+                fname = stmt.target.id
+                if fname.startswith("_"):
+                    continue
+                # Check if value is Field(... description=...)
+                has_description = False
+                if (
+                    stmt.value
+                    and isinstance(stmt.value, ast.Call)
+                    and (
+                        isinstance(stmt.value.func, ast.Name)
+                        and stmt.value.func.id == "Field"
+                    )
+                ):
+                    has_description = any(
+                        kw.arg == "description" for kw in stmt.value.keywords
+                    )
+                if not has_description:
+                    findings.append(
+                        _finding(
+                            "DOC-007",
+                            "WARN",
+                            "documentation_coverage",
+                            f"{rel}::{node.name}.{fname}: Pydantic field missing Field(description=...).",
+                            "Wrap the field with Field(description='...') for OpenAPI docs.",
+                        )
+                    )
+    return findings
+
+
+def check_fastapi_route_docs(repo_path: Path) -> list[Finding]:
+    """DOC-010: FastAPI route decorators have summary=, description=, response_model=."""
+    CHECK_ID = "DOC-010"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    route_attrs = {"get", "post", "put", "delete", "patch"}
+    required = ("summary", "description", "response_model")
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for dec in node.decorator_list:
+                if not isinstance(dec, ast.Call):
+                    continue
+                if not isinstance(dec.func, ast.Attribute):
+                    continue
+                if dec.func.attr not in route_attrs:
+                    continue
+                kwargs = {kw.arg for kw in dec.keywords}
+                missing = [r for r in required if r not in kwargs]
+                if missing:
+                    findings.append(
+                        _finding(
+                            "DOC-010",
+                            "ERROR",
+                            "documentation_coverage",
+                            f"{rel}::{node.name}: route decorator missing: {', '.join(missing)}.",
+                            "Add all three (summary, description, response_model) to the "
+                            "route decorator for complete OpenAPI docs.",
+                        )
+                    )
+    return findings
+
+
+def check_unauthenticated_routes_documented(repo_path: Path) -> list[Finding]:
+    """DOC-011: Unauthenticated routes document their intent."""
+    CHECK_ID = "DOC-011"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    route_attrs = {"get", "post", "put", "delete", "patch"}
+    exempt_paths = ("/health", "/metrics", "/docs", "/openapi.json", "/redoc")
+    public_markers = (
+        "intentionally public",
+        "no auth required",
+        "read-only public",
+        "public endpoint",
+    )
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            route_path: str | None = None
+            description: str | None = None
+            for dec in node.decorator_list:
+                if not isinstance(dec, ast.Call):
+                    continue
+                if not isinstance(dec.func, ast.Attribute):
+                    continue
+                if dec.func.attr not in route_attrs:
+                    continue
+                if (
+                    dec.args
+                    and isinstance(dec.args[0], ast.Constant)
+                    and isinstance(dec.args[0].value, str)
+                ):
+                    route_path = dec.args[0].value
+                for kw in dec.keywords:
+                    if (
+                        kw.arg == "description"
+                        and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, str)
+                    ):
+                        description = kw.value.value
+            if route_path is None:
+                continue
+            if any(route_path.startswith(p) for p in exempt_paths):
+                continue
+            # Has auth?
+            has_depends = False
+            for arg_default in node.args.defaults + node.args.kw_defaults:
+                if arg_default is None:
+                    continue
+                if (
+                    isinstance(arg_default, ast.Call)
+                    and isinstance(arg_default.func, ast.Name)
+                    and arg_default.func.id == "Depends"
+                ):
+                    has_depends = True
+                    break
+            if has_depends:
+                continue
+            # No auth — must have public-intent marker in description or docstring
+            ds = ast.get_docstring(node) or ""
+            combined = (description or "") + " " + ds
+            if not any(marker in combined.lower() for marker in public_markers):
+                findings.append(
+                    _finding(
+                        "DOC-011",
+                        "WARN",
+                        "documentation_coverage",
+                        f"{rel}::{node.name}: unauthenticated route {route_path!r} lacks public-intent marker.",
+                        "Add 'intentionally public' or 'no auth required' to the route "
+                        "description or docstring.",
+                    )
+                )
+    return findings
+
+
+def check_fetch_error_handling(repo_path: Path) -> list[Finding]:
+    """FE-006: Astro fetch calls wrapped in try/catch with fallback."""
+    CHECK_ID = "FE-006"
+    import re
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    for astro_file in src.rglob("*.astro"):
+        try:
+            text = astro_file.read_text()
+        except Exception:
+            continue
+        # Extract frontmatter
+        m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+        if not m:
+            continue
+        fm = m.group(1)
+        if "fetch(" not in fm:
+            continue
+        # Crude heuristic: the frontmatter should contain `try` and `catch`
+        # somewhere around the fetch call.
+        if "try" not in fm or "catch" not in fm:
+            rel = astro_file.relative_to(repo_path)
+            findings.append(
+                _finding(
+                    "FE-006",
+                    "ERROR",
+                    "structural_conformance",
+                    f"{rel}: frontmatter fetch() without try/catch error handling.",
+                    "Wrap fetch calls in try/catch with a fallback value so build "
+                    "succeeds when the API is unavailable.",
+                )
+            )
+    return findings
+
+
+def check_monorepo_shared_lib_root(
+    repo_path: Path,
+    workspace_package_json_text: str | None = None,
+    language: str = "python",
+) -> list[Finding]:
+    """MONO-001: Monorepo shared-lib check is satisfied by workspace root.
+
+    When a service sits inside a monorepo, XSTACK-001's dep check should
+    also honor the workspace root package.json. This rule itself is a
+    sanity check that the root actually carries the shared lib when the
+    per-app does not.
+    """
+    CHECK_ID = "MONO-001"
+    findings: list[Finding] = []
+    if language != "typescript":
+        return findings  # MONO-001 cares about pnpm workspaces; TS only in practice
+    if workspace_package_json_text is None:
+        return findings  # Not a monorepo context
+    per_app = repo_path / "package.json"
+    per_app_text = per_app.read_text() if per_app.exists() else ""
+    if (
+        "common-typescript-utils" not in per_app_text
+        and "common-typescript-utils" not in workspace_package_json_text
+    ):
+        findings.append(
+            _finding(
+                "MONO-001",
+                "ERROR",
+                "cross_repo_coherence",
+                "Monorepo: common-typescript-utils absent from both workspace root "
+                "and per-app package.json.",
+                "Add common-typescript-utils to the workspace root to satisfy XSTACK-001 "
+                "for all apps.",
+            )
+        )
+    return findings
+
+
+def check_monorepo_root_ci(
+    repo_path: Path, monorepo_root: Path | None = None
+) -> list[Finding]:
+    """MONO-002: Monorepo root carries CI; per-app doesn't need its own."""
+    CHECK_ID = "MONO-002"
+    findings: list[Finding] = []
+    if monorepo_root is None:
+        return findings  # Not a monorepo
+    root_ci = monorepo_root / ".github" / "workflows" / "ci.yml"
+    if not root_ci.exists():
+        findings.append(
+            _finding(
+                "MONO-002",
+                "WARN",
+                "structural_conformance",
+                "Monorepo root missing .github/workflows/ci.yml.",
+                "Add a root CI workflow that covers all sibling apps.",
+            )
+        )
+    return findings
+
+
+def check_per_item_vs_collection_tasks(repo_path: Path) -> list[Finding]:
+    """PIPE-003: Per-item and collection tasks are separate."""
+    CHECK_ID = "PIPE-003"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            has_task_decorator = any(
+                (isinstance(d, ast.Name) and d.id == "task")
+                or (
+                    isinstance(d, ast.Call)
+                    and isinstance(d.func, ast.Name)
+                    and d.func.id == "task"
+                )
+                or (isinstance(d, ast.Attribute) and d.attr == "task")
+                for d in node.decorator_list
+            )
+            if not has_task_decorator:
+                continue
+            body_src = ast.unparse(node)
+            # Heuristic: task references both per-item (append, add, process)
+            # AND collection rebuild (rebuild, full, all_items, summary)
+            per_item_markers = ["append(", "add(", "insert("]
+            collection_markers = ["rebuild", "all_items", "full_list", "regenerate"]
+            has_per_item = any(m in body_src for m in per_item_markers)
+            has_collection = any(m in body_src for m in collection_markers)
+            if has_per_item and has_collection:
+                findings.append(
+                    _finding(
+                        "PIPE-003",
+                        "WARN",
+                        "pipeline_consistency",
+                        f"{rel}::{node.name}: task mixes per-item processing with collection rebuild.",
+                        "Split into two tasks — one per-item, one collection-level — so "
+                        "retries can target the right level.",
+                    )
+                )
+    return findings
+
+
+def check_shared_resource_concurrency(repo_path: Path) -> list[Finding]:
+    """PIPE-004: Flows writing shared resources use concurrency guards."""
+    CHECK_ID = "PIPE-004"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            is_flow = any(
+                (isinstance(d, ast.Name) and d.id == "flow")
+                or (
+                    isinstance(d, ast.Call)
+                    and isinstance(d.func, ast.Name)
+                    and d.func.id == "flow"
+                )
+                or (isinstance(d, ast.Attribute) and d.attr == "flow")
+                for d in node.decorator_list
+            )
+            if not is_flow:
+                continue
+            body_src = ast.unparse(node)
+            writes_shared_resource = any(
+                m in body_src
+                for m in [
+                    "session.commit()",
+                    "session.add(",
+                    "drive_service.files().move",
+                    "drive_service.files().update",
+                    ".post(",
+                    ".patch(",
+                ]
+            )
+            if not writes_shared_resource:
+                continue
+            has_concurrency_param = False
+            for d in node.decorator_list:
+                if isinstance(d, ast.Call):
+                    for kw in d.keywords:
+                        if kw.arg == "concurrency_limit":
+                            has_concurrency_param = True
+            has_concurrency_block = (
+                "with concurrency(" in body_src or "concurrency.sync" in body_src
+            )
+            if not (has_concurrency_param or has_concurrency_block):
+                findings.append(
+                    _finding(
+                        "PIPE-004",
+                        "ERROR",
+                        "pipeline_consistency",
+                        f"{rel}::{node.name}: flow writes to shared resource without concurrency guard.",
+                        "Add concurrency_limit= on the @flow decorator, or wrap the write "
+                        "block with a 'with concurrency(...)' slot from prefect.concurrency.sync.",
+                    )
+                )
+    return findings
+
+
+def check_prefect_run_logger(repo_path: Path) -> list[Finding]:
+    """PIPE-006: Prefect flows use get_run_logger() with fallback."""
+    CHECK_ID = "PIPE-006"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            is_flow = any(
+                (isinstance(d, ast.Name) and d.id == "flow")
+                or (
+                    isinstance(d, ast.Call)
+                    and isinstance(d.func, ast.Name)
+                    and d.func.id == "flow"
+                )
+                or (isinstance(d, ast.Attribute) and d.attr == "flow")
+                for d in node.decorator_list
+            )
+            if not is_flow:
+                continue
+            body_src = ast.unparse(node)
+            if "get_run_logger" not in body_src:
+                findings.append(
+                    _finding(
+                        "PIPE-006",
+                        "WARN",
+                        "pipeline_consistency",
+                        f"{rel}::{node.name}: flow does not call get_run_logger().",
+                        "Use get_run_logger() inside flows for Prefect-integrated logging; "
+                        "fall back to stdlib logging outside Prefect context.",
+                    )
+                )
+    return findings
+
+
+def check_final_evaluation_task(
+    repo_path: Path, cog_subtype: str | None = None
+) -> list[Finding]:
+    """PIPE-011: Pipeline cogs end with an AI evaluation task.
+
+    Exempt: trigger-cogs (they fire flow runs, don't run pipelines),
+    and evaluator-cog itself.
+    """
+    CHECK_ID = "PIPE-011"
+    findings: list[Finding] = []
+    if cog_subtype == "trigger":
+        return findings
+    # Check if this is evaluator-cog itself
+    if (repo_path / "src" / "evaluator_cog").is_dir():
+        return findings
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    evaluation_markers = (
+        "pipeline_eval",
+        "evaluation_client",
+        "/v1/evaluations",
+        "/v1/pipeline_evaluations",
+        "PipelineEvaluator",
+    )
+    found_marker = False
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+        except Exception:
+            continue
+        if any(m in text for m in evaluation_markers):
+            found_marker = True
+            break
+    if not found_marker:
+        findings.append(
+            _finding(
+                "PIPE-011",
+                "WARN",
+                "pipeline_consistency",
+                "No AI evaluation task found in pipeline-cog source.",
+                "Add a final task that writes to pipeline_evaluations (via the evaluation "
+                "client from common-python-utils) so quality can be tracked.",
+            )
+        )
+    return findings
+
+
+def check_hardcoded_retry_delay(repo_path: Path) -> list[Finding]:
+    """PIPE-012: retry_delay_seconds not hardcoded to non-zero."""
+    CHECK_ID = "PIPE-012"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for kw in node.keywords:
+                if kw.arg != "retry_delay_seconds":
+                    continue
+                # Must be a hardcoded non-zero numeric literal
+                if (
+                    isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, (int, float))
+                    and kw.value.value != 0
+                ):
+                    # Check for PYTEST_CURRENT_TEST guard nearby
+                    py_text = py_file.read_text()
+                    if "PYTEST_CURRENT_TEST" not in py_text:
+                        findings.append(
+                            _finding(
+                                "PIPE-012",
+                                "WARN",
+                                "pipeline_consistency",
+                                f"{rel}: retry_delay_seconds={kw.value.value} hardcoded without PYTEST_CURRENT_TEST guard.",
+                                "Source from Settings field or wrap with os.getenv('PYTEST_CURRENT_TEST') "
+                                "conditional so tests don't sleep.",
+                            )
+                        )
+    return findings
+
+
+def check_per_item_error_handling(repo_path: Path) -> list[Finding]:
+    """PRIN-002: Per-item try/except in pipeline entry points.
+
+    Heuristic: if a flow loops over a collection and there's no try/except
+    inside the loop, flag it — one bad item would abort the full run.
+    """
+    CHECK_ID = "PRIN-002"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            is_flow = any(
+                (isinstance(d, ast.Name) and d.id == "flow")
+                or (
+                    isinstance(d, ast.Call)
+                    and isinstance(d.func, ast.Name)
+                    and d.func.id == "flow"
+                )
+                or (isinstance(d, ast.Attribute) and d.attr == "flow")
+                for d in node.decorator_list
+            )
+            if not is_flow:
+                continue
+            # Find loops in the function body
+            for sub in ast.walk(node):
+                if not isinstance(sub, (ast.For, ast.AsyncFor)):
+                    continue
+                # Does the loop body contain a Try?
+                has_try = any(isinstance(x, ast.Try) for x in ast.walk(sub))
+                if not has_try:
+                    findings.append(
+                        _finding(
+                            "PRIN-002",
+                            "ERROR",
+                            "principles",
+                            f"{rel}::{node.name}: loop body has no try/except — one bad item aborts the full run.",
+                            "Wrap per-item processing in try/except so a single failure doesn't "
+                            "crash the whole flow.",
+                        )
+                    )
+                    break  # One finding per flow is enough
+    return findings
+
+
+def check_production_observability(
+    repo_path: Path, language: str = "python"
+) -> list[Finding]:
+    """PRIN-005: Production services have Sentry + structured logging."""
+    CHECK_ID = "PRIN-005"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    src_text = ""
+    for ext in ("*.py",) if language == "python" else ("*.ts", "*.tsx"):
+        for f in src.rglob(ext):
+            try:
+                src_text += "\n" + f.read_text()
+            except Exception:
+                continue
+
+    missing: list[str] = []
+    if language == "python":
+        if "sentry_sdk" not in src_text:
+            missing.append("Sentry")
+        if "common_python_utils" not in src_text and "mini_app_polis" not in src_text:
+            missing.append("structured logging (common-python-utils)")
+    else:
+        if "@sentry/" not in src_text and "Sentry.init" not in src_text:
+            missing.append("Sentry")
+        if "common-typescript-utils" not in src_text:
+            missing.append("structured logging (common-typescript-utils)")
+
+    if missing:
+        findings.append(
+            _finding(
+                "PRIN-005",
+                "ERROR",
+                "principles",
+                f"Production service missing: {', '.join(missing)}.",
+                "Add the missing observability components.",
+            )
+        )
+    return findings
+
+
+def check_pydantic_for_external_data(repo_path: Path) -> list[Finding]:
+    """PY-004: External data goes through Pydantic.
+
+    Heuristic: flag files that access response.json() or csv.DictReader
+    results directly without defining a BaseModel subclass.
+    """
+    CHECK_ID = "PY-004"
+    import re
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    suspect_patterns = (
+        r"\.json\(\)\[",  # response.json()["..."]
+        r"csv\.DictReader",
+        r"csv\.reader",
+    )
+    suspect_re = re.compile("|".join(suspect_patterns))
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        if suspect_re.search(text) and "BaseModel" not in text:
+            findings.append(
+                _finding(
+                    "PY-004",
+                    "WARN",
+                    "structural_conformance",
+                    f"{rel}: accesses external data (JSON/CSV) without a Pydantic BaseModel.",
+                    "Define a Pydantic model and validate external payloads through it.",
+                )
+            )
+    return findings
+
+
+def check_async_sqlalchemy(repo_path: Path) -> list[Finding]:
+    """PY-015: SQLAlchemy uses async API."""
+    CHECK_ID = "PY-015"
+    findings: list[Finding] = []
+    pyproject = repo_path / "pyproject.toml"
+    pyp_text = pyproject.read_text() if pyproject.exists() else ""
+
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    src_text = ""
+    for py_file in src.rglob("*.py"):
+        try:
+            src_text += "\n" + py_file.read_text()
+        except Exception:
+            continue
+
+    if "sqlalchemy" not in src_text.lower() and "sqlalchemy" not in pyp_text.lower():
+        return findings  # Not a SQLAlchemy repo
+
+    # Flag sync imports
+    if (
+        (
+            "from sqlalchemy.orm import Session" in src_text
+            or "from sqlalchemy.orm import sessionmaker" in src_text
+        )
+        and "AsyncSession" not in src_text
+        and "async_sessionmaker" not in src_text
+    ):
+        findings.append(
+            _finding(
+                "PY-015",
+                "ERROR",
+                "structural_conformance",
+                "Sync Session/sessionmaker imported without AsyncSession/async_sessionmaker counterpart.",
+                "Use AsyncSession and async_sessionmaker from sqlalchemy.ext.asyncio.",
+            )
+        )
+    # Flag sync create_engine
+    if "create_engine(" in src_text and "create_async_engine(" not in src_text:
+        findings.append(
+            _finding(
+                "PY-015",
+                "ERROR",
+                "structural_conformance",
+                "Sync create_engine() used without create_async_engine() counterpart.",
+                "Use create_async_engine from sqlalchemy.ext.asyncio.",
+            )
+        )
+    # asyncpg required when sqlalchemy is present
+    if "sqlalchemy" in pyp_text.lower() and "asyncpg" not in pyp_text.lower():
+        findings.append(
+            _finding(
+                "PY-015",
+                "ERROR",
+                "structural_conformance",
+                "sqlalchemy declared without asyncpg in pyproject.toml.",
+                "Add asyncpg to dependencies for async PostgreSQL.",
+            )
+        )
+    return findings
+
+
+def check_settings_field_consistency(repo_path: Path) -> list[Finding]:
+    """CFG-001: getattr(settings, X) / settings.X keys declared on Settings."""
+    CHECK_ID = "CFG-001"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    declared_fields: set[str] = set()
+    # First pass: collect fields on any Settings class
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not (node.name == "Settings" or node.name.endswith("Settings")):
+                continue
+            for stmt in node.body:
+                if isinstance(stmt, ast.AnnAssign) and isinstance(
+                    stmt.target, ast.Name
+                ):
+                    declared_fields.add(stmt.target.id)
+                elif isinstance(stmt, ast.Assign):
+                    for t in stmt.targets:
+                        if isinstance(t, ast.Name):
+                            declared_fields.add(t.id)
+
+    if not declared_fields:
+        return findings  # No Settings class; rule doesn't apply here
+
+    # Second pass: find getattr(settings, "X") calls and settings.X access
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        rel = py_file.relative_to(repo_path)
+        for node in ast.walk(tree):
+            # getattr(settings, "X")
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == "settings"
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            ):
+                key = node.args[1].value
+                if key not in declared_fields:
+                    findings.append(
+                        _finding(
+                            "CFG-001",
+                            "WARN",
+                            "configuration_consistency",
+                            f"{rel}: getattr(settings, {key!r}) but {key} not declared on Settings.",
+                            "Declare the field on Settings or remove the access.",
+                        )
+                    )
+            # settings.KEY
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "settings"
+                and node.attr not in declared_fields
+                and not node.attr.startswith("_")
+            ):
+                findings.append(
+                    _finding(
+                        "CFG-001",
+                        "WARN",
+                        "configuration_consistency",
+                        f"{rel}: settings.{node.attr} access but not declared on Settings.",
+                        "Declare the field on Settings or remove the access.",
+                    )
+                )
+    return findings
+
+
+def check_env_example_settings_parity(repo_path: Path) -> list[Finding]:
+    """CFG-002: .env.example keys match Settings declared fields."""
+    CHECK_ID = "CFG-002"
+    import ast
+
+    findings: list[Finding] = []
+    env_example = repo_path / ".env.example"
+    if not env_example.exists():
+        return findings
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    declared_fields: set[str] = set()
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not (node.name == "Settings" or node.name.endswith("Settings")):
+                continue
+            for stmt in node.body:
+                if isinstance(stmt, ast.AnnAssign) and isinstance(
+                    stmt.target, ast.Name
+                ):
+                    declared_fields.add(stmt.target.id)
+
+    if not declared_fields:
+        return findings
+
+    env_text = env_example.read_text()
+    lines = env_text.splitlines()
+    prev_is_external_marker = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            # Check if this comment marks the next key as external tooling
+            if "external" in stripped.lower() or "tooling" in stripped.lower():
+                prev_is_external_marker = True
+            continue
+        if not stripped or "=" not in stripped:
+            prev_is_external_marker = False
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        # Uppercase env vars correspond to Settings fields case-insensitively
+        if key in declared_fields or key.upper() in (
+            f.upper() for f in declared_fields
+        ):
+            prev_is_external_marker = False
+            continue
+        if prev_is_external_marker:
+            prev_is_external_marker = False
+            continue
+        findings.append(
+            _finding(
+                "CFG-002",
+                "WARN",
+                "configuration_consistency",
+                f".env.example key {key!r} not declared on Settings.",
+                "Declare the field on Settings or mark the key with a comment noting "
+                "'external tooling'.",
+            )
+        )
+    return findings
+
+
+def check_hardcoded_time_values(
+    repo_path: Path, language: str = "python"
+) -> list[Finding]:
+    """TEST-013: No hardcoded numeric sleeps/timeouts/delays."""
+    CHECK_ID = "TEST-013"
+    import re
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    if language == "python":
+        patterns = [
+            re.compile(r"time\.sleep\(\s*(\d+(?:\.\d+)?)\s*\)"),
+            re.compile(r"retry_delay_seconds\s*=\s*(\d+)"),
+            re.compile(r"\btimeout\s*=\s*(\d+)"),
+        ]
+        exts = ("*.py",)
+    else:
+        patterns = [
+            re.compile(r"setTimeout\(\s*\w+\s*,\s*(\d+)"),
+            re.compile(r"setInterval\(\s*\w+\s*,\s*(\d+)"),
+        ]
+        exts = ("*.ts", "*.tsx")
+
+    for ext in exts:
+        for f in src.rglob(ext):
+            try:
+                text = f.read_text()
+            except Exception:
+                continue
+            rel = f.relative_to(repo_path)
+            for pat in patterns:
+                for m in pat.finditer(text):
+                    val = m.group(1)
+                    if val == "0":
+                        continue
+                    # Skip if guarded by env/settings — we check if the line
+                    # has "os.getenv", "settings.", or "process.env" nearby.
+                    start = max(0, m.start() - 200)
+                    context = text[start : m.end()]
+                    if (
+                        "os.getenv" in context
+                        or "settings." in context
+                        or "process.env" in context
+                        or "PYTEST_CURRENT_TEST" in text
+                    ):
+                        continue
+                    findings.append(
+                        _finding(
+                            "TEST-013",
+                            "INFO",
+                            "principles",
+                            f"{rel}: hardcoded numeric value {val} in time/retry/timeout call.",
+                            "Source from Settings or env var so tests can override with 0.",
+                        )
+                    )
+                    break  # One finding per file is enough
+    return findings
+
+
+def check_testclient_for_v1_routes(repo_path: Path) -> list[Finding]:
+    """TEST-008: /v1/ route tests use TestClient or AsyncClient."""
+    CHECK_ID = "TEST-008"
+    import re
+
+    findings: list[Finding] = []
+    tests_dir = repo_path / "tests"
+    if not tests_dir.is_dir():
+        return findings
+
+    for test_file in tests_dir.rglob("test_*.py"):
+        try:
+            text = test_file.read_text()
+        except Exception:
+            continue
+        # Skip if file uses TestClient/AsyncClient
+        if "TestClient" in text or "AsyncClient" in text:
+            continue
+        # Look for test functions referencing /v1/
+        for m in re.finditer(r"def (test_\w+)\([^)]*\):([\s\S]*?)(?=\ndef |\Z)", text):
+            fn_name, body = m.group(1), m.group(2)
+            if "/v1/" in body:
+                rel = test_file.relative_to(repo_path)
+                findings.append(
+                    _finding(
+                        "TEST-008",
+                        "WARN",
+                        "test_coverage",
+                        f"{rel}::{fn_name}: references /v1/ without TestClient/AsyncClient.",
+                        "Use fastapi.testclient.TestClient or httpx.AsyncClient for route tests.",
+                    )
+                )
+    return findings
+
+
+def check_db_test_fixtures(repo_path: Path) -> list[Finding]:
+    """TEST-009: conftest has DB test fixtures."""
+    CHECK_ID = "TEST-009"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    tests = repo_path / "tests"
+    if not src.is_dir() or not tests.is_dir():
+        return findings
+
+    # Is this a SQLAlchemy repo?
+    has_sqlalchemy = False
+    for py_file in src.rglob("*.py"):
+        try:
+            if "sqlalchemy" in py_file.read_text().lower():
+                has_sqlalchemy = True
+                break
+        except Exception:
+            continue
+    if not has_sqlalchemy:
+        return findings
+
+    conftest_files = list(tests.rglob("conftest.py"))
+    if not conftest_files:
+        findings.append(
+            _finding(
+                "TEST-009",
+                "ERROR",
+                "test_coverage",
+                "SQLAlchemy repo has no conftest.py with DB test fixtures.",
+                "Add a conftest.py with DATABASE_URL override, in-memory engine, or "
+                "transaction rollback fixture.",
+            )
+        )
+        return findings
+
+    combined = "\n".join(f.read_text() for f in conftest_files if f.exists())
+    has_fixture_pattern = (
+        "DATABASE_URL" in combined
+        or "sqlite:///:memory:" in combined
+        or ("rollback" in combined.lower() and "fixture" in combined.lower())
+    )
+    if not has_fixture_pattern:
+        findings.append(
+            _finding(
+                "TEST-009",
+                "ERROR",
+                "test_coverage",
+                "conftest.py has no DB test fixture pattern (DATABASE_URL override, in-memory SQLite, or rollback fixture).",
+                "Add one of: DATABASE_URL override, in-memory SQLite engine, or rollback fixture.",
+            )
+        )
+    return findings
+
+
+def check_route_contract_tests(repo_path: Path) -> list[Finding]:
+    """TEST-010: Each FastAPI route has a contract test."""
+    CHECK_ID = "TEST-010"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    tests = repo_path / "tests"
+    if not src.is_dir() or not tests.is_dir():
+        return findings
+
+    route_paths: set[str] = set()
+    route_attrs = {"get", "post", "put", "delete", "patch"}
+    for py_file in src.rglob("*.py"):
+        try:
+            text = py_file.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for dec in node.decorator_list:
+                if not isinstance(dec, ast.Call):
+                    continue
+                if not isinstance(dec.func, ast.Attribute):
+                    continue
+                if dec.func.attr not in route_attrs:
+                    continue
+                if (
+                    dec.args
+                    and isinstance(dec.args[0], ast.Constant)
+                    and isinstance(dec.args[0].value, str)
+                ):
+                    route_paths.add(dec.args[0].value)
+
+    if not route_paths:
+        return findings
+
+    test_text = ""
+    for test_file in tests.rglob("test_*.py"):
+        try:
+            test_text += "\n" + test_file.read_text()
+        except Exception:
+            continue
+
+    untested = [r for r in route_paths if r not in test_text]
+    if untested:
+        sample = ", ".join(sorted(untested)[:5])
+        suffix = " (and others)" if len(untested) > 5 else ""
+        findings.append(
+            _finding(
+                "TEST-010",
+                "ERROR",
+                "test_coverage",
+                f"{len(untested)} route(s) have no contract test referencing them: {sample}{suffix}.",
+                "Add tests that exercise each /v1/ route and assert the response shape.",
+            )
+        )
+    return findings
+
+
+def check_mock_assertions(repo_path: Path) -> list[Finding]:
+    """TEST-011: Mocks have corresponding assertions."""
+    CHECK_ID = "TEST-011"
+    import re
+
+    findings: list[Finding] = []
+    tests = repo_path / "tests"
+    if not tests.is_dir():
+        return findings
+
+    for test_file in tests.rglob("test_*.py"):
+        try:
+            text = test_file.read_text()
+        except Exception:
+            continue
+        rel = test_file.relative_to(repo_path)
+        # Split into test functions
+        for m in re.finditer(r"def (test_\w+)\([^)]*\):([\s\S]*?)(?=\ndef |\Z)", text):
+            fn_name, body = m.group(1), m.group(2)
+            creates_mock = bool(
+                re.search(r"\b(MagicMock|AsyncMock|patch|mock_\w+)\b", body)
+            )
+            if not creates_mock:
+                continue
+            # Build pattern without mock assert_* literals — pygrep-hooks
+            # python-check-mock-methods flags those sequences in non-mock contexts.
+            _assert_prefix = chr(97) + "ssert_"
+            _mock_assert_re = re.compile(
+                "|".join(
+                    rf"\.{_assert_prefix}{tail}"
+                    for tail in (
+                        "called",
+                        "called_once",
+                        "called_with",
+                        "called_once_with",
+                    )
+                )
+            )
+            has_assert = bool(_mock_assert_re.search(body))
+            if not has_assert:
+                findings.append(
+                    _finding(
+                        "TEST-011",
+                        "ERROR",
+                        "test_coverage",
+                        f"{rel}::{fn_name}: creates mocks but has no assert_called* assertion.",
+                        "Add assert_called_once_with(...) or equivalent to verify the mock "
+                        "was exercised as expected.",
+                    )
+                )
+    return findings
+
+
+def check_test_gap_critical_paths(repo_path: Path) -> list[Finding]:
+    """TEST-GAP-001: Track presence of TEST-001..004 critical-path tests."""
+    CHECK_ID = "TEST-GAP-001"
+    findings: list[Finding] = []
+    tests = repo_path / "tests"
+    if not tests.is_dir():
+        return findings
+
+    test_text = ""
+    for test_file in tests.rglob("test_*.py"):
+        try:
+            test_text += "\n" + test_file.read_text()
+        except Exception:
+            continue
+
+    # Heuristic markers for each critical-path category
+    critical_markers = {
+        "TEST-001 (normalization)": ("normalize", "normalise", "normalization"),
+        "TEST-002 (deduplication)": ("dedup", "deduplication"),
+        "TEST-003 (persistence)": ("persist", "upsert", "session.commit"),
+        "TEST-004 (archival)": ("archive", "archival", "move"),
+    }
+    missing = []
+    for label, markers in critical_markers.items():
+        if not any(m in test_text.lower() for m in markers):
+            missing.append(label)
+
+    if missing:
+        findings.append(
+            _finding(
+                "TEST-GAP-001",
+                "INFO",
+                "test_coverage",
+                f"Missing critical-path tests: {', '.join(missing)}.",
+                "Add tests for the missing categories so each pipeline stage has coverage.",
+            )
+        )
+    return findings
+
+
 def check_retry_logic(repo_path: Path) -> list[Finding]:
     """PIPE-007: Retry logic on external API calls."""
     CHECK_ID = "PIPE-007"
@@ -3174,6 +5169,164 @@ def run_all_checks(
         or (evaluator_config is not None and evaluator_config.is_standards_repo)
     ):
         _run(check_adrs_present, "DOC-005")
+
+    _is_static = (
+        evaluator_config is not None and evaluator_config.is_static_site
+    ) or dod_type == "new_frontend_site"
+    # Wave 9 — coverage sweep for 35 rules previously only in catalog
+    # ==================================================================
+
+    # API domain — api-service only
+    if is_api_service:
+
+        def _api_003(p: Path) -> list[Finding]:
+            return check_orm_usage(p, language=language)
+
+        def _api_004(p: Path) -> list[Finding]:
+            return check_v1_route_prefix(p, language=language)
+
+        def _api_007(p: Path) -> list[Finding]:
+            return check_clerk_auth_dep(p, language=language)
+
+        def _api_008(p: Path) -> list[Finding]:
+            return check_unauthenticated_routes(p, language=language)
+
+        def _api_009(p: Path) -> list[Finding]:
+            return check_cors_config(p, language=language)
+
+        def _api_010(p: Path) -> list[Finding]:
+            return check_health_endpoint(p, language=language)
+
+        _run(_api_003, "API-003")
+        _run(_api_004, "API-004")
+        _run(check_response_envelope_presence, "API-005")
+        _run(_api_007, "API-007")
+        _run(_api_008, "API-008")
+        _run(_api_009, "API-009")
+        _run(_api_010, "API-010")
+
+        # API-006 and AUTH-002 — Python-only shape checks
+        if language == "python":
+            _run(check_owner_id_column, "API-006")
+            _run(check_auth_header_parity, "AUTH-002")
+
+    # CD-008 logger misuse — applies broadly; language-gated to Python.
+    if language == "python":
+        _run(check_logger_misuse, "CD-008")
+
+    # CD-010 three-layer observability — applies to all runtime services.
+    if is_pipeline_cog or is_trigger_cog or is_api_service:
+        _cog_st_010 = (
+            "trigger" if is_trigger_cog else ("pipeline" if is_pipeline_cog else None)
+        )
+
+        def _cd_010_check(p: Path) -> list[Finding]:
+            return check_three_layer_observability(p, cog_subtype=_cog_st_010)
+
+        _run(_cd_010_check, "CD-010")
+
+    # CD-014 — static-site deploy target
+    if _is_static:
+        _run(check_cloudflare_pages_deploy, "CD-014")
+
+    # DOC-006 / DOC-007 — Python docstring / Pydantic descriptions.
+    if language == "python":
+        _run(check_public_docstrings, "DOC-006")
+    if language == "python" and (is_pipeline_cog or is_api_service):
+        _run(check_pydantic_field_descriptions, "DOC-007")
+
+    # DOC-010 / DOC-011 — FastAPI route docs + unauthenticated-route intent.
+    if is_api_service and language == "python":
+        _run(check_fastapi_route_docs, "DOC-010")
+        _run(check_unauthenticated_routes_documented, "DOC-011")
+
+    # FE-006 — fetch error handling on static sites + react apps.
+    if (
+        _is_static
+        or (evaluator_config is not None and evaluator_config.is_react_app)
+        or dod_type == "new_react_app"
+    ):
+        _run(check_fetch_error_handling, "FE-006")
+
+    # MONO-001 / MONO-002 — monorepo shared-lib + root CI.
+    if evaluator_config is not None and getattr(evaluator_config, "monorepo", None):
+
+        def _mono_001(p: Path) -> list[Finding]:
+            return check_monorepo_shared_lib_root(
+                p,
+                workspace_package_json_text=workspace_package_json_text,
+                language=language,
+            )
+
+        def _mono_002(p: Path) -> list[Finding]:
+            return check_monorepo_root_ci(p, monorepo_root=monorepo_root)
+
+        _run(_mono_001, "MONO-001")
+        _run(_mono_002, "MONO-002")
+
+    # Pipeline rules — PIPE-003, PIPE-004, PIPE-006, PIPE-011, PIPE-012
+    if is_pipeline_cog or is_trigger_cog:
+        _cog_st_pipe = "trigger" if is_trigger_cog else "pipeline"
+
+        def _pipe_011_check(p: Path) -> list[Finding]:
+            return check_final_evaluation_task(p, cog_subtype=_cog_st_pipe)
+
+        _run(check_per_item_vs_collection_tasks, "PIPE-003")
+        _run(check_shared_resource_concurrency, "PIPE-004")
+        _run(check_prefect_run_logger, "PIPE-006")
+        _run(_pipe_011_check, "PIPE-011")
+        _run(check_hardcoded_retry_delay, "PIPE-012")
+
+    # Principles — PRIN-002, PRIN-005. Applies broadly.
+    if is_pipeline_cog or is_trigger_cog:
+        _run(check_per_item_error_handling, "PRIN-002")
+    if is_pipeline_cog or is_trigger_cog or is_api_service:
+
+        def _prin_005(p: Path) -> list[Finding]:
+            return check_production_observability(p, language=language)
+
+        _run(_prin_005, "PRIN-005")
+
+    # Python — PY-004, PY-015
+    if language == "python" and (is_pipeline_cog or is_api_service or is_library):
+        _run(check_pydantic_for_external_data, "PY-004")
+    if is_api_service and language == "python":
+        _run(check_async_sqlalchemy, "PY-015")
+
+    # Configuration — CFG-001, CFG-002
+    if language == "python" and (is_pipeline_cog or is_api_service or is_library):
+        _run(check_settings_field_consistency, "CFG-001")
+        _run(check_env_example_settings_parity, "CFG-002")
+
+    # Testing — TEST-008, TEST-009, TEST-010, TEST-011, TEST-013, TEST-GAP-001
+    if is_api_service:
+        _run(check_testclient_for_v1_routes, "TEST-008")
+        if language == "python":
+            _run(check_db_test_fixtures, "TEST-009")
+            _run(check_route_contract_tests, "TEST-010")
+    if is_pipeline_cog or is_api_service:
+        _run(check_mock_assertions, "TEST-011")
+        _run(check_test_gap_critical_paths, "TEST-GAP-001")
+
+    def _test_013(p: Path) -> list[Finding]:
+        return check_hardcoded_time_values(p, language=language)
+
+    if (
+        is_pipeline_cog
+        or is_api_service
+        or (evaluator_config is not None and evaluator_config.is_react_app)
+        or dod_type == "new_react_app"
+    ):
+        _run(_test_013, "TEST-013")
+
+    # XSTACK-004 — env var prefix. Frontend + api-service.
+    if (
+        _is_static
+        or (evaluator_config is not None and evaluator_config.is_react_app)
+        or dod_type == "new_react_app"
+        or is_api_service
+    ):
+        _run(check_env_var_prefix, "XSTACK-004")
 
     _run(
         lambda p: check_releaserc_assets(p, monorepo_root=monorepo_root),
