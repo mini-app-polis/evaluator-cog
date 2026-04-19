@@ -1,3 +1,10 @@
+# [3.10.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.9.0...v3.10.0) (2026-04-19)
+
+
+### Features
+
+* add META and priority-1 deterministic checks ([6c8ffa3](https://github.com/mini-app-polis/evaluator-cog/commit/6c8ffa3164ff60de151d18511b816bb0dc467147))
+
 # [3.9.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.8.1...v3.9.0) (2026-04-19)
 
 
