@@ -14,6 +14,14 @@ traits:
 # CD-015's source scanner handles the single-serve structure correctly.
 
 exemptions:
+  - rule: PIPE-015
+    reason: >
+      conformance_check_flow is a scheduled audit, not an event-driven
+      pipeline. It scans every active repo on a daily cron ('0 9 * * *',
+      set via prefect.serve() in main.py) rather than reacting to a
+      source-of-truth change — there is no input artifact for watcher-cog
+      to watch. The cron-scheduled deployment is the intended trigger
+      architecture for this cog, not an oversight.
   - rule: PIPE-008
     reason: "The deterministic checker source contains retired trigger pattern strings (e.g. repository_dispatch) as string literals being checked against, not as active trigger usage. PIPE-008 does not apply."
   - rule: CD-009

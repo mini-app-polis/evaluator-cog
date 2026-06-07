@@ -10,7 +10,10 @@ Two flows, two engine modules:
 - `evaluator_cog.flows.pipeline_eval` — post-run behavioral evaluation; calls
   Claude, posts findings; handles Prefect webhook state events
 - `evaluator_cog.flows.conformance` — scheduled structural conformance checker;
-  downloads each active repo as a **zipball** from GitHub, runs deterministic + LLM checks
+  downloads each active repo as a **zipball** from GitHub, runs deterministic + LLM checks.
+  Runs on a daily cron (`0 9 * * *`, set via `prefect.serve()` in `main.py`) by design —
+  this is a scheduled audit, not an event-driven pipeline, so the watcher-cog trigger
+  pattern does not apply (see PIPE-015 exemption in `evaluator.yaml`)
 - `evaluator_cog.engine.deterministic` — file/AST/YAML rule checks (100+ rules)
 - `evaluator_cog.engine.llm` — soft rule assessment, prompt builders, response parsing
 
