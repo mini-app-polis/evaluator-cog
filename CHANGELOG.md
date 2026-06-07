@@ -1,3 +1,10 @@
+## [3.14.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.14.3...v3.14.4) (2026-06-07)
+
+
+### Bug Fixes
+
+* supporting async mock detection for tests ([9ff567c](https://github.com/mini-app-polis/evaluator-cog/commit/9ff567c4955ed3d80335c20e5d30f7eee08de159))
+
 ## [3.14.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.14.2...v3.14.3) (2026-05-17)
 
 
