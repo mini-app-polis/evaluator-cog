@@ -199,7 +199,11 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
     1. Direct mock-API verification — ``assert_called`` / ``assert_any_call`` /
        ``assert_not_called`` / ``assert_called_with`` / ``assert_called_once`` /
        ``assert_called_once_with``, plus reads of ``.call_count`` / ``.call_args`` /
-       ``.call_args_list`` / ``.called``.
+       ``.call_args_list`` / ``.called``. The AsyncMock await-flavored
+       equivalents count too — ``assert_awaited`` / ``assert_any_await`` /
+       ``assert_not_awaited`` / ``assert_awaited_with`` / ``assert_awaited_once``
+       / ``assert_awaited_once_with``, plus reads of ``.await_count`` /
+       ``.await_args`` / ``.await_args_list``.
 
     2. Capture-list verification — a local ``name: list = []`` (or ``name = []``)
        bound inside the test body, then referenced in any ``assert`` statement.
@@ -242,10 +246,20 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
         rf"\.{_assert_prefix}called_with\b",
         rf"\.{_assert_prefix}called_once\b",
         rf"\.{_assert_prefix}called_once_with\b",
+        # AsyncMock await-flavored verification APIs.
+        rf"\.{_assert_prefix}awaited\b",
+        rf"\.{_assert_prefix}any_await\b",
+        rf"\.{_assert_prefix}not_awaited\b",
+        rf"\.{_assert_prefix}awaited_with\b",
+        rf"\.{_assert_prefix}awaited_once\b",
+        rf"\.{_assert_prefix}awaited_once_with\b",
         r"\.call_count\b",
         r"\.call_args\b",
         r"\.call_args_list\b",
         r"\.called\b",
+        r"\.await_count\b",
+        r"\.await_args\b",
+        r"\.await_args_list\b",
     )
     _mock_verify_re = re.compile("|".join(_mock_verify_patterns))
     # Matches mock-creation tokens. The `patch` alternative uses a negative

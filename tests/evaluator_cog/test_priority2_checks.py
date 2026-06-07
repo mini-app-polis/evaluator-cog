@@ -557,6 +557,85 @@ def test_test_011_accepts_call_count(tmp_path: Path) -> None:
     assert check_mock_assertions(tmp_path) == []
 
 
+def test_test_011_accepts_assert_awaited_once(tmp_path: Path) -> None:
+    """TEST-011: AsyncMock's assert_awaited_once() is a valid assertion.
+
+    Regression: only the sync verification tokens were recognized, so
+    tests verifying AsyncMocks via the await-flavored APIs were falsely
+    flagged.
+    """
+    from evaluator_cog.engine.deterministic import check_mock_assertions
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_x.py").write_text(
+        "from unittest.mock import AsyncMock\n"
+        "\n"
+        "async def test_a():\n"
+        "    m = AsyncMock()\n"
+        "    await m.do()\n"
+        "    m.do.assert_awaited_once()\n"
+    )
+    assert check_mock_assertions(tmp_path) == []
+
+
+def test_test_011_accepts_assert_not_awaited(tmp_path: Path) -> None:
+    """TEST-011: AsyncMock's assert_not_awaited() is a valid assertion."""
+    from evaluator_cog.engine.deterministic import check_mock_assertions
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_x.py").write_text(
+        "from unittest.mock import AsyncMock\n"
+        "\n"
+        "async def test_a():\n"
+        "    m = AsyncMock()\n"
+        "    m.do.assert_not_awaited()\n"
+    )
+    assert check_mock_assertions(tmp_path) == []
+
+
+def test_test_011_accepts_await_count_and_await_args(tmp_path: Path) -> None:
+    """TEST-011: reads of .await_count / .await_args / .await_args_list count."""
+    from evaluator_cog.engine.deterministic import check_mock_assertions
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_x.py").write_text(
+        "from unittest.mock import AsyncMock\n"
+        "\n"
+        "async def test_a():\n"
+        "    m = AsyncMock()\n"
+        "    await m.do(1)\n"
+        "    assert m.do.await_count == 1\n"
+        "    assert m.do.await_args.args == (1,)\n"
+        "\n"
+        "async def test_b():\n"
+        "    m = AsyncMock()\n"
+        "    await m.do(1)\n"
+        "    await m.do(2)\n"
+        "    assert len(m.do.await_args_list) == 2\n"
+    )
+    assert check_mock_assertions(tmp_path) == []
+
+
+def test_test_011_still_flags_unverified_async_mock(tmp_path: Path) -> None:
+    """TEST-011: an AsyncMock awaited but never verified is still flagged."""
+    from evaluator_cog.engine.deterministic import check_mock_assertions
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_x.py").write_text(
+        "from unittest.mock import AsyncMock\n"
+        "\n"
+        "async def test_a():\n"
+        "    m = AsyncMock()\n"
+        "    await m.do()\n"
+    )
+    findings = check_mock_assertions(tmp_path)
+    assert len(findings) == 1
+
+
 def test_test_011_still_flags_unverified_mock(tmp_path: Path) -> None:
     """TEST-011: mocks without any interrogation still get flagged."""
     from evaluator_cog.engine.deterministic import check_mock_assertions
