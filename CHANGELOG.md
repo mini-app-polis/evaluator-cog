@@ -1,3 +1,10 @@
+## [3.14.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.14.4...v3.14.5) (2026-06-07)
+
+
+### Bug Fixes
+
+* doc findings addressing ([1b484f6](https://github.com/mini-app-polis/evaluator-cog/commit/1b484f6f60388ed7db6231b19f5ea4df958c68b1))
+
 ## [3.14.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.14.3...v3.14.4) (2026-06-07)
 
 
