@@ -1,3 +1,10 @@
+## [3.15.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.15.0...v3.15.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* **deps:** pin common-python-utils v3.2.0 exactly ([9c00954](https://github.com/mini-app-polis/evaluator-cog/commit/9c00954642805c9b0a556470178cf11626b90863))
+
 # [3.15.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.14.5...v3.15.0) (2026-09-02)
 
 
