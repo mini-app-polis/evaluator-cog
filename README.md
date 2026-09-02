@@ -24,8 +24,10 @@ Findings are written to the `pipeline_evaluations` table via
 
 ## Standards coverage
 
-As of the current release, the engine covers **106 of 116 deterministic rules (91%)**
-in `ecosystem-standards`. Checks are wired in `run_all_checks` in
+`ecosystem-standards` currently declares **108 deterministic rules**, of which
+**102 have a check registered** in this engine (94%). Recount rather than trust
+this line — it is hand-maintained and was stale by ten rules before the
+2026-09 identity work. Checks are wired in `run_all_checks` in
 `src/evaluator_cog/engine/deterministic.py` and dispatched per repo type via
 the `applies_to` list in each rule's catalog entry.
 
@@ -40,17 +42,30 @@ the `applies_to` list in each rule's catalog entry.
 Zipball downloads do not include `.git/` history, so rules that require git log
 or tags are not run in evaluator-cog today (see **Not yet implemented**).
 
-**Not yet implemented** (10 rules — each blocked on a different infrastructure piece):
+**Registered under rule IDs the catalog no longer contains** — these emit findings
+against rules that do not exist and must be removed:
+
+| Orphaned check | Note |
+|---|---|
+| CD-012 | Retired 2026-09 (ADR-008). The check also gives inverted advice — it tells repos to acquire Clerk M2M JWTs and replace static keys, which is now backwards |
+| AUTH-001 | Retired 2026-09 (ADR-008), superseded by AUTH-003 |
+| TEST-GAP-001 | Pre-existing. Not in the current catalog |
+
+**Not yet implemented** (13 rules — each blocked on a different piece):
 
 | Rule | Blocker |
 |---|---|
 | VER-001 | Need git history (conventional commits on last 20) — requires full clone |
 | VER-002 | Need git history (BREAKING CHANGE on major tags) — requires full clone |
 | PRIN-008 | Need git history (fix commits touch tests) — requires full clone |
-| AUTH-001 | Needs `ecosystem.yaml` service-context threading into check runner |
+| AUTH-003 | Replaces retired AUTH-001. Needs route enumeration by registration call (decorators plus `add_api_route`), not by literal path |
+| AUTH-004 | New. Needs to verify the guard delegates to `identity.policy` and audits both branches |
+| CD-019 | Replaces retired CD-012. The existing CD-012 check gives inverted advice and must be removed, not adapted |
+| CD-020 | New. Needs `.releaserc.json` parsing, `uv lock --check`, and a pyproject `dependencies` vs `[tool.uv.sources]` comparison |
+| CD-016, CD-017 | Pre-existing gap — no check registered |
 | CD-004 | Needs GitHub API (verify pinned action tags exist); rate-limited |
 | EVAL-002, EVAL-003, EVAL-006, MONO-003 | Need runtime SQL queries against `pipeline_evaluations` table |
-| EVAL-007 | Already covered by `scripts/check_drift.py` in `ecosystem-standards` itself — no evaluator-cog work needed |
+| EVAL-007 | Nothing covers this today. `scripts/check_drift.py` in `ecosystem-standards` does not exist — the repo has no `scripts/` directory. This is the check that would have caught CD-012 and AUTH-001 being retired while checks stayed registered under those IDs |
 
 **LLM-routed rules** (catalog-marked `LLM CHECK.`): META-004, PIPE-013, PIPE-014,
 PIPE-015, PRIN-010, XSTACK-005. These pass through the routing layer in

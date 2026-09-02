@@ -21,7 +21,7 @@ evaluator-cog/
           pipeline.py           # Prefect flow presence / retry / serve pattern
           frontend.py           # Astro / Vite-React / Tailwind / shadcn
           api.py                # FastAPI / Postgres / HTTP API contract
-          auth.py               # Clerk / m2m / unauthenticated-route rules
+          auth.py               # credential verification / scope coverage rules
           config.py             # env vars / settings / shared-library use
           testing.py            # TestClient / fixtures / mock / respx
           meta.py               # META-001..007 — catalog self-checks
