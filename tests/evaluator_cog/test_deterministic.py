@@ -1486,7 +1486,7 @@ def test_check_eval_003_flags_untagged_finding() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1528,7 +1528,7 @@ def test_check_eval_003_accepts_tagged_finding_without_rule_id_in_text() -> None
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1560,7 +1560,7 @@ def test_check_eval_003_skips_checker_infrastructure_errors() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1597,7 +1597,7 @@ def test_check_eval_003_accepts_short_but_clear_finding() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1641,7 +1641,7 @@ def test_check_eval_003_skips_info_severity_dispatcher_findings() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1673,7 +1673,7 @@ def test_check_eval_003_skips_skipped_prefix_even_at_warn() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1703,7 +1703,7 @@ def test_check_eval_003_does_not_grade_its_own_prior_emissions() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1732,7 +1732,7 @@ def test_check_eval_003_passes_well_formed_finding() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1775,7 +1775,7 @@ def test_check_eval_003_accepts_concise_but_actionable_remediation() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1805,7 +1805,7 @@ def test_check_eval_003_flags_trivially_short_remediation() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1846,7 +1846,7 @@ def test_check_mono_003_flags_duplicate_sibling_findings() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):
@@ -1879,7 +1879,7 @@ def test_check_mono_003_ignores_single_sibling_findings() -> None:
 
     class FakeApi:
         @staticmethod
-        def from_env():
+        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
             return FakeApi()
 
         def get(self, _path: str):

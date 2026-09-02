@@ -67,7 +67,7 @@ def post_findings(
 
     err_ct = warn_ct = info_ct = 0
 
-    api_client = CommonPythonApiClient.from_env()
+    api_client = CommonPythonApiClient.from_env("evaluator-cog")
     findings_posted = 0
     evaluator_failed = False
 

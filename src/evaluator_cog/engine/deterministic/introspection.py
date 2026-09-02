@@ -68,7 +68,7 @@ def check_eval_003(
     )
 
     try:
-        api = KaianoApiClient.from_env()
+        api = KaianoApiClient.from_env("evaluator-cog")
         response = api.get(
             f"/v1/evaluations?source={_eval_003_sources}"
             f"&lookback_days={lookback_days}&limit=1000"
@@ -199,7 +199,7 @@ def check_mono_003(
     _PER_APP_EXPECTED = frozenset({"XSTACK-002"})
 
     try:
-        api = KaianoApiClient.from_env()
+        api = KaianoApiClient.from_env("evaluator-cog")
         service_ids = ",".join(monorepo_services.keys())
         response = api.get(
             f"/v1/evaluations?repos={service_ids}&lookback_days={lookback_days}&limit=2000"
