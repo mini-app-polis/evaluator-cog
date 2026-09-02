@@ -1,3 +1,10 @@
+# [3.15.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.14.5...v3.15.0) (2026-09-02)
+
+
+### Features
+
+* **api:** authenticate with this cog's own named API key ([192d265](https://github.com/mini-app-polis/evaluator-cog/commit/192d265db7d08303ed877233707ccdd3b424d24b))
+
 ## [3.14.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.14.4...v3.14.5) (2026-06-07)
 
 
