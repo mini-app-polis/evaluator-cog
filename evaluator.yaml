@@ -32,8 +32,10 @@ exemptions:
     reason: "Concurrency guard implemented via prefect.concurrency.sync concurrency('evaluator-cog-writes', occupy=1) wrapping the full write path in conformance_check_flow."
 
 deferrals:
-  # CD-012 deferral removed after Project Keystone completion.
-  # Clerk-aware auth is now enforced/recognized in deterministic check logic.
+  # CD-012 was retired in ecosystem-standards (ADR-008) and replaced by
+  # CD-019, AUTH-003 and AUTH-004. This repo's deterministic checks still
+  # register CD-012 and AUTH-001 and need to be rewritten to the new rules —
+  # tracked as work on the check registry, not as a deferral here.
   - rule: PIPE-006
     reason: >
       pipeline_eval.py is not a @flow-decorated function — it is a library module called
