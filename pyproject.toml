@@ -26,7 +26,7 @@ dev = [
 package = true
 
 [tool.uv.sources]
-common-python-utils = { git = "https://github.com/mini-app-polis/common-python-utils.git", rev = "v3.2.0" }
+common-python-utils = { git = "https://github.com/mini-app-polis/common-python-utils.git", rev = "v4.0.0" }
 
 [build-system]
 requires = ["hatchling"]

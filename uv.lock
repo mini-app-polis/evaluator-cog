@@ -461,8 +461,8 @@ wheels = [
 
 [[package]]
 name = "common-python-utils"
-version = "3.2.0"
-source = { git = "https://github.com/mini-app-polis/common-python-utils.git?rev=v3.2.0#e80cd4bd2395903bd43b3d6e98ebcba48d7fdc15" }
+version = "4.0.0"
+source = { git = "https://github.com/mini-app-polis/common-python-utils.git?rev=v4.0.0#5f326f59ae6cea3f9eede73ded84315f2b45e2d2" }
 dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
@@ -725,7 +725,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "common-python-utils", git = "https://github.com/mini-app-polis/common-python-utils.git?rev=v3.2.0" },
+    { name = "common-python-utils", git = "https://github.com/mini-app-polis/common-python-utils.git?rev=v4.0.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8.0" },
