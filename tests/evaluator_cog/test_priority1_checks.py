@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import tempfile
 from pathlib import Path
@@ -748,39 +749,48 @@ def test_test011_still_flags_a_real_mock_with_no_assertion(
 # --- slow-check reporting ----------------------------------------------------
 
 
-def test_is_inside_string_literal_is_linear_not_quadratic() -> None:
+def test_is_inside_string_literal_walks_the_tree_a_fixed_number_of_times() -> None:
     """The regression test for a 129-second check.
 
     `_is_inside_string_literal` asked "is this constant a dict key?" per
     constant, and each answer re-walked the whole tree. CD-005
     concatenates every file under src/ into one string and asked twice,
-    so the cost grew with the square of the repo. evaluator-cog's own
-    source doubling turned it into 129 seconds of a 138-second run.
+    so cost grew with the square of the repo — 129 seconds of a
+    138-second run once this repo's own source doubled.
 
-    Timing is a poor test, so this measures shape instead: doubling the
-    input must not much more than double the work. A quadratic
-    implementation lands near 4x; the bound here is deliberately loose
-    so a slow machine cannot fail it, while still catching n^2.
+    This counts `ast.walk` calls rather than measuring elapsed time. The
+    first version of this test timed two input sizes and asserted the
+    larger took under 3x the smaller; it passed in isolation and failed
+    inside the full suite on Python 3.11, because wall-clock under load
+    is not a property of the code. Walk count is: two walks regardless
+    of input, against one-per-constant before the fix.
     """
-    import time
+    from unittest.mock import patch
 
-    from evaluator_cog.engine.deterministic._shared import _is_inside_string_literal
+    from evaluator_cog.engine.deterministic import _shared
 
     unit = 'X = {"k": "needle"}\nY = "needle"\nZ = [1, 2, 3]\n'
+    real_walk = ast.walk
 
-    def elapsed(repeats: int) -> float:
-        source = unit * repeats
-        start = time.perf_counter()
-        _is_inside_string_literal(source, "needle")
-        return time.perf_counter() - start
+    def walks_for(repeats: int) -> int:
+        calls = 0
 
-    elapsed(200)  # warm any import-time cost
-    small = elapsed(400)
-    large = elapsed(800)
-    assert large < small * 3 + 0.05, (
-        f"doubling the input multiplied the work by {large / max(small, 1e-9):.1f}x "
-        "— _is_inside_string_literal looks quadratic again"
+        def counting_walk(node):
+            nonlocal calls
+            calls += 1
+            return real_walk(node)
+
+        with patch.object(_shared.ast, "walk", counting_walk):
+            _shared._is_inside_string_literal(unit * repeats, "needle")
+        return calls
+
+    small = walks_for(50)
+    large = walks_for(200)
+    assert small == large, (
+        f"walk count scales with input ({small} -> {large}) — "
+        "_is_inside_string_literal is quadratic again"
     )
+    assert large <= 4, f"expected a couple of walks, got {large}"
 
 
 def test_dict_key_constants_are_still_excluded() -> None:
