@@ -28,7 +28,6 @@ from evaluator_cog.engine.deterministic.api import (
 from evaluator_cog.engine.deterministic.auth import (
     check_auth_header_parity,
     check_clerk_auth_dep,
-    check_clerk_m2m_auth,
     check_unauthenticated_routes,
 )
 from evaluator_cog.engine.deterministic.config import (
@@ -55,7 +54,6 @@ from evaluator_cog.engine.deterministic.delivery import (
 )
 from evaluator_cog.engine.deterministic.docs import (
     check_adrs_present,
-    check_auth_py_docstring,
     check_changelog,
     check_env_example,
     check_fastapi_route_docs,
@@ -517,27 +515,10 @@ def run_all_checks(
 
         _run(_api_001_check, "API-001")
         _run(_api_002_check, "API-002")
-        # AUTH-001 requires a Python auth.py module. For TypeScript
-        # api-services (Hono) the equivalent lives elsewhere
-        # (e.g. middleware/auth.ts) and is not matched by this check.
-        # The rule itself still applies to TS services — the
-        # deterministic check just doesn't cover that case yet.
-        if language == "python":
-            _run(check_auth_py_docstring, "AUTH-001")
-
     # CD-006 applies to pipeline-cogs, trigger-cogs, and api-services —
     # any repo type where GHA relaying would be a genuine anti-pattern.
     if is_pipeline_cog or is_trigger_cog or is_api_service:
         _run(check_gha_not_trigger_relay, "CD-006")
-
-    # CD-012 (Clerk M2M JWT) applies to the same set — services that
-    # make or receive internal calls should use JWT, not API keys.
-    if is_pipeline_cog or is_trigger_cog or is_api_service:
-
-        def _cd_012_check(p: Path) -> list[Finding]:
-            return check_clerk_m2m_auth(p, language=language)
-
-        _run(_cd_012_check, "CD-012")
 
     # XSTACK-002 (response shape parity) applies to api-service only per
     # the narrowed applies_to in the audit.

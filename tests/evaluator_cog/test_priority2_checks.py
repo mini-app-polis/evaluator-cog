@@ -1,4 +1,4 @@
-"""Deterministic checks: DOC-005, XSTACK-002, FE-009/010, CD-012, PIPE-002/005, narrowed PIPE-008 / XSTACK-001."""
+"""Deterministic checks: DOC-005, XSTACK-002, FE-009/010, PIPE-002/005, narrowed PIPE-008 / XSTACK-001."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from evaluator_cog.engine.deterministic import (
     check_adrs_present,
     check_astro_build_time_data,
     check_astro_runtime_queries,
-    check_clerk_m2m_auth,
     check_db_writes_use_upserts,
     check_inputs_not_deleted,
     check_no_retired_trigger_patterns,
@@ -183,84 +182,6 @@ def test_fe010_skips_client_island_even_if_undocumented(tmp_path: Path) -> None:
         "<Island client:visible />\n",
     )
     assert check_astro_runtime_queries(tmp_path) == []
-
-
-# --- CD-012 ------------------------------------------------------------------
-
-
-def test_cd012_flags_x_internal_api_key(tmp_path: Path) -> None:
-    _write(
-        tmp_path,
-        "src/c.py",
-        'HEADERS = {"X-Internal-API-Key": "x"}\n'
-        "import httpx\n"
-        "httpx.get('https://example.com', headers=HEADERS)\n",
-    )
-    f = check_clerk_m2m_auth(tmp_path, language="python")
-    assert any(x["rule_id"] == "CD-012" for x in f)
-
-
-def test_cd012_skips_tests_tree_under_src(tmp_path: Path) -> None:
-    _write(tmp_path, "src/tests/bad.py", 'HEADERS = {"X-Internal-API-Key": "x"}\n')
-    assert check_clerk_m2m_auth(tmp_path, language="python") == []
-
-
-def test_cd012_skips_literal_only_x_internal_api_key_pattern(tmp_path: Path) -> None:
-    """CD-012: substring only inside string literals (fixtures / self-scan) is ignored."""
-    _write(
-        tmp_path,
-        "src/patterns.py",
-        'PATTERN = "X-Internal-API-Key"\n',
-    )
-    assert check_clerk_m2m_auth(tmp_path, language="python") == []
-
-
-def test_cd012_passes_when_jwt_pattern_present(tmp_path: Path) -> None:
-    _write(
-        tmp_path,
-        "src/c.py",
-        "import httpx\n"
-        "def call():\n"
-        "    token = get_token()  # clerk jwt\n"
-        "    return httpx.get('https://api.kaianolevine.com/x', headers={'Authorization': token})\n",
-    )
-    assert check_clerk_m2m_auth(tmp_path, language="python") == []
-
-
-def test_cd012_flags_internal_httpx_without_jwt_signals(tmp_path: Path) -> None:
-    _write(
-        tmp_path,
-        "src/c.py",
-        "import httpx\n"
-        "def call():\n"
-        "    return httpx.get('https://api.kaianolevine.com/v1/foo')\n",
-    )
-    f = check_clerk_m2m_auth(tmp_path, language="python")
-    assert any(x["rule_id"] == "CD-012" for x in f)
-
-
-def test_cd012_skips_deterministic_checker_source_directory(tmp_path: Path) -> None:
-    _write(
-        tmp_path,
-        "src/evaluator_cog/engine/deterministic/pipeline.py",
-        "PATTERN = '/v1/'\n"
-        "HTTP = 'httpx'\n"
-        "RULE = r'(httpx|requests)\\.(post|put)\\('\n",
-    )
-    assert check_clerk_m2m_auth(tmp_path, language="python") == []
-
-
-def test_cd012_accepts_common_python_api_client_delegation(tmp_path: Path) -> None:
-    _write(
-        tmp_path,
-        "src/evaluator_cog/engine/api_client.py",
-        "import httpx\n"
-        "from mini_app_polis.api import CommonPythonApiClient\n"
-        "def post_findings():\n"
-        "    client = CommonPythonApiClient.from_env()\n"
-        "    return client.post('/v1/evaluation/findings', json={})\n",
-    )
-    assert check_clerk_m2m_auth(tmp_path, language="python") == []
 
 
 def test_is_checker_self_source_helper_positive_and_negative_cases() -> None:

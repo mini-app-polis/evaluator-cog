@@ -32,7 +32,6 @@ from evaluator_cog.engine.deterministic.api import (
 from evaluator_cog.engine.deterministic.auth import (
     check_auth_header_parity,
     check_clerk_auth_dep,
-    check_clerk_m2m_auth,
     check_unauthenticated_routes,
 )
 from evaluator_cog.engine.deterministic.config import (
@@ -59,7 +58,6 @@ from evaluator_cog.engine.deterministic.delivery import (
 )
 from evaluator_cog.engine.deterministic.docs import (
     check_adrs_present,
-    check_auth_py_docstring,
     check_changelog,
     check_env_example,
     check_fastapi_route_docs,
@@ -154,12 +152,10 @@ __all__ = [
     "check_astro_runtime_queries",
     "check_async_sqlalchemy",
     "check_auth_header_parity",
-    "check_auth_py_docstring",
     "check_breaking_change_footer",
     "check_changelog",
     "check_ci",
     "check_clerk_auth_dep",
-    "check_clerk_m2m_auth",
     "check_cloudflare_pages_deploy",
     "check_common_python_utils_dep",
     "check_conventional_commits",

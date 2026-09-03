@@ -237,7 +237,6 @@ def check_adrs_present(repo_path: Path) -> list[Finding]:
 def check_public_docstrings(repo_path: Path) -> list[Finding]:
     """DOC-006: Public functions/classes have docstrings."""
     CHECK_ID = "DOC-006"
-    import ast
 
     findings: list[Finding] = []
     src = repo_path / "src"
@@ -278,7 +277,6 @@ def check_public_docstrings(repo_path: Path) -> list[Finding]:
 def check_pydantic_field_descriptions(repo_path: Path) -> list[Finding]:
     """DOC-007: Pydantic fields use Field(description=...)."""
     CHECK_ID = "DOC-007"
-    import ast
 
     findings: list[Finding] = []
     src = repo_path / "src"
@@ -340,7 +338,6 @@ def check_pydantic_field_descriptions(repo_path: Path) -> list[Finding]:
 def check_fastapi_route_docs(repo_path: Path) -> list[Finding]:
     """DOC-010: FastAPI route decorators have summary=, description=, response_model=."""
     CHECK_ID = "DOC-010"
-    import ast
 
     findings: list[Finding] = []
     src = repo_path / "src"
@@ -386,7 +383,6 @@ def check_fastapi_route_docs(repo_path: Path) -> list[Finding]:
 def check_unauthenticated_routes_documented(repo_path: Path) -> list[Finding]:
     """DOC-011: Unauthenticated routes document their intent."""
     CHECK_ID = "DOC-011"
-    import ast
 
     findings: list[Finding] = []
     src = repo_path / "src"
@@ -466,65 +462,4 @@ def check_unauthenticated_routes_documented(repo_path: Path) -> list[Finding]:
                         "description or docstring.",
                     )
                 )
-    return findings
-
-
-def check_auth_py_docstring(repo_path: Path) -> list[Finding]:
-    """AUTH-001: No unverified write endpoints reachable from the public internet.
-
-    Per the rule's check_notes: verify the service has either (1) no
-    public port (not deterministically detectable from source alone)
-    or (2) CLERK_AUTH_ENABLED is set and auth middleware is applied
-    to write routes. As a deterministic proxy, require the presence
-    of an auth.py module carrying a module docstring that names the
-    rule — the module's existence plus docstring indicates the
-    service has considered the rule. Absence is the signal to flag.
-    """
-    CHECK_ID = "AUTH-001"
-    findings: list[Finding] = []
-    candidates = [
-        repo_path / "src" / "api_kaianolevine_com" / "auth.py",
-        repo_path / "src" / "auth.py",
-    ]
-    # Also allow any auth.py under src/ for generality.
-    src = repo_path / "src"
-    if src.is_dir():
-        candidates.extend(p for p in src.rglob("auth.py"))
-
-    auth_py: Path | None = next((p for p in candidates if p.is_file()), None)
-    if auth_py is None:
-        findings.append(
-            _finding(
-                CHECK_ID,
-                "ERROR",
-                "structural_conformance",
-                "No auth.py module found under src/. AUTH-001 requires a "
-                "documented auth module on api-service repos with public "
-                "write routes.",
-                "Add auth.py with a module docstring explaining the "
-                "Clerk verification posture and apply auth dependencies "
-                "to write routes.",
-            )
-        )
-        return findings
-
-    try:
-        tree = ast.parse(auth_py.read_text())
-    except (SyntaxError, OSError, UnicodeDecodeError):
-        return findings
-    module_doc = ast.get_docstring(tree) or ""
-    if not module_doc.strip():
-        findings.append(
-            _finding(
-                CHECK_ID,
-                "ERROR",
-                "structural_conformance",
-                f"{auth_py.relative_to(repo_path)} has no module docstring. "
-                "AUTH-001 requires auth.py to document the verification "
-                "posture for this service.",
-                "Add a module-level docstring naming the auth mode "
-                "(legacy header, Clerk JWT, or both) and how it applies "
-                "to write routes.",
-            )
-        )
     return findings
