@@ -440,20 +440,28 @@ def test_run_standalone_deterministic_calls_load_evaluator_config(
 
     mock_load.assert_called()
     assert mock_load.call_args_list[0][0][0] == tmp_path
-    mock_run_all.assert_called_once_with(
-        tmp_path,
-        language="python",
-        service_type="worker",
-        dod_type="new_cog",
-        cog_subtype=None,
-        check_exceptions=[],
-        exception_reasons={},
-        monorepo_root=None,
-        workspace_package_json_text=None,
-        evaluator_config=cfg,
-        rule_catalog=None,
-        catalog_schema=None,
-    )
+    mock_run_all.assert_called_once()
+    call_args, call_kwargs = mock_run_all.call_args
+    assert call_args == (tmp_path,)
+    # `progress` is a closure over the run's logger, so it is compared by
+    # kind rather than by value — asserting it is passed at all is the
+    # point: without it a check that stalls has nothing to name it, which
+    # is how a 129-second CD-005 hid behind one log line for nine minutes.
+    progress = call_kwargs.pop("progress", None)
+    assert callable(progress), "run_all_checks must receive a progress sink"
+    assert call_kwargs == {
+        "language": "python",
+        "service_type": "worker",
+        "dod_type": "new_cog",
+        "cog_subtype": None,
+        "check_exceptions": [],
+        "exception_reasons": {},
+        "monorepo_root": None,
+        "workspace_package_json_text": None,
+        "evaluator_config": cfg,
+        "rule_catalog": None,
+        "catalog_schema": None,
+    }
     # run_all_checks returns empty findings, so _run_standalone_deterministic
     # substitutes a STATUS SUCCESS finding before posting.
     mock_post.assert_called_once_with(

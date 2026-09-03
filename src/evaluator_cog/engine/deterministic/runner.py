@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic._shared import (
@@ -201,6 +203,12 @@ def _type_to_dod(repo_type: str, language: str = "python") -> str | None:
     return mapping.get(repo_type)
 
 
+# A single check slower than this is worth naming in the log. Most run
+# in well under a tenth of a second; anything at this scale is either
+# doing network I/O or scanning quadratically.
+SLOW_CHECK_SECONDS = 2.0
+
+
 def run_all_checks(
     repo_path: Path,
     language: str = "python",
@@ -214,12 +222,21 @@ def run_all_checks(
     evaluator_config: EvaluatorConfig | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> CheckResult:
     """Run deterministic checks against a repo and return combined findings.
 
     When evaluator_config is provided (from the repo's evaluator.yaml), it
     takes precedence over the legacy dod_type/service_type/check_exceptions
     parameters for type-based branching and exception scoping.
+
+    `progress` is an optional sink for operational notes — currently, any
+    single check that runs longer than SLOW_CHECK_SECONDS. Roughly ninety
+    checks run per repo behind one "processing <repo>" log line, so when
+    one of them stalls there is nothing to say which. A CD-005 that took
+    129 seconds on this repo was invisible for exactly that reason: the
+    flow looked hung for nine minutes and the log had nothing between
+    "processing evaluator-cog" and the next repo.
     """
     # ── Resolve type-based flags ─────────────────────────────────────────────
     # Prefer evaluator_config (from evaluator.yaml) over legacy dod_type fields.
@@ -353,7 +370,11 @@ def run_all_checks(
             deferral_expired_on = result.deferral_expired_on
 
         try:
+            _started = time.monotonic()
             new_findings = check_fn(repo_path)
+            _elapsed = time.monotonic() - _started
+            if progress is not None and _elapsed >= SLOW_CHECK_SECONDS:
+                progress(f"{rule_id} took {_elapsed:.1f}s")
             for f in new_findings:
                 if is_deferred:
                     f["severity"] = "INFO"

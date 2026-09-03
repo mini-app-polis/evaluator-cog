@@ -743,3 +743,77 @@ def test_test011_still_flags_a_real_mock_with_no_assertion(
     findings = check_mock_assertions(tmp_path)
     assert len(findings) == 1
     assert findings[0]["rule_id"] == "TEST-011"
+
+
+# --- slow-check reporting ----------------------------------------------------
+
+
+def test_is_inside_string_literal_is_linear_not_quadratic() -> None:
+    """The regression test for a 129-second check.
+
+    `_is_inside_string_literal` asked "is this constant a dict key?" per
+    constant, and each answer re-walked the whole tree. CD-005
+    concatenates every file under src/ into one string and asked twice,
+    so the cost grew with the square of the repo. evaluator-cog's own
+    source doubling turned it into 129 seconds of a 138-second run.
+
+    Timing is a poor test, so this measures shape instead: doubling the
+    input must not much more than double the work. A quadratic
+    implementation lands near 4x; the bound here is deliberately loose
+    so a slow machine cannot fail it, while still catching n^2.
+    """
+    import time
+
+    from evaluator_cog.engine.deterministic._shared import _is_inside_string_literal
+
+    unit = 'X = {"k": "needle"}\nY = "needle"\nZ = [1, 2, 3]\n'
+
+    def elapsed(repeats: int) -> float:
+        source = unit * repeats
+        start = time.perf_counter()
+        _is_inside_string_literal(source, "needle")
+        return time.perf_counter() - start
+
+    elapsed(200)  # warm any import-time cost
+    small = elapsed(400)
+    large = elapsed(800)
+    assert large < small * 3 + 0.05, (
+        f"doubling the input multiplied the work by {large / max(small, 1e-9):.1f}x "
+        "— _is_inside_string_literal looks quadratic again"
+    )
+
+
+def test_dict_key_constants_are_still_excluded() -> None:
+    """The optimisation must not change the answer.
+
+    A dict key is real usage, not a quoted pattern, so a needle that
+    appears only as a key is NOT 'inside a string literal'.
+    """
+    from evaluator_cog.engine.deterministic._shared import _is_inside_string_literal
+
+    assert _is_inside_string_literal('PATTERN = "needle"\n', "needle") is True
+    assert _is_inside_string_literal('H = {"needle": "x"}\n', "needle") is False
+
+
+def test_run_all_checks_reports_a_slow_check(tmp_path: Path) -> None:
+    """A check slower than the threshold names itself in the progress sink."""
+    import time as _time
+
+    from evaluator_cog.engine.deterministic import runner as runner_mod
+
+    notes: list[str] = []
+    (tmp_path / "src").mkdir()
+
+    original = runner_mod.check_readme
+
+    def slow(*args, **kwargs):
+        _time.sleep(runner_mod.SLOW_CHECK_SECONDS + 0.05)
+        return []
+
+    runner_mod.check_readme = slow
+    try:
+        runner_mod.run_all_checks(tmp_path, progress=notes.append)
+    finally:
+        runner_mod.check_readme = original
+
+    assert any("took" in n for n in notes), f"no slow-check note emitted: {notes}"

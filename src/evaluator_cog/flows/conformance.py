@@ -27,6 +27,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import zipfile
 from contextlib import suppress
 from pathlib import Path
@@ -893,6 +894,7 @@ def _run_standalone_deterministic(
         "deterministic: %s using config from %s", repo_id, evaluator_cfg.source
     )
 
+    _repo_started = time.monotonic()
     try:
         result = run_all_checks(
             repo_path,
@@ -907,9 +909,17 @@ def _run_standalone_deterministic(
             evaluator_config=evaluator_cfg,
             rule_catalog=rule_catalog,
             catalog_schema=catalog_schema,
+            progress=lambda note: prefect_log.info(
+                "deterministic: %s: %s", repo_id, note
+            ),
         )
         findings = result.findings
-        prefect_log.info("deterministic: %d findings for %s", len(findings), repo_id)
+        prefect_log.info(
+            "deterministic: %d findings for %s (%.1fs)",
+            len(findings),
+            repo_id,
+            time.monotonic() - _repo_started,
+        )
     except Exception as exc:
         prefect_log.warning(
             "deterministic: run_all_checks failed for %s: %s", repo_id, exc

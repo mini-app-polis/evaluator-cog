@@ -41,12 +41,34 @@ def _finding(
     }
 
 
-def _ast_constant_is_dict_key(const: ast.Constant, tree: ast.AST) -> bool:
-    """True if this Constant is the key expression of a dict display."""
+def _dict_key_constant_ids(tree: ast.AST) -> set[int]:
+    """ids of every Constant used as a key in a dict display.
+
+    Collected in one walk. The previous shape asked the question per
+    constant — ``_ast_constant_is_dict_key(const, tree)`` re-walked the
+    whole tree for each one — which made the caller below O(n^2) in AST
+    nodes. On evaluator-cog that cost 129 seconds of a 138-second run,
+    because CD-005 concatenates every file under ``src/`` into one
+    string and asks twice, and this repo's own source doubled in size.
+    One walk up front, then a set lookup, is O(n).
+    """
+    keys: set[int] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Dict) and const in node.keys:
-            return True
-    return False
+        if isinstance(node, ast.Dict):
+            for key in node.keys:
+                if key is not None:
+                    keys.add(id(key))
+    return keys
+
+
+def _ast_constant_is_dict_key(const: ast.Constant, tree: ast.AST) -> bool:
+    """True if this Constant is the key expression of a dict display.
+
+    Retained for callers outside this module; prefer
+    :func:`_dict_key_constant_ids` when testing more than one constant
+    against the same tree.
+    """
+    return id(const) in _dict_key_constant_ids(tree)
 
 
 def _is_inside_string_literal(source: str, match_substring: str) -> bool:
@@ -81,11 +103,12 @@ def _is_inside_string_literal(source: str, match_substring: str) -> bool:
         tree = ast.parse(source)
     except SyntaxError:
         return False
+    dict_key_ids = _dict_key_constant_ids(tree)
     literal_hits = 0
     for node in ast.walk(tree):
         if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
             continue
-        if _ast_constant_is_dict_key(node, tree):
+        if id(node) in dict_key_ids:
             continue
         literal_hits += node.value.count(match_substring)
     total_hits = source.count(match_substring)
