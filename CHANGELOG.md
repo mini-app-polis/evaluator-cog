@@ -1,3 +1,12 @@
+## [3.16.7](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.6...v3.16.7) (2026-09-03)
+
+
+### Bug Fixes
+
+* **auth-004:** read audit fields from the record builder ([2856ce1](https://github.com/mini-app-polis/evaluator-cog/commit/2856ce171fdc410ceffe6ebb811aafee5e00a914))
+* **cd-020:** a failed uv is not a stale lockfile ([fa7b18f](https://github.com/mini-app-polis/evaluator-cog/commit/fa7b18fc87847ff9e027c5bc13e3e46c888f6d79))
+* **doc-006:** a closure is not public API ([39f6fd6](https://github.com/mini-app-polis/evaluator-cog/commit/39f6fd6aa73ca0455fcf8a45a1b40c32540fd0a6))
+
 ## [3.16.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.5...v3.16.6) (2026-09-03)
 
 
