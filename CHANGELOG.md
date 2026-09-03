@@ -1,3 +1,10 @@
+## [3.16.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.4...v3.16.5) (2026-09-03)
+
+
+### Performance Improvements
+
+* **checks:** make _is_inside_string_literal linear, and report slow checks ([3e4774b](https://github.com/mini-app-polis/evaluator-cog/commit/3e4774ba87411fb3f06493de6c17e1253e974229))
+
 ## [3.16.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.3...v3.16.4) (2026-09-03)
 
 
