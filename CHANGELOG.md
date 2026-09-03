@@ -1,3 +1,10 @@
+## [3.16.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.0...v3.16.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **auth:** drop the unauthenticated read path CD-019 found ([20f82da](https://github.com/mini-app-polis/evaluator-cog/commit/20f82daef6c698df1461690d320603f8c7bb53ab))
+
 # [3.16.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.15.2...v3.16.0) (2026-09-03)
 
 
