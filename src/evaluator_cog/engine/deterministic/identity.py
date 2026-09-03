@@ -1254,17 +1254,30 @@ def _auth004_clause3(
 ) -> list[Finding]:
     """(3) The audit record carries all five fields.
 
-    Fields are read from the emit call's keyword arguments and from the
-    keys of any dict literal passed to it, which covers both
-    ``emit_audit(principal=..., scope=...)`` and
-    ``emit_audit({"principal": ...})``.
+    Fields are read from the keyword arguments of the emit call *and of
+    every call nested inside it*, plus the keys of any dict literal
+    passed along. That covers the three shapes the record is built in:
+
+        emit_audit(principal=..., scope=...)
+        emit_audit({"principal": ...})
+        emit_audit(new_audit_event(principal=..., scope=...))
+
+    The third is the one api-kaianolevine-com actually uses, and reading
+    only the top-level call's keywords missed it entirely: the sole
+    argument is positional, so `provided` came back empty and the check
+    reported "fields present: none" against a guard that passes all
+    five. An ERROR asserting the audit trail is broken, on a service
+    whose audit trail is correct, is worse than no check — it teaches a
+    reader to discount the rule.
     """
     findings: list[Finding] = []
     for f, fn in guards:
         for call in _audit_calls(fn):
-            provided = {kw.arg for kw in call.keywords if kw.arg}
+            provided: set[str] = set()
             for node in ast.walk(call):
-                if isinstance(node, ast.Dict):
+                if isinstance(node, ast.Call):
+                    provided.update(kw.arg for kw in node.keywords if kw.arg)
+                elif isinstance(node, ast.Dict):
                     for key in node.keys:
                         if isinstance(key, ast.Constant) and isinstance(key.value, str):
                             provided.add(key.value)

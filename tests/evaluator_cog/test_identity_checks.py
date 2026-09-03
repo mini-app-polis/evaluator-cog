@@ -1320,3 +1320,90 @@ def test_auth003_still_calls_an_unguarded_route_public(tmp_path: Path) -> None:
         "r.py",
     )
     assert [r.classify() for r in routes] == ["public"]
+
+
+def test_auth004_reads_fields_from_the_record_builder(tmp_path: Path) -> None:
+    """`emit_audit(new_audit_event(...))` is the shape actually shipped.
+
+    Reading only the emit call's own keywords found nothing — the sole
+    argument is positional — and the check reported "fields present:
+    none" against a guard passing all five. An ERROR claiming the audit
+    trail is broken, on a service whose audit trail is correct, is worse
+    than no check at all.
+    """
+    _write(
+        tmp_path,
+        "src/pkg/auth.py",
+        "from identity.policy import authorize\n"
+        "from identity.store import SqlAlchemyPrincipalStore, SqlAlchemyAuditSink\n"
+        "\n"
+        "def require_scope(scope):\n"
+        "    async def _dependency(request, authorization, session):\n"
+        "        decision = decide(principal, scope, roles)\n"
+        "        await sink.emit_audit(\n"
+        "            new_audit_event(\n"
+        "                enforcement_point=ENFORCEMENT_POINT,\n"
+        "                scope=scope,\n"
+        "                allowed=decision.allowed,\n"
+        "                reason=decision.reason,\n"
+        "                principal=principal,\n"
+        "            )\n"
+        "        )\n"
+        "        if not decision.allowed:\n"
+        "            raise api_error(403, 'forbidden', 'no')\n"
+        "        return principal\n"
+        "    return _dependency\n",
+    )
+    # AUTH-004 returns early on a repo with no enumerable routes, so the
+    # fixture needs one — without it both assertions below pass
+    # vacuously, which is how the first draft of this test "proved" a
+    # fix it never exercised.
+    _write(
+        tmp_path,
+        "src/pkg/routers/notes.py",
+        "from fastapi import APIRouter, Depends\n"
+        "router = APIRouter()\n"
+        "\n"
+        "@router.get('/notes')\n"
+        "def notes(p = Depends(require_scope('wcs.notes.read'))): ...\n",
+    )
+    findings = check_auth_004(tmp_path)
+    clause3 = [f for f in findings if "AUTH-004 (3)" in f["finding"]]
+    assert clause3 == [], f"fields in the builder were not read: {clause3}"
+
+
+def test_auth004_still_flags_a_record_missing_fields(tmp_path: Path) -> None:
+    """The true positive must survive: a builder short of the five."""
+    _write(
+        tmp_path,
+        "src/pkg/auth.py",
+        "from identity.policy import authorize\n"
+        "from identity.store import SqlAlchemyPrincipalStore, SqlAlchemyAuditSink\n"
+        "\n"
+        "def require_scope(scope):\n"
+        "    async def _dependency(request, authorization, session):\n"
+        "        decision = decide(principal, scope, roles)\n"
+        "        await sink.emit_audit(new_audit_event(scope=scope))\n"
+        "        if not decision.allowed:\n"
+        "            raise api_error(403, 'forbidden', 'no')\n"
+        "        return principal\n"
+        "    return _dependency\n",
+    )
+    # AUTH-004 returns early on a repo with no enumerable routes, so the
+    # fixture needs one — without it both assertions below pass
+    # vacuously, which is how the first draft of this test "proved" a
+    # fix it never exercised.
+    _write(
+        tmp_path,
+        "src/pkg/routers/notes.py",
+        "from fastapi import APIRouter, Depends\n"
+        "router = APIRouter()\n"
+        "\n"
+        "@router.get('/notes')\n"
+        "def notes(p = Depends(require_scope('wcs.notes.read'))): ...\n",
+    )
+    findings = check_auth_004(tmp_path)
+    clause3 = [f for f in findings if "AUTH-004 (3)" in f["finding"]]
+    assert len(clause3) == 1
+    assert "principal" in clause3[0]["finding"]
+    assert "reason" in clause3[0]["finding"]
