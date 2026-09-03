@@ -665,3 +665,81 @@ def test_cd006_malformed_workflow_yaml_does_not_raise() -> None:
         }
     )
     check_gha_not_trigger_relay(root)
+
+
+# --- TEST-011 detection fixes from the 2026-09-03 fleet run ------------------
+
+
+def _mock_repo(tmp_path: Path, body: str) -> Path:
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "test_x.py").write_text(body, encoding="utf-8")
+    return tmp_path
+
+
+def test_test011_does_not_read_the_word_patch_in_prose_as_a_mock(
+    tmp_path: Path,
+) -> None:
+    """`patch` the English noun is not `patch()` the mock.
+
+    A docstring reading "an un-taken patch release is not staleness"
+    made TEST-011 fire on a test that verifies its result with a plain
+    assert. `patch` counts only where it is called or attribute-accessed.
+    """
+    from evaluator_cog.engine.deterministic import check_mock_assertions
+
+    _mock_repo(
+        tmp_path,
+        "def _helper():\n"
+        "    return []\n"
+        "\n"
+        "def test_patch_behind_is_not_flagged() -> None:\n"
+        '    """Compare minors only — an un-taken patch release is not stale."""\n'
+        "    assert _helper() == []\n",
+    )
+    assert check_mock_assertions(tmp_path) == []
+
+
+def test_test011_ignores_mock_machinery_quoted_as_fixture_text(
+    tmp_path: Path,
+) -> None:
+    """A checker's fixtures quote the patterns it hunts for.
+
+    `_write(tmp_path, "t.py", "from unittest.mock import patch\\n...")`
+    hands a string to the code under test; it does not create a mock.
+    This is the CD-012 self-scan defect in another costume.
+    """
+    from evaluator_cog.engine.deterministic import check_mock_assertions
+
+    fixture = "\n".join(
+        [
+            "def test_checker_flags_the_fixture(tmp_path) -> None:",
+            "    source = (",
+            '        "from unittest.mock import patch" "\\n"',
+            '        "with patch(x):" "\\n"',
+            "    )",
+            '    (tmp_path / "f.py").write_text(source)',
+            "    assert source",
+            "",
+        ]
+    )
+    _mock_repo(tmp_path, fixture)
+    assert check_mock_assertions(tmp_path) == []
+
+
+def test_test011_still_flags_a_real_mock_with_no_assertion(
+    tmp_path: Path,
+) -> None:
+    """The true positive must survive both fixes."""
+    from evaluator_cog.engine.deterministic import check_mock_assertions
+
+    _mock_repo(
+        tmp_path,
+        "from unittest.mock import MagicMock\n"
+        "\n"
+        "def test_does_something() -> None:\n"
+        "    thing = MagicMock()\n"
+        "    do_work(thing)\n",
+    )
+    findings = check_mock_assertions(tmp_path)
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "TEST-011"

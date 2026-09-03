@@ -1121,3 +1121,202 @@ def test_checks_never_raise_on_unparseable_or_absent_sources(tmp_path: Path) -> 
     assert check_auth_003(empty) == []
     assert check_auth_004(empty) == []
     assert check_cd_019(empty) == []
+
+
+# --- CD-019 detection fixes from the 2026-09-03 fleet run --------------------
+#
+# The first live fleet run put ~40 false CD-019 ERRORs on
+# api-kaianolevine-com and one on its Turnstile helper. All three
+# fixtures below are reduced from the code that actually triggered them.
+
+
+_TESTCLIENT_FIXTURE = """
+from fastapi.testclient import TestClient
+from kaianolevine_api.main import app
+
+client = TestClient(app)
+
+
+def test_contact_accepts_a_valid_body():
+    r = client.post(
+        "/v1/contact",
+        json={"name": "x"},
+        headers={"origin": "https://kaianolevine.com"},
+    )
+    assert r.status_code == 200
+
+
+def test_evaluations_lists_for_a_repo():
+    r = client.get(
+        "/v1/evaluations",
+        params={"repo": "api-kaianolevine-com", "limit": 50, "offset": 0},
+    )
+    assert r.status_code == 200
+"""
+
+
+def test_cd019_ignores_fastapi_testclient_calls(tmp_path: Path) -> None:
+    """A TestClient call is not an outbound ecosystem call.
+
+    `client.post("/v1/contact", ...)` exercises the app in process —
+    no HTTP, no credential, nothing to attribute. Two separate defects
+    made this fire: clause (1) never filtered test modules, and the
+    ecosystem hint was matched against the whole unparsed call, so the
+    `origin` header and the `repo` value inside the JSON payload each
+    matched on the substring "kaianolevine".
+    """
+    _write(tmp_path, "tests/test_contact.py", _TESTCLIENT_FIXTURE)
+    findings = check_cd_019(tmp_path, repo_type="api-service")
+    clause1 = [f for f in findings if "CD-019 (1)" in f["finding"]]
+    assert clause1 == [], f"clause (1) fired on a TestClient call: {clause1}"
+
+
+def test_cd019_still_flags_a_real_unnamed_client_in_src(tmp_path: Path) -> None:
+    """The fix must not silence the true positive it sits next to.
+
+    deejay-cog's `KaianoApiClient(base_url or "")` is exactly the case
+    clause (1) exists for, and it is in src/, not tests/.
+    """
+    _write(
+        tmp_path,
+        "src/pkg/ingest_to_api.py",
+        "from mini_app_polis.api import KaianoApiClient\n"
+        "def send(base_url):\n"
+        "    client = KaianoApiClient(base_url or '')\n"
+        "    return client.post('/v1/sets', {})\n",
+    )
+    findings = check_cd_019(tmp_path, repo_type="pipeline-cog")
+    assert any("CD-019 (1)" in f["finding"] for f in findings)
+
+
+def test_cd019_matches_the_ecosystem_hint_on_the_url_not_the_payload(
+    tmp_path: Path,
+) -> None:
+    """A payload mentioning the ecosystem is not a call to it."""
+    _write(
+        tmp_path,
+        "src/pkg/reporter.py",
+        "import httpx\n"
+        "def send():\n"
+        "    return httpx.post(\n"
+        "        'https://hooks.slack.com/services/x',\n"
+        "        json={'repo': 'api-kaianolevine-com'},\n"
+        "    )\n",
+    )
+    findings = check_cd_019(tmp_path, repo_type="pipeline-cog")
+    assert [f for f in findings if "CD-019 (1)" in f["finding"]] == []
+
+
+def test_cd019_clause7_ignores_a_captcha_check(tmp_path: Path) -> None:
+    """Turnstile is a bot check on a public form, not credential verification.
+
+    `_verify_turnstile()` posts to challenges.cloudflare.com. A
+    third-party challenge is remote by construction, so clause (7)'s
+    "verification is local" says nothing about it. Matching on the name
+    alone flagged it.
+    """
+    _write(
+        tmp_path,
+        "src/pkg/routers/contact.py",
+        "import httpx\n"
+        "async def _verify_turnstile(response: str, settings) -> bool:\n"
+        "    data = {'secret': settings.TURNSTILE_SECRET, 'response': response}\n"
+        "    async with httpx.AsyncClient() as client:\n"
+        "        r = await client.post(\n"
+        "            'https://challenges.cloudflare.com/turnstile/v0/siteverify',\n"
+        "            data=data,\n"
+        "        )\n"
+        "    return r.json()['success']\n",
+    )
+    findings = check_cd_019(tmp_path, repo_type="api-service")
+    assert [f for f in findings if "CD-019 (7)" in f["finding"]] == []
+
+
+def test_cd019_clause7_still_flags_remote_credential_verification(
+    tmp_path: Path,
+) -> None:
+    """The true positive clause (7) exists for must still fire."""
+    _write(
+        tmp_path,
+        "src/pkg/auth.py",
+        "import httpx\n"
+        "def verify_session(authorization: str):\n"
+        "    return httpx.get(\n"
+        "        'https://api.clerk.com/v1/sessions/verify',\n"
+        "        headers={'Authorization': authorization},\n"
+        "    )\n",
+    )
+    findings = check_cd_019(tmp_path, repo_type="api-service")
+    assert any("CD-019 (7)" in f["finding"] for f in findings)
+
+
+def test_auth003_does_not_treat_a_db_session_as_a_guard(tmp_path: Path) -> None:
+    """`Depends(get_db_session)` is plumbing, not a guard.
+
+    A route injecting a database session is a *public* route that needs
+    a session — not a route whose guard cannot be read. Classifying it
+    as unresolvable put 21 false ERRORs on api-kaianolevine-com in the
+    2026-09-03 fleet run, against a route table that audits clean.
+    """
+    _write(
+        tmp_path,
+        "src/pkg/routers/catalog.py",
+        "from fastapi import APIRouter, Depends\n"
+        "router = APIRouter()\n"
+        "\n"
+        "@router.get('/catalog')\n"
+        "def list_catalog(db = Depends(get_db_session)): ...\n"
+        "\n"
+        "@router.get('/resume')\n"
+        "def get_resume(settings = Depends(get_settings)): ...\n",
+    )
+    findings = check_auth_003(tmp_path)
+    unresolved = [f for f in findings if "cannot be resolved" in f["finding"]]
+    assert unresolved == [], f"plumbing read as a guard: {unresolved}"
+
+
+def test_auth003_still_flags_an_unreadable_auth_dependency(tmp_path: Path) -> None:
+    """A dependency that might be a guard and cannot be read is still flagged."""
+    _write(
+        tmp_path,
+        "src/pkg/routers/me.py",
+        "from fastapi import APIRouter, Depends\n"
+        "router = APIRouter()\n"
+        "\n"
+        "@router.get('/me')\n"
+        "def me(user = Depends(get_current_user)): ...\n",
+    )
+    findings = check_auth_003(tmp_path)
+    assert any("cannot be resolved" in f["finding"] for f in findings)
+
+
+def test_auth003_keeps_a_scope_guard_alongside_plumbing(tmp_path: Path) -> None:
+    """A session injected next to a scope guard must not mask the guard."""
+    _write(
+        tmp_path,
+        "src/pkg/routers/notes.py",
+        "from fastapi import APIRouter, Depends\n"
+        "router = APIRouter()\n"
+        "\n"
+        "@router.get('/notes')\n"
+        "def notes(\n"
+        "    db = Depends(get_db_session),\n"
+        "    p = Depends(require_scope('wcs.notes.read')),\n"
+        "): ...\n",
+    )
+    findings = check_auth_003(tmp_path)
+    assert [f for f in findings if "cannot be resolved" in f["finding"]] == []
+
+
+def test_auth003_still_calls_an_unguarded_route_public(tmp_path: Path) -> None:
+    """Plumbing-only routes stay public — API-008's question, not this one's."""
+    from evaluator_cog.engine.deterministic._routes import enumerate_routes_in_source
+
+    routes = enumerate_routes_in_source(
+        "from fastapi import APIRouter, Depends\n"
+        "router = APIRouter()\n"
+        "@router.get('/x')\n"
+        "def x(db = Depends(get_db_session)): ...\n",
+        "r.py",
+    )
+    assert [r.classify() for r in routes] == ["public"]

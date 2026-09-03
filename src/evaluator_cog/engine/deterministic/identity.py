@@ -1714,6 +1714,25 @@ def _clerk_secret_violations(f: _PyFile) -> list[tuple[int, str]]:
     return out
 
 
+def _url_argument(node: ast.Call) -> str:
+    """The URL expression of an HTTP call — first positional, or ``url=``.
+
+    Matching the ecosystem hint against the *whole* unparsed call was a
+    defect: ``client.post("/v1/contact", headers={"origin":
+    "https://kaianolevine.com"})`` matched on the origin header, and
+    ``client.post("/v1/evaluations", json={"repo":
+    "api-kaianolevine-com"})`` matched on a value inside the payload.
+    Neither is a call to an ecosystem API — the hint has to be tested
+    against the destination, not against everything the request carries.
+    """
+    if node.args:
+        return _unparse(node.args[0])
+    for kw in node.keywords:
+        if kw.arg in {"url", "path"}:
+            return _unparse(kw.value)
+    return ""
+
+
 def _ecosystem_client_sites(
     files: list[_PyFile],
 ) -> tuple[list[tuple[str, int, str]], set[str], bool]:
@@ -1723,12 +1742,22 @@ def _ecosystem_client_sites(
     or to its ``from_env`` classmethod — rather than by matching a URL,
     for the same reason routes are enumerated by registration: the base
     URL is configuration and often never appears as a literal.
+
+    Test modules are excluded. A ``client.post("/v1/contact", ...)`` in a
+    service's own test suite is a FastAPI ``TestClient`` exercising the
+    app in process — no HTTP, no credential, nothing to attribute — and
+    reading it as an unattributed ecosystem call put dozens of false
+    ERRORs on api-kaianolevine-com in the 2026-09-03 fleet run. Clauses
+    (5)-(9) already filtered tests; clause (1) did not, and this is
+    where that belongs so every caller of this helper inherits it.
     """
     constructions: list[tuple[str, int, str]] = []
     machine_names: set[str] = set()
     outbound = False
 
     for f in files:
+        if f.is_test:
+            continue
         for node in ast.walk(f.tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -1764,8 +1793,8 @@ def _ecosystem_client_sites(
                 constructions.append((f.rel, node.lineno, _unparse(node)))
                 continue
             if _looks_like_http_call(node):
-                text = _unparse(node)
-                if any(hint in text for hint in _ECOSYSTEM_URL_HINTS):
+                target = _url_argument(node)
+                if any(hint in target for hint in _ECOSYSTEM_URL_HINTS):
                     outbound = True
                     constructions.append((f.rel, node.lineno, _unparse(node)))
     return constructions, machine_names, outbound
@@ -2079,14 +2108,71 @@ def _in_identity_library(f: _PyFile) -> bool:
     return "/identity/" in f"/{norm}" or norm.startswith("identity/")
 
 
+# Vocabulary that marks a function as handling the caller's credential.
+# Deliberately excludes bare "token" and "secret" — a CAPTCHA response is
+# a token and a webhook signing key is a secret.
+_CREDENTIAL_VOCAB = (
+    "authorization",
+    "bearer",
+    "jwks",
+    "jwt",
+    "clerk",
+    "api_key",
+    "apikey",
+    "principal",
+    "machine_key",
+    "machine_name",
+    "issuer",
+    "access_token",
+    "id_token",
+    "session_token",
+    "credential",
+)
+
+
+def _handles_caller_credential(fn: ast.AST) -> bool:
+    """True when a function's body names the caller-credential vocabulary."""
+    haystack = (
+        [fn.name.lower()]
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+        else []
+    )
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Name):
+            haystack.append(node.id.lower())
+        elif isinstance(node, ast.Attribute):
+            haystack.append(node.attr.lower())
+        elif isinstance(node, ast.arg):
+            haystack.append(node.arg.lower())
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            haystack.append(node.value.lower())
+    blob = " ".join(haystack)
+    return any(word in blob for word in _CREDENTIAL_VOCAB)
+
+
 def _verification_functions(
     files: list[_PyFile],
 ) -> list[tuple[_PyFile, ast.FunctionDef | ast.AsyncFunctionDef]]:
-    """Functions on the credential path.
+    """Functions on the **caller-credential** path.
 
-    Recognised by name — ``verify_*``, ``authenticate``, ``resolve_principal``,
-    ``get_principal`` — because that is the vocabulary the contract uses
-    for the first two of its four functions.
+    Named like the contract's first two functions — ``verify_*``,
+    ``authenticate``, ``resolve_principal``, ``get_principal`` — *and*
+    actually handling a caller credential.
+
+    The second condition is load-bearing. Name alone matched
+    ``_verify_turnstile()`` in api-kaianolevine-com, which posts a
+    Cloudflare Turnstile response to ``challenges.cloudflare.com`` from
+    a contact form. That is a bot check on a public form, not
+    verification of the caller's identity, so clause (7)'s "verification
+    is local" has nothing to say about it — a third-party challenge is
+    remote by construction. Requiring credential vocabulary keeps the
+    clause pointed at the JWKS/Clerk/machine-key path it exists to
+    police.
+
+    The vocabulary is deliberately specific. Bare ``token`` and
+    ``secret`` are not on it: a CAPTCHA response is a token and a
+    webhook signing key is a secret, and neither is the caller
+    presenting a credential.
     """
     pattern = re.compile(
         r"^(_?verify|_?authenticate|resolve_principal|resolve_caller|get_principal|"
@@ -2098,7 +2184,7 @@ def _verification_functions(
         if _in_identity_library(f):
             continue
         for fn in _functions(f.tree):
-            if pattern.search(fn.name):
+            if pattern.search(fn.name) and _handles_caller_credential(fn):
                 out.append((f, fn))
     return out
 

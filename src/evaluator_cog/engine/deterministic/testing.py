@@ -269,8 +269,15 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
     # if it were `unittest.mock.patch(...)`. Legitimate `patch` usage is
     # either `patch(...)` on its own or `with patch(...)`, neither of
     # which is preceded by a `.`.
+    # `patch` counts only where it is actually *used* — `patch(`,
+    # `patch.object(`, `patch .` — never as a bare word. Matching the bare
+    # word read the English noun as mock creation: the docstring "an
+    # un-taken patch release is not staleness" made TEST-011 fire on a
+    # test that verifies its result with a plain assert. Same class of
+    # defect as the retired CD-012 check scanning its own detection
+    # literals — a text match where a structural one was needed.
     _mock_create_re = re.compile(
-        r"\b(?:MagicMock|AsyncMock|mock_\w+)\b|(?<!\.)\bpatch\b"
+        r"\b(?:MagicMock|AsyncMock|mock_\w+)\b|(?<!\.)\bpatch\s*[.(]"
     )
 
     # A local list binding: `name = []`, `name: Type = []`, or `name = list()`.
@@ -391,10 +398,34 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
                 if isinstance(ln, int) and ln > 0:
                     start = min(start, ln - 1)
             end = fn.end_lineno or len(lines)
-            body_src = "\n".join(lines[start:end])
-            if not body_src:
+            body_lines = list(lines[start:end])
+            # Blank the docstring before matching. It is documentation,
+            # not code, and every pattern below is a text search — prose
+            # describing what a test mocks is not the test mocking
+            # anything. Blanking rather than deleting keeps line offsets
+            # intact for anything that reports positions.
+            doc = fn.body[0] if fn.body else None
+            if (
+                isinstance(doc, ast.Expr)
+                and isinstance(doc.value, ast.Constant)
+                and isinstance(doc.value.value, str)
+            ):
+                doc_start = (doc.lineno or 1) - 1 - start
+                doc_end = (doc.end_lineno or doc.lineno or 1) - start
+                for i in range(max(doc_start, 0), min(doc_end, len(body_lines))):
+                    body_lines[i] = ""
+            body_src = "\n".join(body_lines)
+            if not body_src.strip():
                 continue
-            if not _mock_create_re.search(body_src):
+            match = _mock_create_re.search(body_src)
+            if not match:
+                continue
+            # A checker's own tests quote mock machinery as fixture text —
+            # `_write(tmp_path, "tests/t.py", "from unittest.mock import
+            # patch\n...")`. That is a string being handed to the code
+            # under test, not this test creating a mock. When every hit
+            # sits inside a string literal, there is no mock here.
+            if _is_inside_string_literal(body_src, match.group(0)):
                 continue
             if _self_reference_re.search(body_src):
                 continue

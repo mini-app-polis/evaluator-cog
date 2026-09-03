@@ -95,6 +95,70 @@ def _string_literals(node: ast.AST) -> list[str]:
     return out
 
 
+# Dependency names that are infrastructure, not guards. A route injecting
+# a database session or a settings object is not thereby authenticated —
+# it is a public route that needs a session.
+#
+# This distinction is load-bearing. Without it every route doing
+# `Depends(get_db_session)` classified as "unresolvable" and was flagged
+# as a route whose guard could not be read, which put 21 false AUTH-003
+# ERRORs on api-kaianolevine-com in the 2026-09-03 fleet run — a service
+# whose route table audits clean.
+INFRASTRUCTURE_DEP_HINTS = (
+    "db",
+    "database",
+    "session",
+    "settings",
+    "config",
+    "engine",
+    "conn",
+    "connection",
+    "pool",
+    "logger",
+    "log",
+    "cache",
+    "redis",
+    "storage",
+    "bucket",
+    "tracer",
+    "metrics",
+)
+
+# Names that mark a dependency as part of the credential path. A
+# dependency matching neither list is left unresolved and therefore
+# flagged — "I could not tell" must not resolve to "it was fine", which
+# is the failure this rule exists to catch.
+AUTH_DEP_HINTS = (
+    "auth",
+    "require",
+    "verify",
+    "current_user",
+    "current_principal",
+    "principal",
+    "scope",
+    "permission",
+    "security",
+    "caller",
+    "token",
+    "credential",
+    "guard",
+    "identity",
+    "clerk",
+)
+
+
+def _dep_kind(callee: str) -> str:
+    """'auth', 'infrastructure', or 'unknown' for a dependency callee."""
+    name = (callee or "").lower()
+    if not name:
+        return "unknown"
+    if any(hint in name for hint in AUTH_DEP_HINTS):
+        return "auth"
+    if any(hint in name for hint in INFRASTRUCTURE_DEP_HINTS):
+        return "infrastructure"
+    return "unknown"
+
+
 @dataclass
 class Dependency:
     """One guard attached to a route.
@@ -114,6 +178,18 @@ class Dependency:
     @property
     def is_scope_guard(self) -> bool:
         return bool(self.scopes)
+
+    @property
+    def kind(self) -> str:
+        """'auth', 'infrastructure' or 'unknown'."""
+        if self.scopes:
+            return "auth"
+        return _dep_kind(self.callee)
+
+    @property
+    def is_infrastructure(self) -> bool:
+        """A session/settings/logger injection is not a guard."""
+        return self.kind == "infrastructure"
 
 
 @dataclass
@@ -144,6 +220,11 @@ class Route:
         return f"{self.file}:{self.lineno} {self.func_name}() [{self.method.upper()} {shown}]"
 
     @property
+    def guard_dependencies(self) -> list[Dependency]:
+        """Dependencies that could bear on access — plumbing excluded."""
+        return [d for d in self.dependencies if not d.is_infrastructure]
+
+    @property
     def scope_dependencies(self) -> list[Dependency]:
         return [d for d in self.dependencies if d.is_scope_guard]
 
@@ -153,7 +234,7 @@ class Route:
 
     @property
     def unresolvable_dependencies(self) -> list[Dependency]:
-        return [d for d in self.dependencies if not d.resolvable]
+        return [d for d in self.guard_dependencies if not d.resolvable]
 
     def classify(self) -> str:
         """One of 'scope-guarded', 'authenticated-only', 'public', 'unresolvable'.
@@ -168,7 +249,7 @@ class Route:
             return "scope-guarded"
         if self.unresolvable_dependencies:
             return "unresolvable"
-        if self.dependencies:
+        if self.guard_dependencies:
             return "authenticated-only"
         return "public"
 
