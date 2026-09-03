@@ -588,13 +588,33 @@ def test_sec005_flags_workflows_with_neither(tmp_path: Path) -> None:
 # --- SEC-006 -----------------------------------------------------------------
 
 
-_SEVERITIES_BLOCK = (
+# The CVSS vocabulary SEC-006 validates deadline names against.
+#
+# Note what this fixture deliberately does NOT contain: a `severities:`
+# block naming HIGH. The original fixtures invented one, which is why
+# SEC-006's tests passed against a catalog shape that does not exist —
+# the real `severities:` block is the conformance scale (ERROR, WARN,
+# INFO) and has no HIGH, so the rule was green in tests and impossible
+# in production. Fixtures that describe a catalog the catalog does not
+# have will hide exactly this class of bug.
+_VULN_SEVERITIES_BLOCK = (
+    "vulnerability_severities:\n"
+    "  CRITICAL: CVSS 9.0-10.0.\n"
+    "  HIGH: CVSS 7.0-8.9.\n"
+    "  MEDIUM: CVSS 4.0-6.9.\n"
+    "  LOW: CVSS 0.1-3.9.\n"
+)
+
+# The conformance-finding scale, as index.yaml actually declares it —
+# present in these fixtures precisely so the tests prove SEC-006 ignores
+# it.
+_FINDING_SEVERITIES_BLOCK = (
     "severities:\n"
     "  CRITICAL: System-level failure.\n"
-    "  HIGH: Serious but not system-level.\n"
     "  ERROR: Requires remediation.\n"
     "  WARN: Remediation recommended.\n"
     "  INFO: Observation worth noting.\n"
+    "  SUCCESS: Clean-run completion.\n"
 )
 
 
@@ -609,7 +629,7 @@ def test_sec006_passes_with_declared_deadlines(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "index.yaml",
-        _SEVERITIES_BLOCK + "vulnerability_response:\n"
+        _VULN_SEVERITIES_BLOCK + "vulnerability_response:\n"
         "  deadlines:\n"
         "    CRITICAL: 7\n"
         "    HIGH: 30\n",
@@ -618,7 +638,7 @@ def test_sec006_passes_with_declared_deadlines(tmp_path: Path) -> None:
 
 
 def test_sec006_flags_missing_vulnerability_response(tmp_path: Path) -> None:
-    _write(tmp_path, "index.yaml", _SEVERITIES_BLOCK)
+    _write(tmp_path, "index.yaml", _VULN_SEVERITIES_BLOCK)
     f = check_sec_006(tmp_path)
     assert len(_ids(f, "SEC-006")) == 1
     assert "vulnerability_response" in f[0]["finding"]
@@ -628,7 +648,8 @@ def test_sec006_flags_missing_deadlines_block(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "index.yaml",
-        _SEVERITIES_BLOCK + "vulnerability_response:\n  measured_from: scan date\n",
+        _VULN_SEVERITIES_BLOCK
+        + "vulnerability_response:\n  measured_from: scan date\n",
     )
     f = check_sec_006(tmp_path)
     assert len(_ids(f, "SEC-006")) == 1
@@ -639,7 +660,8 @@ def test_sec006_flags_missing_high_deadline(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "index.yaml",
-        _SEVERITIES_BLOCK + "vulnerability_response:\n  deadlines:\n    CRITICAL: 7\n",
+        _VULN_SEVERITIES_BLOCK
+        + "vulnerability_response:\n  deadlines:\n    CRITICAL: 7\n",
     )
     f = check_sec_006(tmp_path)
     assert len(_ids(f, "SEC-006")) == 1
@@ -650,7 +672,7 @@ def test_sec006_flags_non_integer_deadline(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "index.yaml",
-        _SEVERITIES_BLOCK + "vulnerability_response:\n"
+        _VULN_SEVERITIES_BLOCK + "vulnerability_response:\n"
         "  deadlines:\n"
         "    CRITICAL: seven days\n"
         "    HIGH: 30\n",
@@ -664,7 +686,7 @@ def test_sec006_flags_undeclared_severity_name(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "index.yaml",
-        _SEVERITIES_BLOCK + "vulnerability_response:\n"
+        _VULN_SEVERITIES_BLOCK + "vulnerability_response:\n"
         "  deadlines:\n"
         "    CRITICAL: 7\n"
         "    HIGH: 30\n"
@@ -690,7 +712,7 @@ def test_sec006_accepts_severities_as_sequence(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "index.yaml",
-        "severities:\n"
+        "vulnerability_severities:\n"
         "  - CRITICAL\n"
         "  - HIGH\n"
         "vulnerability_response:\n"
@@ -706,3 +728,67 @@ def test_sec006_flags_unparseable_index_yaml(tmp_path: Path) -> None:
     f = check_sec_006(tmp_path)
     assert len(_ids(f, "SEC-006")) == 1
     assert "could not be read or parsed" in f[0]["finding"]
+
+
+def test_sec006_passes_against_the_real_catalog_shape(tmp_path: Path) -> None:
+    """The regression test for the contradiction this rule used to carry.
+
+    Both blocks are present and correct, exactly as index.yaml declares
+    them: `severities:` grades conformance findings and has no HIGH,
+    while `vulnerability_severities:` carries the CVSS ratings the
+    deadlines name. SEC-006 must validate against the second and ignore
+    the first. Before the split it validated against `severities:`, so
+    clause (3) rejected the HIGH deadline clause (2) requires and the
+    rule could never go green.
+    """
+    _write(
+        tmp_path,
+        "index.yaml",
+        _FINDING_SEVERITIES_BLOCK + _VULN_SEVERITIES_BLOCK + "vulnerability_response:\n"
+        "  deadlines:\n"
+        "    CRITICAL: 7\n"
+        "    HIGH: 30\n"
+        "    MEDIUM: 90\n",
+    )
+    assert check_sec_006(tmp_path) == []
+
+
+def test_sec006_does_not_validate_against_the_finding_severities(
+    tmp_path: Path,
+) -> None:
+    """A deadline naming a conformance severity is wrong, not right.
+
+    `WARN: 90` is what the catalog originally carried — a finding
+    severity in a block of CVSS ratings. It must be flagged even though
+    WARN is a perfectly valid entry in `severities:`, because the two
+    vocabularies are separate and a scanner never reports WARN.
+    """
+    _write(
+        tmp_path,
+        "index.yaml",
+        _FINDING_SEVERITIES_BLOCK + _VULN_SEVERITIES_BLOCK + "vulnerability_response:\n"
+        "  deadlines:\n"
+        "    CRITICAL: 7\n"
+        "    HIGH: 30\n"
+        "    WARN: 90\n",
+    )
+    f = _ids(check_sec_006(tmp_path), "SEC-006")
+    assert len(f) == 1
+    assert "'WARN'" in f[0]["finding"]
+
+
+def test_sec006_flags_a_missing_vulnerability_severities_block(
+    tmp_path: Path,
+) -> None:
+    """`severities:` alone is not a substitute vocabulary."""
+    _write(
+        tmp_path,
+        "index.yaml",
+        _FINDING_SEVERITIES_BLOCK + "vulnerability_response:\n"
+        "  deadlines:\n"
+        "    CRITICAL: 7\n"
+        "    HIGH: 30\n",
+    )
+    f = _ids(check_sec_006(tmp_path), "SEC-006")
+    assert len(f) == 1
+    assert "vulnerability_severities" in f[0]["finding"]

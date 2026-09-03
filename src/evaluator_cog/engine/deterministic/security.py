@@ -573,16 +573,29 @@ def check_sec_005(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def _declared_severities(data: dict) -> set[str]:
-    """Severity names declared by the top-level ``severities:`` block.
+def _declared_vulnerability_severities(data: dict) -> set[str]:
+    """Names declared by the top-level ``vulnerability_severities:`` block.
 
-    The block is a mapping of severity name to prose description, so the
-    names are its keys. A sequence spelling is accepted too, because the
+    Deliberately *not* the ``severities:`` block. That one grades
+    conformance findings — ERROR, WARN, INFO — while these are CVSS
+    qualitative ratings as the scanners report them. The two are
+    different scales and neither contains the other: CVSS has no ERROR,
+    and a conformance finding is never HIGH.
+
+    Validating deadline names against ``severities:`` was the original
+    shape of this check, and it made SEC-006 impossible to pass: clause
+    (2) requires a HIGH deadline, and HIGH is correctly absent from the
+    finding vocabulary, so clause (3) rejected the very entry clause (2)
+    demanded. The fix was a second named vocabulary in the catalog
+    rather than forcing one list to serve both meanings.
+
+    The block is a mapping of name to prose description, so the names
+    are its keys. A sequence spelling is accepted too, because the
     catalog's other enumerations have historically been written both
     ways (see META-003) and the rule cares about the names, not the
     container.
     """
-    raw = data.get("severities")
+    raw = data.get("vulnerability_severities")
     if isinstance(raw, dict):
         return {str(k) for k in raw}
     if isinstance(raw, list):
@@ -600,16 +613,18 @@ def check_sec_006(repo_path: Path) -> list[Finding]:
     a subclass of ``int``, because ``CRITICAL: true`` declares nothing.
 
     Every severity named in ``deadlines:`` must also appear in the
-    top-level ``severities:`` block — a deadline attached to a severity
-    the catalog does not define cannot be enforced against any finding.
+    top-level ``vulnerability_severities:`` block — a deadline attached
+    to a rating the catalog does not define cannot be enforced against
+    any scanner output. That block, not ``severities:``, is the
+    vocabulary here; see ``_declared_vulnerability_severities``.
 
     Two decisions check_notes leaves open. First, an absent (or
     unreadable) ``index.yaml`` is reported rather than skipped: the rule
     is scoped to standards-repo, where index.yaml is the catalog root, so
     its absence means the deadlines block is absent. Second, if the
-    ``severities:`` block itself is missing we emit one finding saying
-    the names cannot be validated, rather than one finding per deadline
-    blaming names that may well be correct.
+    ``vulnerability_severities:`` block itself is missing we emit one
+    finding saying the names cannot be validated, rather than one
+    finding per deadline blaming names that may well be correct.
     """
     CHECK_ID = "SEC-006"
     findings: list[Finding] = []
@@ -716,19 +731,22 @@ def check_sec_006(repo_path: Path) -> list[Finding]:
                 )
             )
 
-    declared = _declared_severities(data)
+    declared = _declared_vulnerability_severities(data)
     if not declared:
         findings.append(
             _finding(
                 CHECK_ID,
                 "INFO",
                 _DIMENSION,
-                "index.yaml declares no top-level severities: block, so the "
-                "severities named in vulnerability_response.deadlines "
-                "cannot be validated against the catalog's own vocabulary.",
-                "Add a top-level severities: block to index.yaml listing every "
-                "severity the catalog uses, so deadline names can be checked "
-                "against it.",
+                "index.yaml declares no top-level vulnerability_severities: "
+                "block, so the ratings named in "
+                "vulnerability_response.deadlines cannot be validated against "
+                "the catalog's own vocabulary.",
+                "Add a top-level vulnerability_severities: block to index.yaml "
+                "listing the CVSS ratings the scanners report (CRITICAL, HIGH, "
+                "MEDIUM, LOW), so deadline names can be checked against it. Do "
+                "not reuse the severities: block — that one grades conformance "
+                "findings and is a different scale.",
             )
         )
         return findings
@@ -740,14 +758,14 @@ def check_sec_006(repo_path: Path) -> list[Finding]:
                     CHECK_ID,
                     "INFO",
                     _DIMENSION,
-                    f"vulnerability_response.deadlines names severity "
+                    f"vulnerability_response.deadlines names "
                     f"{str(name)!r}, which is not declared in the top-level "
-                    f"severities: block of index.yaml "
+                    f"vulnerability_severities: block of index.yaml "
                     f"(declared: {', '.join(sorted(declared))}).",
                     f"Either rename the {str(name)!r} deadline to one of the "
-                    f"declared severities, or add {str(name)!r} to the "
-                    f"top-level severities: block in index.yaml so the "
-                    f"deadline attaches to a severity findings can carry.",
+                    f"declared ratings, or add {str(name)!r} to the top-level "
+                    f"vulnerability_severities: block in index.yaml so the "
+                    f"deadline attaches to a rating a scanner can report.",
                 )
             )
     return findings
