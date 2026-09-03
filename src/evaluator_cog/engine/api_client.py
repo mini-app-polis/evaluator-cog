@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from mini_app_polis import logger as logger_mod
@@ -14,27 +13,25 @@ log = logger_mod.get_logger()
 def _get_latest_stored_finding(
     *,
     api_client: Any,
-    api_base_url: str,
     repo: str,
 ) -> dict[str, Any] | None:
     """
     Best-effort fetch of the most recent stored finding for this repo.
     Returns None on any failure.
+
+    Reads go through the machine-named client and nothing else. This
+    function used to carry a fallback that built a bare ``httpx.Client``
+    against ``KAIANO_API_BASE_URL`` whenever ``api_client`` had no
+    ``.get`` attribute. That branch presented no credential at all, so
+    the read was unattributable — the exact failure CD-019 exists to
+    catch, sitting beside the correct call. Post-Keystone it could not
+    have succeeded either: the API rejects an unauthenticated read. It
+    is removed rather than repaired; there is only one way for this cog
+    to reach the API, and a second one that silently drops the caller's
+    identity is worse than an exception.
     """
     try:
-        if hasattr(api_client, "get"):
-            response = api_client.get(f"/v1/evaluations?repo={repo}&limit=1")
-        else:
-            import httpx
-
-            _timeout = float(os.environ.get("EVALUATOR_HTTP_TIMEOUT_SECONDS", "20"))
-            with httpx.Client(timeout=_timeout) as client:
-                r = client.get(
-                    f"{api_base_url.rstrip('/')}/v1/evaluations",
-                    params={"repo": repo, "limit": 1},
-                )
-                r.raise_for_status()
-                response = r.json()
+        response = api_client.get(f"/v1/evaluations?repo={repo}&limit=1")
 
         if isinstance(response, dict):
             data = response.get("data")
@@ -63,8 +60,6 @@ def post_findings(
     direct_finding_text: str | None = None,
 ) -> None:
     """Post a list of findings to api-kaianolevine-com. Never raises."""
-    api_base_url = os.environ.get("KAIANO_API_BASE_URL", "")
-
     err_ct = warn_ct = info_ct = 0
 
     api_client = CommonPythonApiClient.from_env("evaluator-cog")
@@ -77,11 +72,7 @@ def post_findings(
     # run_id means a new run regardless of identical text. This matters
     # because client helpers may emit identical default text (e.g. "Run
     # completed successfully.") across many runs.
-    latest = _get_latest_stored_finding(
-        api_client=api_client,
-        api_base_url=api_base_url,
-        repo=repo,
-    )
+    latest = _get_latest_stored_finding(api_client=api_client, repo=repo)
 
     for f in findings:
         if not isinstance(f, dict):
