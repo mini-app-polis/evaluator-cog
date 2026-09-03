@@ -109,12 +109,7 @@ from evaluator_cog.engine.deterministic.meta import (
     check_meta_release_pipeline_wired,
 )
 from evaluator_cog.engine.deterministic.operations import (
-    check_ops_001,
     check_ops_002,
-    check_ops_003,
-    check_ops_004,
-    check_ops_005,
-    check_ops_006,
 )
 from evaluator_cog.engine.deterministic.packaging import (
     check_cd_016,
@@ -186,12 +181,7 @@ __all__ = [
     "check_cd_022",
     "check_cd_023",
     "check_cd_024",
-    "check_ops_001",
     "check_ops_002",
-    "check_ops_003",
-    "check_ops_004",
-    "check_ops_005",
-    "check_ops_006",
     "check_sec_001",
     "check_sec_002",
     "check_sec_003",

@@ -98,12 +98,7 @@ from evaluator_cog.engine.deterministic.meta import (
     check_meta_release_pipeline_wired,
 )
 from evaluator_cog.engine.deterministic.operations import (
-    check_ops_001,
     check_ops_002,
-    check_ops_003,
-    check_ops_004,
-    check_ops_005,
-    check_ops_006,
 )
 from evaluator_cog.engine.deterministic.packaging import (
     check_cd_016,
@@ -806,15 +801,22 @@ def run_all_checks(
     _run(check_sec_005, "SEC-005")
     _run(check_sec_006, "SEC-006")
 
-    # operational_readiness — OPS-001..006. OPS-007 is `checkable: false`
-    # in the catalog and has no check by design: its gap is a missing
-    # shared drain helper in common-python-utils, not a missing check.
-    _run(check_ops_001, "OPS-001")
+    # operational_readiness — only OPS-002 is checkable.
+    #
+    # OPS-001/003/004/005/006 were retired to `checkable: false` in
+    # ecosystem-standards v6.5.0. Each demanded a hand-written file whose
+    # only reader was this check — a restore date, an SLO nothing
+    # consumed, a classification maintained per migration, an egress list
+    # the check already derived from source, a rotation date. A rule
+    # satisfied by editing a date measures paperwork, not the control,
+    # and its cheapest fix is to falsify it. Their check_notes record
+    # what would make each checkable again; those will be different
+    # checks (a job's recorded run, not a file), so the old ones are
+    # deleted rather than left dormant.
+    #
+    # OPS-007 has no check by design: its gap is a missing shared drain
+    # helper in common-python-utils.
     _run(check_ops_002, "OPS-002")
-    _run(check_ops_003, "OPS-003")
-    _run(check_ops_004, "OPS-004")
-    _run(check_ops_005, "OPS-005")
-    _run(check_ops_006, "OPS-006")
 
     # cd_readiness — container and platform-descriptor rules.
     # CD-022 and CD-023 skip silently where no Dockerfile exists; the
