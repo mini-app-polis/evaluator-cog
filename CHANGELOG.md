@@ -1,3 +1,10 @@
+## [3.16.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.3...v3.16.4) (2026-09-03)
+
+
+### Bug Fixes
+
+* **checks:** correct five false positives found in the first fleet run ([6aba096](https://github.com/mini-app-polis/evaluator-cog/commit/6aba096c19b455795fce66285a114c57c303d15d))
+
 ## [3.16.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.2...v3.16.3) (2026-09-03)
 
 
