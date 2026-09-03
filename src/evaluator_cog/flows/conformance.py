@@ -883,6 +883,8 @@ def _run_applies_to_absent_checks(
         check_eval_003,
         check_eval_007,
         check_mono_003,
+        check_xstack_006,
+        check_xstack_007,
     )
 
     # EVAL-003 — finding quality (runtime data-quality on stored findings)
@@ -916,6 +918,38 @@ def _run_applies_to_absent_checks(
             prefect_log.info("MONO-003: posted %d findings", len(mono_003_findings))
     except Exception as exc:
         prefect_log.warning("MONO-003: check failed: %s", exc)
+
+    # XSTACK-006 / XSTACK-007 — cross-repo coherence.
+    #
+    # Both carry `applies_to: None`, so resolve_dispatch returns
+    # SKIP_SCOPE for them on every repo and they can never run on the
+    # per-repo path. That is correct: their read sources are the GitHub
+    # org listing and the ecosystem.yaml registry, not any one repo's
+    # source tree. This lane is where a rule with no single repo subject
+    # belongs, which is why EVAL-003 and MONO-003 already live here.
+    #
+    # The registry passed in is the one fetched for this run, not a
+    # cached copy — XSTACK-006 requires reading it at the version under
+    # evaluation so a repo registered in the same release that creates
+    # it is not reported as unregistered.
+    for _rule_id, _check in (
+        ("XSTACK-006", check_xstack_006),
+        ("XSTACK-007", check_xstack_007),
+    ):
+        try:
+            _findings = _check(ecosystem=ecosystem)
+            if _findings:
+                post_findings(
+                    findings=_findings,
+                    run_id=run_id,
+                    repo="ecosystem-standards",
+                    flow_name=_rule_id.lower(),
+                    source="standards_drift",
+                    standards_version=standards_version,
+                )
+                prefect_log.info("%s: posted %d findings", _rule_id, len(_findings))
+        except Exception as exc:
+            prefect_log.warning("%s: check failed: %s", _rule_id, exc)
 
     # EVAL-007 — standards/evaluator drift
     try:

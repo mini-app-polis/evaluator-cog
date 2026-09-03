@@ -1529,6 +1529,37 @@ def _string_position(parents: dict[int, ast.AST], node: ast.Constant) -> str:
     return ""
 
 
+def _is_embedded_python_source(value: str) -> bool:
+    """True when a string constant is a quoted Python *module*, not prose.
+
+    A checker's fixtures quote the very patterns the checker hunts for.
+    A module-level constant holding a triple-quoted block of Python that
+    imports httpx and builds a bad header is a test fixture describing a
+    violation, not a repo committing one — nothing in a string literal
+    is ever executed, and flagging it is how the retired CD-012 check
+    ended up reporting its own detection logic.
+
+    The test is deliberately narrow, because "it is only a string" is
+    otherwise an easy place to hide a real violation. A value qualifies
+    only when it spans multiple lines, parses as Python, and contains at
+    least one statement that is not a bare expression. That excludes the
+    shapes a genuine violation takes — ``"X-Internal-API-Key"`` does not
+    parse at all, and a single header name parses as a bare string
+    expression, not as a module.
+
+    Docstrings never reach this function: they are matched earlier and
+    stay flagged, because a stale docstring documenting a symbol that no
+    longer exists is explicitly not exempt.
+    """
+    if "\n" not in value:
+        return False
+    try:
+        tree = ast.parse(value)
+    except (SyntaxError, ValueError, MemoryError, RecursionError):
+        return False
+    return any(not isinstance(stmt, ast.Expr) for stmt in tree.body)
+
+
 def _retired_hits_in_python(f: _PyFile) -> list[tuple[int, str, str]]:
     """(line, symbol, where) for every retired symbol used in one module."""
     hits: list[tuple[int, str, str]] = []
@@ -1562,6 +1593,9 @@ def _retired_hits_in_python(f: _PyFile) -> list[tuple[int, str, str]]:
             symbol = needle if needle != "MACHINE_SECRET" else "machine_secret"
             if id(node) in doc_ids:
                 hits.append((node.lineno, symbol, "docstring"))
+                continue
+            if _is_embedded_python_source(node.value):
+                # A quoted module is a fixture, not a violation.
                 continue
             position = _string_position(parents, node)
             if position:

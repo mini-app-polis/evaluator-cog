@@ -44,6 +44,17 @@ from evaluator_cog.engine.deterministic.config import (
     check_shared_library_used,
     check_standards_freshness,
 )
+from evaluator_cog.engine.deterministic.containers import (
+    check_cd_017,
+    check_cd_021,
+    check_cd_022,
+    check_cd_023,
+    check_cd_024,
+)
+from evaluator_cog.engine.deterministic.crossrepo import (
+    check_xstack_006,
+    check_xstack_007,
+)
 from evaluator_cog.engine.deterministic.delivery import (
     check_ci,
     check_gha_not_trigger_relay,
@@ -79,6 +90,11 @@ from evaluator_cog.engine.deterministic.frontend import (
     check_tailwind,
     check_vite_react_ts,
 )
+from evaluator_cog.engine.deterministic.identity import (
+    check_auth_003,
+    check_auth_004,
+    check_cd_019,
+)
 from evaluator_cog.engine.deterministic.introspection import (
     check_eval_003,
     check_eval_007,
@@ -91,6 +107,18 @@ from evaluator_cog.engine.deterministic.meta import (
     check_meta_canonical_enums_are_dicts,
     check_meta_no_scattered_metadata,
     check_meta_release_pipeline_wired,
+)
+from evaluator_cog.engine.deterministic.operations import (
+    check_ops_001,
+    check_ops_002,
+    check_ops_003,
+    check_ops_004,
+    check_ops_005,
+    check_ops_006,
+)
+from evaluator_cog.engine.deterministic.packaging import (
+    check_cd_016,
+    check_cd_020,
 )
 from evaluator_cog.engine.deterministic.pipeline import (
     check_evaluation_step,
@@ -122,6 +150,14 @@ from evaluator_cog.engine.deterministic.runner import (
     _type_to_dod,
     run_all_checks,
 )
+from evaluator_cog.engine.deterministic.security import (
+    check_sec_001,
+    check_sec_002,
+    check_sec_003,
+    check_sec_004,
+    check_sec_005,
+    check_sec_006,
+)
 from evaluator_cog.engine.deterministic.testing import (
     check_db_test_fixtures,
     check_mock_assertions,
@@ -140,6 +176,30 @@ from evaluator_cog.engine.deterministic.versioning import (
 )
 
 __all__ = [
+    "check_auth_003",
+    "check_auth_004",
+    "check_cd_016",
+    "check_cd_017",
+    "check_cd_019",
+    "check_cd_020",
+    "check_cd_021",
+    "check_cd_022",
+    "check_cd_023",
+    "check_cd_024",
+    "check_ops_001",
+    "check_ops_002",
+    "check_ops_003",
+    "check_ops_004",
+    "check_ops_005",
+    "check_ops_006",
+    "check_sec_001",
+    "check_sec_002",
+    "check_sec_003",
+    "check_sec_004",
+    "check_sec_005",
+    "check_sec_006",
+    "check_xstack_006",
+    "check_xstack_007",
     "CheckResult",
     "Finding",
     "_deduplicate_same_repo_findings",

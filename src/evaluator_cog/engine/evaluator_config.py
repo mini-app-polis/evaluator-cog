@@ -14,6 +14,7 @@ It falls back gracefully when evaluator.yaml is absent (migration period).
 
 from __future__ import annotations
 
+import datetime as _dt
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -48,12 +49,18 @@ class DispositionResult:
       severity the finding should be emitted at.
     - `modifier_rule_id`: for RUN_MODIFIED only, the rule whose
       `modifies:` list includes this rule.
+    - `deferral_expired_on`: set when this rule carried a deferral whose
+      `until:` date has passed. The deferral no longer applies — the
+      disposition is whatever the remaining precedence steps resolve to
+      — but the date is carried so the finding can say that a deadline
+      was missed rather than silently appearing at full severity.
     """
 
     disposition: Disposition
     reason: str = ""
     downgraded_severity: str | None = None
     modifier_rule_id: str | None = None
+    deferral_expired_on: _dt.date | None = None
 
     @property
     def should_run(self) -> bool:
@@ -126,6 +133,11 @@ class EvaluatorConfig:
     exemption_reasons: dict[str, str] = field(default_factory=dict)
     deferral_ids: list[str] = field(default_factory=list)
     deferral_reasons: dict[str, str] = field(default_factory=dict)
+    # rule_id -> the deferral's `until:` date. A rule deferred
+    # open-endedly (`until: null`, or the key omitted) is absent from
+    # this mapping rather than mapped to None, so "no deadline" and
+    # "deadline unparseable" stay distinguishable.
+    deferral_until: dict[str, _dt.date] = field(default_factory=dict)
     source: str = "evaluator.yaml"
 
     # Catalog data — populated by load_evaluator_config when available.
@@ -157,7 +169,9 @@ class EvaluatorConfig:
                 skipped.add(rule_id)
         return frozenset(skipped)
 
-    def resolve_dispatch(self, rule_id: str) -> DispositionResult:
+    def resolve_dispatch(
+        self, rule_id: str, *, today: _dt.date | None = None
+    ) -> DispositionResult:
         """Walk the 7-step dispatch precedence from
         ecosystem-standards index.yaml schema.dispatch for this rule
         and this repo's config. Returns a DispositionResult telling
@@ -201,11 +215,31 @@ class EvaluatorConfig:
             )
 
         # Step 4 — per-repo deferral.
+        #
+        # `until:` is honoured here. index.yaml specifies it as
+        # "optional — null means open-ended. If set to a date that has
+        # passed, the deferral expires and the finding resurfaces at
+        # full severity." Until this was parsed, every deferral was
+        # silently permanent: a deadline could be written down, pass,
+        # and never change anything, which is worse than not offering
+        # the field at all — the repo believes it has a commitment on
+        # record and the evaluator never checks it.
+        #
+        # An expired deferral does not short-circuit. It falls through
+        # to the remaining precedence steps, so a rule that is both
+        # expired-deferred and trait-downgraded still resolves to the
+        # downgrade. The expiry date rides along on the result so the
+        # finding can name the missed deadline instead of appearing at
+        # full severity with no explanation.
+        expired_on: _dt.date | None = None
         if rule_id in self.deferral_ids:
-            return DispositionResult(
-                disposition=Disposition.RUN_DEFERRED,
-                reason=self.deferral_reasons.get(rule_id, ""),
-            )
+            until = self.deferral_until.get(rule_id)
+            if until is None or until >= (today or _dt.date.today()):
+                return DispositionResult(
+                    disposition=Disposition.RUN_DEFERRED,
+                    reason=self.deferral_reasons.get(rule_id, ""),
+                )
+            expired_on = until
 
         # Step 5 — trait downgrade.
         for trait in self.traits:
@@ -216,6 +250,7 @@ class EvaluatorConfig:
                         disposition=Disposition.RUN_DOWNGRADED,
                         reason=f"Downgraded by trait: {trait}. {dg.get('reason', '')}".strip(),
                         downgraded_severity=dg.get("to") or "INFO",
+                        deferral_expired_on=expired_on,
                     )
 
         # Step 6 — rule modifier.
@@ -230,14 +265,33 @@ class EvaluatorConfig:
                     disposition=Disposition.RUN_MODIFIED,
                     reason=f"Modified by rule: {other_id}",
                     modifier_rule_id=other_id,
+                    deferral_expired_on=expired_on,
                 )
 
         # Step 7 — default.
-        return DispositionResult(disposition=Disposition.RUN_DEFAULT)
+        return DispositionResult(
+            disposition=Disposition.RUN_DEFAULT, deferral_expired_on=expired_on
+        )
 
     def is_deferred(self, rule_id: str) -> bool:
-        """True when `rule_id` appears in this repo's `deferrals:` list."""
-        return rule_id in self.deferral_ids
+        """True when `rule_id` is deferred *and* the deferral is still live.
+
+        A deferral whose `until:` has passed is not a deferral any more,
+        so this returns False for it — callers asking "is this deferred"
+        want the effective answer, not the declared one.
+
+        This deliberately answers from the deferral alone rather than
+        delegating to resolve_dispatch(). Dispatch also folds in scope,
+        which is unknowable without a catalog: routed through it, a
+        config built by hand or during the migration period would report
+        every rule as not-deferred because `applies_to` is absent and
+        step 1 short-circuits to SKIP_SCOPE. The question here is
+        narrower and answerable on its own terms.
+        """
+        if rule_id not in self.deferral_ids:
+            return False
+        until = self.deferral_until.get(rule_id)
+        return until is None or until >= _dt.date.today()
 
     def is_skipped(self, rule_id: str) -> bool:
         """True when `rule_id` will be skipped for this repo.
@@ -393,6 +447,7 @@ def _parse_evaluator_yaml(raw: dict, source: str = "evaluator.yaml") -> Evaluato
 
     deferral_ids = []
     deferral_reasons = {}
+    deferral_until: dict[str, _dt.date] = {}
     for item in raw.get("deferrals", []) or []:
         if not isinstance(item, dict):
             continue
@@ -402,6 +457,9 @@ def _parse_evaluator_yaml(raw: dict, source: str = "evaluator.yaml") -> Evaluato
             deferral_ids.append(rule_id)
             if reason:
                 deferral_reasons[rule_id] = reason
+            parsed_until = _parse_until(item.get("until"), rule_id, source)
+            if parsed_until is not None:
+                deferral_until[rule_id] = parsed_until
 
     return EvaluatorConfig(
         repo_type=repo_type,
@@ -410,8 +468,46 @@ def _parse_evaluator_yaml(raw: dict, source: str = "evaluator.yaml") -> Evaluato
         exemption_reasons=exemption_reasons,
         deferral_ids=deferral_ids,
         deferral_reasons=deferral_reasons,
+        deferral_until=deferral_until,
         source=source,
     )
+
+
+def _parse_until(raw_until: object, rule_id: str, source: str) -> _dt.date | None:
+    """Read a deferral's `until:` into a date, or None for open-ended.
+
+    index.yaml types the field `date|null`. PyYAML already hands back a
+    `datetime.date` for an unquoted `2026-12-01`, so the common case is
+    a passthrough; a quoted ISO string is parsed, and a datetime is
+    narrowed to its date.
+
+    An unparseable value returns None — open-ended — rather than
+    raising or expiring the deferral immediately. Both alternatives are
+    worse: raising would fail the whole run over a typo in one line of
+    one repo's config, and expiring would resurface a finding at full
+    severity because of a formatting mistake, which reads as the rule
+    regressing. A warning is logged so the typo is still visible.
+    """
+    if raw_until is None:
+        return None
+    if isinstance(raw_until, _dt.datetime):
+        return raw_until.date()
+    if isinstance(raw_until, _dt.date):
+        return raw_until
+    text = str(raw_until).strip()
+    if not text or text.lower() in {"null", "none", "~"}:
+        return None
+    try:
+        return _dt.date.fromisoformat(text)
+    except ValueError:
+        log.warning(
+            "evaluator_config: %s: deferral for %s has an unparseable "
+            "until: value %r — treating the deferral as open-ended",
+            source,
+            rule_id,
+            raw_until,
+        )
+        return None
 
 
 def _build_fallback_config(

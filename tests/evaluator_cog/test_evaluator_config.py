@@ -404,3 +404,165 @@ def test_parse_evaluator_yaml_rejects_pre_rule_trait(
         cfg = _parse_evaluator_yaml({"type": "pipeline-cog", "traits": ["pre-rule"]})
     assert cfg.traits == []
     assert any("unknown trait" in r.message for r in caplog.records)
+
+
+# --- deferral `until:` -------------------------------------------------------
+#
+# `until:` is specified in index.yaml ("If set to a date that has passed,
+# the deferral expires and the finding resurfaces at full severity") and
+# was parsed nowhere, so every deferral was silently permanent. These
+# tests pin the four states: no deadline, a future deadline, a past
+# deadline, and an unparseable one.
+
+
+def _catalog(rule="CD-019"):
+    return {rule: {"applies_to": ["all"], "modifies": [], "status": "requirement"}}
+
+
+def test_until_absent_defers_open_endedly() -> None:
+    import datetime as dt
+
+    from evaluator_cog.engine.evaluator_config import Disposition, EvaluatorConfig
+
+    cfg = EvaluatorConfig(
+        repo_type="api-service",
+        deferral_ids=["CD-019"],
+        deferral_reasons={"CD-019": "not yet"},
+        rule_catalog=_catalog(),
+    )
+    result = cfg.resolve_dispatch("CD-019", today=dt.date(2099, 1, 1))
+    assert result.disposition == Disposition.RUN_DEFERRED
+    assert result.deferral_expired_on is None
+    assert cfg.is_deferred("CD-019") is True
+
+
+def test_until_in_the_future_still_defers() -> None:
+    import datetime as dt
+
+    from evaluator_cog.engine.evaluator_config import Disposition, EvaluatorConfig
+
+    cfg = EvaluatorConfig(
+        repo_type="api-service",
+        deferral_ids=["CD-019"],
+        deferral_until={"CD-019": dt.date(2026, 12, 1)},
+        rule_catalog=_catalog(),
+    )
+    result = cfg.resolve_dispatch("CD-019", today=dt.date(2026, 9, 3))
+    assert result.disposition == Disposition.RUN_DEFERRED
+    assert result.deferral_expired_on is None
+
+
+def test_until_on_the_deadline_day_still_defers() -> None:
+    """The boundary is inclusive — the deferral is live through its last day."""
+    import datetime as dt
+
+    from evaluator_cog.engine.evaluator_config import Disposition, EvaluatorConfig
+
+    cfg = EvaluatorConfig(
+        repo_type="api-service",
+        deferral_ids=["CD-019"],
+        deferral_until={"CD-019": dt.date(2026, 9, 3)},
+        rule_catalog=_catalog(),
+    )
+    result = cfg.resolve_dispatch("CD-019", today=dt.date(2026, 9, 3))
+    assert result.disposition == Disposition.RUN_DEFERRED
+
+
+def test_until_in_the_past_expires_the_deferral() -> None:
+    """The whole point: a passed deadline resurfaces the finding."""
+    import datetime as dt
+
+    from evaluator_cog.engine.evaluator_config import Disposition, EvaluatorConfig
+
+    cfg = EvaluatorConfig(
+        repo_type="api-service",
+        deferral_ids=["CD-019"],
+        deferral_reasons={"CD-019": "deejaytools-com-api predates the contract"},
+        deferral_until={"CD-019": dt.date(2026, 6, 1)},
+        rule_catalog=_catalog(),
+    )
+    result = cfg.resolve_dispatch("CD-019", today=dt.date(2026, 9, 3))
+    assert result.disposition == Disposition.RUN_DEFAULT
+    assert result.deferral_expired_on == dt.date(2026, 6, 1)
+    assert result.should_run is True
+
+
+def test_expired_deferral_still_yields_to_a_trait_downgrade() -> None:
+    """An expired deferral falls through; it does not jump to full severity."""
+    import datetime as dt
+
+    from evaluator_cog.engine.evaluator_config import Disposition, EvaluatorConfig
+
+    cfg = EvaluatorConfig(
+        repo_type="api-service",
+        traits=["logger-primitive"],
+        deferral_ids=["CD-019"],
+        deferral_until={"CD-019": dt.date(2026, 6, 1)},
+        rule_catalog=_catalog(),
+        catalog_schema={
+            "traits": {
+                "logger-primitive": {
+                    "downgrades": [{"rule": "CD-019", "to": "WARN", "reason": "x"}]
+                }
+            }
+        },
+    )
+    result = cfg.resolve_dispatch("CD-019", today=dt.date(2026, 9, 3))
+    assert result.disposition == Disposition.RUN_DOWNGRADED
+    assert result.downgraded_severity == "WARN"
+    assert result.deferral_expired_on == dt.date(2026, 6, 1)
+
+
+def test_expired_deferral_reports_not_deferred() -> None:
+    import datetime as dt
+
+    from evaluator_cog.engine.evaluator_config import EvaluatorConfig
+
+    cfg = EvaluatorConfig(
+        repo_type="api-service",
+        deferral_ids=["CD-019"],
+        deferral_until={"CD-019": dt.date(2020, 1, 1)},
+    )
+    assert cfg.is_deferred("CD-019") is False
+
+
+def test_until_is_parsed_from_evaluator_yaml(tmp_path) -> None:
+    """A bare YAML date, a quoted one, and null all round-trip correctly."""
+    import datetime as dt
+
+    from evaluator_cog.engine.evaluator_config import load_evaluator_config
+
+    (tmp_path / "evaluator.yaml").write_text(
+        "type: api-service\n"
+        "deferrals:\n"
+        "  - rule: CD-019\n"
+        "    reason: predates the credential contract\n"
+        "    until: 2026-12-01\n"
+        "  - rule: OPS-001\n"
+        "    reason: no restore drill yet\n"
+        '    until: "2027-01-15"\n'
+        "  - rule: OPS-006\n"
+        "    reason: open ended\n"
+        "    until: null\n"
+    )
+    cfg = load_evaluator_config(tmp_path)
+    assert cfg.deferral_until["CD-019"] == dt.date(2026, 12, 1)
+    assert cfg.deferral_until["OPS-001"] == dt.date(2027, 1, 15)
+    assert "OPS-006" not in cfg.deferral_until
+
+
+def test_unparseable_until_is_treated_as_open_ended(tmp_path) -> None:
+    """A typo must not resurface a finding at full severity."""
+    from evaluator_cog.engine.evaluator_config import load_evaluator_config
+
+    (tmp_path / "evaluator.yaml").write_text(
+        "type: api-service\n"
+        "deferrals:\n"
+        "  - rule: CD-019\n"
+        "    reason: predates the credential contract\n"
+        '    until: "next quarter"\n'
+    )
+    cfg = load_evaluator_config(tmp_path)
+    assert "CD-019" in cfg.deferral_ids
+    assert "CD-019" not in cfg.deferral_until
+    assert cfg.is_deferred("CD-019") is True

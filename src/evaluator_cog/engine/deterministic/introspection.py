@@ -8,6 +8,7 @@ from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
 )
+from evaluator_cog.engine.routing import classify_check_mode
 
 
 def check_eval_003(
@@ -273,15 +274,25 @@ def check_eval_007(
 ) -> list[Finding]:
     """EVAL-007: Standards/evaluator check coverage must be tracked and in sync.
 
-    LLM-routed rules (those with `check_notes` starting with
-    `LLM CHECK.`) are excluded from the unimplemented set — they are
-    correctly handled on the LLM path and do not require a
-    deterministic CHECK_ID constant. Rules whose catalog entry carries
-    ``check_mode == "llm"`` are filtered before comparing against
-    implemented CHECK_IDs. Catalog entries missing a `check_mode`
-    field default to the pre-filter behaviour (treated as
-    deterministic), preserving behaviour for tests and legacy
-    callers that build rule_catalog dicts by hand.
+    LLM-routed rules are excluded from the unimplemented set — they
+    are correctly handled on the LLM path and do not require a
+    deterministic CHECK_ID constant.
+
+    Routing is read from the catalog entry's ``check_mode``, which
+    ``_fetch_full_rule_catalog`` derives from the
+    ``DETERMINISTIC CHECK.`` / ``LLM CHECK.`` marker on each rule's
+    ``check_notes``. The marker is the only routing information the
+    catalog carries — ``check_mode`` is not a field in the standards
+    YAML and never travels from it; it is computed at fetch time.
+
+    An entry that carries neither ``check_mode`` nor ``check_notes``
+    is treated as deterministic, which preserves behaviour for tests
+    and callers that build rule_catalog dicts by hand. That fallback
+    is why an entry carrying ``check_notes`` but no ``check_mode`` is
+    classified here rather than assumed: a hand-built catalog that
+    includes the notes should route the same way the flow does, and
+    without this it would report every LLM-routed rule as
+    unimplemented.
 
     A deterministic rule counts as "implemented" if any of the
     following appear anywhere in the deterministic package
@@ -337,11 +348,20 @@ def check_eval_007(
     # Only deterministic rules require a CHECK_ID constant. LLM rules
     # are dispatched through engine/llm.py and should not be flagged
     # as missing.
-    deterministic_ids = {
-        rid
-        for rid, meta in rule_catalog.items()
-        if (meta or {}).get("check_mode", "deterministic") != "llm"
-    }
+    def _mode(meta: dict | None) -> str:
+        meta = meta or {}
+        mode = meta.get("check_mode")
+        if mode:
+            return str(mode)
+        notes = meta.get("check_notes")
+        if notes:
+            return classify_check_mode(rid_for_warning, str(notes))
+        return "deterministic"
+
+    deterministic_ids = set()
+    for rid_for_warning, meta in rule_catalog.items():
+        if _mode(meta) != "llm":
+            deterministic_ids.add(rid_for_warning)
 
     unimplemented = sorted(deterministic_ids - impl_ids)
     orphaned = sorted(impl_ids - set(rule_catalog.keys()))

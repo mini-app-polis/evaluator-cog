@@ -40,6 +40,13 @@ from evaluator_cog.engine.deterministic.config import (
     check_shared_library_used,
     check_standards_freshness,
 )
+from evaluator_cog.engine.deterministic.containers import (
+    check_cd_017,
+    check_cd_021,
+    check_cd_022,
+    check_cd_023,
+    check_cd_024,
+)
 from evaluator_cog.engine.deterministic.delivery import (
     check_ci,
     check_gha_not_trigger_relay,
@@ -75,6 +82,11 @@ from evaluator_cog.engine.deterministic.frontend import (
     check_tailwind,
     check_vite_react_ts,
 )
+from evaluator_cog.engine.deterministic.identity import (
+    check_auth_003,
+    check_auth_004,
+    check_cd_019,
+)
 from evaluator_cog.engine.deterministic.meta import (
     check_meta_005_check_notes_prefix,
     check_meta_006_prefix_file_correlation,
@@ -82,6 +94,18 @@ from evaluator_cog.engine.deterministic.meta import (
     check_meta_canonical_enums_are_dicts,
     check_meta_no_scattered_metadata,
     check_meta_release_pipeline_wired,
+)
+from evaluator_cog.engine.deterministic.operations import (
+    check_ops_001,
+    check_ops_002,
+    check_ops_003,
+    check_ops_004,
+    check_ops_005,
+    check_ops_006,
+)
+from evaluator_cog.engine.deterministic.packaging import (
+    check_cd_016,
+    check_cd_020,
 )
 from evaluator_cog.engine.deterministic.pipeline import (
     check_evaluation_step,
@@ -107,6 +131,14 @@ from evaluator_cog.engine.deterministic.python import (
     check_pre_commit,
     check_pyproject,
     check_src_layout,
+)
+from evaluator_cog.engine.deterministic.security import (
+    check_sec_001,
+    check_sec_002,
+    check_sec_003,
+    check_sec_004,
+    check_sec_005,
+    check_sec_006,
 )
 from evaluator_cog.engine.deterministic.testing import (
     check_db_test_fixtures,
@@ -233,6 +265,20 @@ def run_all_checks(
         evaluator_config is not None and evaluator_config.is_trigger_cog
     ) or cog_subtype == "trigger"
 
+    # Repo type as the dispatcher resolved it — CD-019 needs it to pick
+    # its caller half from its receiver half.
+    _repo_type_for_checks = (
+        evaluator_config.repo_type
+        if evaluator_config is not None
+        else {
+            "new_cog": "pipeline-cog",
+            "new_fastapi_service": "api-service",
+            "new_hono_service": "api-service",
+            "new_frontend_site": "static-site",
+            "new_react_app": "react-app",
+        }.get(dod_type or "", "")
+    )
+
     checked_rule_ids: set[str] = set()
 
     def _mark_checked(*rule_ids: str) -> None:
@@ -280,6 +326,7 @@ def run_all_checks(
             disposition_info_reason = ""
             severity_override: str | None = None
             is_deferred = False
+            deferral_expired_on = None
             rule_status = ""
         else:
             result = evaluator_config.resolve_dispatch(rule_id)
@@ -298,6 +345,12 @@ def run_all_checks(
                 else None
             )
             is_deferred = result.disposition.value == "run_deferred"
+            # A deferral whose `until:` has passed is no longer a
+            # deferral — resolve_dispatch has already dropped it out of
+            # RUN_DEFERRED — but the finding should say a deadline was
+            # missed rather than simply reappearing at full severity
+            # with no account of why.
+            deferral_expired_on = result.deferral_expired_on
 
         try:
             new_findings = check_fn(repo_path)
@@ -312,6 +365,14 @@ def run_all_checks(
                     f["downgraded"] = True
                     if disposition_info_reason and "downgrade_reason" not in f:
                         f["downgrade_reason"] = disposition_info_reason
+                if deferral_expired_on is not None:
+                    f["deferral_expired"] = True
+                    f["deferral_expired_on"] = deferral_expired_on.isoformat()
+                    f["finding"] = (
+                        f"{f.get('finding', '')} "
+                        f"(deferral expired {deferral_expired_on.isoformat()} — "
+                        f"this finding is no longer deferred)"
+                    ).strip()
                 if rule_status and "status" not in f:
                     f["status"] = rule_status
             findings.extend(new_findings)
@@ -701,6 +762,66 @@ def run_all_checks(
             return check_pnpm_lockfile(p, monorepo_root=monorepo_root)
 
         _run(_pnpm_lock_check, "XSTACK-003")
+
+    # ── Rules added with ecosystem-standards v5.x ────────────────────────
+    # Registered unconditionally: `resolve_dispatch()` already skips a
+    # rule whose `applies_to` excludes this repo type (SKIP_SCOPE), so
+    # gating here as well would duplicate the catalog in code and drift
+    # from it. The only conditionals below are ones a rule's own
+    # check_notes asks for.
+    #
+    # XSTACK-006 and XSTACK-007 are deliberately absent: both have
+    # `applies_to: None`, which makes resolve_dispatch return SKIP_SCOPE
+    # for them on every repo. They read the org listing and the registry
+    # rather than any one repo's source, and so run once per flow
+    # invocation from _run_applies_to_absent_checks(), alongside EVAL-003
+    # / MONO-003 / EVAL-007.
+
+    # security_posture — SEC-001..006.
+    _run(check_sec_001, "SEC-001")
+    _run(check_sec_002, "SEC-002")
+    _run(check_sec_003, "SEC-003")
+    _run(check_sec_004, "SEC-004")
+    _run(check_sec_005, "SEC-005")
+    _run(check_sec_006, "SEC-006")
+
+    # operational_readiness — OPS-001..006. OPS-007 is `checkable: false`
+    # in the catalog and has no check by design: its gap is a missing
+    # shared drain helper in common-python-utils, not a missing check.
+    _run(check_ops_001, "OPS-001")
+    _run(check_ops_002, "OPS-002")
+    _run(check_ops_003, "OPS-003")
+    _run(check_ops_004, "OPS-004")
+    _run(check_ops_005, "OPS-005")
+    _run(check_ops_006, "OPS-006")
+
+    # cd_readiness — container and platform-descriptor rules.
+    # CD-022 and CD-023 skip silently where no Dockerfile exists; the
+    # absence of an image definition is CD-021's finding, and reporting
+    # it from three rules would obscure which one is actually open.
+    def _cd_017_check(p: Path) -> list[Finding]:
+        return check_cd_017(p, monorepo_path=None)
+
+    _run(_cd_017_check, "CD-017")
+    _run(check_cd_021, "CD-021")
+    _run(check_cd_022, "CD-022")
+    _run(check_cd_023, "CD-023")
+    _run(check_cd_024, "CD-024")
+
+    # cd_readiness — packaging. CD-016 carries its own applicability
+    # gate (a repo with no serve() call has no subject) inside the check.
+    _run(check_cd_016, "CD-016")
+    _run(check_cd_020, "CD-020")
+
+    # structural_conformance — the identity contract. CD-019 splits into
+    # caller and receiver halves on repo type, so it needs the type the
+    # rest of the dispatcher already resolved.
+    def _cd_019_check(p: Path) -> list[Finding]:
+        return check_cd_019(p, repo_type=_repo_type_for_checks)
+
+    _run(check_auth_003, "AUTH-003")
+    _run(check_auth_004, "AUTH-004")
+    _run(_cd_019_check, "CD-019")
 
     # EVAL-008: check for evaluator.yaml presence
     _mark_checked("EVAL-008")
