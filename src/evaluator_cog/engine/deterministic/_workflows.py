@@ -58,6 +58,7 @@ class Step:
 
     @property
     def location(self) -> str:
+        """How a finding should name this step: workflow, job and index."""
         return f"{self.workflow}::{self.job_id}[{self.index}]"
 
     def uses_matches(self, pattern: str) -> bool:
@@ -102,6 +103,7 @@ class Workflow:
 
     @property
     def steps(self) -> list[Step]:
+        """Every step in this workflow, flattened across its jobs."""
         return [s for j in self.jobs for s in j.steps]
 
 

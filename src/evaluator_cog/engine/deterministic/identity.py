@@ -342,6 +342,7 @@ class _PyFile:
 
     @property
     def is_test(self) -> bool:
+        """True for a test module — excluded from the caller-side clauses."""
         norm = self.rel.replace("\\", "/")
         return (
             "/tests/" in f"/{norm}"

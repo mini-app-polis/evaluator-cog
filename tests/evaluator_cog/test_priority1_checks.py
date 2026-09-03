@@ -881,3 +881,66 @@ def test_cd005_does_not_flag_its_own_apscheduler_pattern(tmp_path: Path) -> None
     (checker / "pipeline.py").write_text('SIGNALS = ("apscheduler",)\n')
 
     assert check_prefect_cloud_observability(tmp_path) == []
+
+
+def test_doc006_ignores_functions_nested_in_functions(tmp_path: Path) -> None:
+    """A closure is not public API.
+
+    `ast.walk` reaches every node, so a four-line recursive helper
+    defined inside another function was reported as a public function
+    missing documentation. It cannot be imported and no consumer can
+    call it.
+    """
+    from evaluator_cog.engine.deterministic import check_public_docstrings
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_text(
+        "def enclosing(tree):\n"
+        '    """Documented, public, fine."""\n'
+        "\n"
+        "    def walk(node, depth):\n"
+        "        return depth\n"
+        "\n"
+        "    return walk(tree, 0)\n"
+    )
+    assert check_public_docstrings(tmp_path) == []
+
+
+def test_doc006_still_flags_module_level_and_methods(tmp_path: Path) -> None:
+    """Module-level functions and a class's methods remain public."""
+    from evaluator_cog.engine.deterministic import check_public_docstrings
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_text(
+        "def loose():\n"
+        "    return 1\n"
+        "\n"
+        "class Thing:\n"
+        '    """Documented."""\n'
+        "\n"
+        "    def method(self):\n"
+        "        return 2\n"
+    )
+    names = {
+        f["finding"].split("::")[1].split(":")[0]
+        for f in check_public_docstrings(tmp_path)
+    }
+    assert names == {"loose", "Thing.method"} or names == {"loose", "method"}
+
+
+def test_doc006_skips_a_class_defined_inside_a_function(tmp_path: Path) -> None:
+    """A class nested in a function exposes nothing, nor do its methods."""
+    from evaluator_cog.engine.deterministic import check_public_docstrings
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_text(
+        "def factory():\n"
+        '    """Documented."""\n'
+        "\n"
+        "    class Local:\n"
+        "        def method(self):\n"
+        "            return 1\n"
+        "\n"
+        "    return Local\n"
+    )
+    assert check_public_docstrings(tmp_path) == []

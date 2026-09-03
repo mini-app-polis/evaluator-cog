@@ -234,6 +234,43 @@ def check_adrs_present(repo_path: Path) -> list[Finding]:
     return findings
 
 
+def _public_definitions(
+    tree: ast.AST,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef]:
+    """Definitions reachable from outside the module.
+
+    ``ast.walk`` reaches every node, including functions defined inside
+    other functions. A closure is not public API — it cannot be
+    imported, and no consumer can call it — so requiring a docstring on
+    it is noise. ``_routes.py::walk``, a four-line recursive helper
+    inside ``_enclosing_function_names``, was reported as a public
+    function missing documentation.
+
+    Methods stay public: a class defined at module level exposes them.
+    A class defined *inside* a function does not, so its methods are
+    skipped along with everything else in that scope.
+    """
+    found: list[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef] = []
+
+    def visit(node: ast.AST, inside_function: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not inside_function:
+                    found.append(child)
+                visit(child, True)
+            elif isinstance(child, ast.ClassDef):
+                if not inside_function:
+                    found.append(child)
+                # A module-level class keeps its methods public; a class
+                # nested in a function carries that scope down with it.
+                visit(child, inside_function)
+            else:
+                visit(child, inside_function)
+
+    visit(tree, False)
+    return found
+
+
 def check_public_docstrings(repo_path: Path) -> list[Finding]:
     """DOC-006: Public functions/classes have docstrings."""
     CHECK_ID = "DOC-006"
@@ -250,7 +287,7 @@ def check_public_docstrings(repo_path: Path) -> list[Finding]:
         except Exception:
             continue
         rel = py_file.relative_to(repo_path)
-        for node in ast.walk(tree):
+        for node in _public_definitions(tree):
             if not isinstance(
                 node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
             ):

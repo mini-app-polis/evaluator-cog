@@ -72,10 +72,17 @@ SCOPE_SEGMENTS = 3
 
 
 def is_scope_like(value: str) -> bool:
+    """True for anything shaped like a scope, valid or not.
+
+    Deliberately looser than the grammar so a malformed scope is found
+    and reported by AUTH-003 (5) rather than going unrecognised and
+    silently classifying its route as authenticated-only.
+    """
     return bool(SCOPE_LIKE_RE.match(value))
 
 
 def is_valid_scope(value: str) -> bool:
+    """True for the grammar exactly: <domain>.<resource>.<action>."""
     return is_scope_like(value) and value.count(".") == SCOPE_SEGMENTS - 1
 
 
@@ -177,6 +184,7 @@ class Dependency:
 
     @property
     def is_scope_guard(self) -> bool:
+        """True when this dependency names at least one scope string."""
         return bool(self.scopes)
 
     @property
@@ -226,14 +234,21 @@ class Route:
 
     @property
     def scope_dependencies(self) -> list[Dependency]:
+        """The guards on this route that name a scope."""
         return [d for d in self.dependencies if d.is_scope_guard]
 
     @property
     def scopes(self) -> list[str]:
+        """Every scope string this route requires, across all its guards."""
         return [s for d in self.dependencies for s in d.scopes]
 
     @property
     def unresolvable_dependencies(self) -> list[Dependency]:
+        """Guards that could bear on access but could not be read.
+
+        Infrastructure is excluded: a database session is not a guard
+        whose requirement is unknown, it is not a guard.
+        """
         return [d for d in self.guard_dependencies if not d.resolvable]
 
     def classify(self) -> str:

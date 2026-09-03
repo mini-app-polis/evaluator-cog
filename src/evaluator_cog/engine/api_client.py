@@ -42,9 +42,11 @@ class PostResult:
 
     @property
     def last_error(self) -> str:
+        """The most recent failure, or "" — what a log line should name."""
         return self.errors[-1] if self.errors else ""
 
     def merge(self, other: PostResult) -> None:
+        """Fold another result into this one, for a run-scoped tally."""
         self.attempted += other.attempted
         self.posted += other.posted
         self.duplicates += other.duplicates
