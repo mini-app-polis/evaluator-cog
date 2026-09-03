@@ -438,10 +438,24 @@ def test_cd020_flags_unparseable_releaserc(
 
 
 class _Result:
-    def __init__(self, returncode: int) -> None:
+    """Stands in for `uv lock --check`.
+
+    The default stderr is uv's real wording, verified against uv 0.9 on
+    a deliberately staled lockfile. The invented phrasing this carried
+    before ("The lockfile is out of date") let the check pass its tests
+    while reading any non-zero exit as staleness — including the
+    environment failures uv also exits non-zero for.
+    """
+
+    def __init__(self, returncode: int, stderr: str | None = None) -> None:
         self.returncode = returncode
         self.stdout = ""
-        self.stderr = "The lockfile is out of date"
+        self.stderr = (
+            "error: The lockfile at `uv.lock` needs to be updated, but "
+            "`--check` was provided."
+            if stderr is None
+            else stderr
+        )
 
 
 def test_cd020_flags_stale_lock_and_names_both_versions(
@@ -651,3 +665,71 @@ def test_cd020_ignores_repo_without_uv_sources(
     _disable_uv(monkeypatch)
     _uv_managed_repo(tmp_path, pyproject=_pyproject(include_sources=False))
     assert check_cd_020(tmp_path) == []
+
+
+# --- CD-020: a failed subprocess is not a stale lockfile ---------------------
+
+
+def _uv_result(returncode: int, stderr: str = "", stdout: str = ""):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def _uv_repo(tmp_path: Path) -> Path:
+    (tmp_path / "uv.lock").write_text('version = 1\n[[package]]\nname = "x"\n')
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "1.0.0"\ndependencies = []\n'
+    )
+    (tmp_path / ".releaserc.json").write_text(
+        '{"plugins": [["@semantic-release/exec", {"prepareCmd": "uv lock"}],'
+        ' ["@semantic-release/git", {"assets": ["uv.lock"]}]]}'
+    )
+    return tmp_path
+
+
+def test_cd020_does_not_call_a_broken_uv_a_stale_lockfile(tmp_path: Path) -> None:
+    """uv exits non-zero when it cannot run, not only when the lock is stale.
+
+    On identity, `uv lock --check` failed reading a stale .venv and the
+    check reported the lockfile as out of date — while the same tree,
+    copied without that .venv, checked clean. Environment failures are
+    not the repository's violation.
+    """
+    from unittest.mock import patch
+
+    from evaluator_cog.engine.deterministic import check_cd_020
+
+    repo = _uv_repo(tmp_path)
+    broken = _uv_result(
+        2, stderr="error: Failed to query Python interpreter\n  Permission denied"
+    )
+    with (
+        patch("shutil.which", return_value="/usr/bin/uv"),
+        patch("subprocess.run", return_value=broken),
+    ):
+        findings = check_cd_020(repo)
+    stale = [f for f in findings if "out of date" in f["finding"]]
+    assert stale == [], f"a broken uv was read as a stale lockfile: {stale}"
+
+
+def test_cd020_still_flags_a_genuinely_stale_lockfile(tmp_path: Path) -> None:
+    """The true positive: uv's own message, verified against real uv output."""
+    from unittest.mock import patch
+
+    from evaluator_cog.engine.deterministic import check_cd_020
+
+    repo = _uv_repo(tmp_path)
+    stale = _uv_result(
+        1,
+        stderr=(
+            "error: The lockfile at `uv.lock` needs to be updated, but "
+            "`--check` was provided.\n\nhint: To update the lockfile, run `uv lock`."
+        ),
+    )
+    with (
+        patch("shutil.which", return_value="/usr/bin/uv"),
+        patch("subprocess.run", return_value=stale),
+    ):
+        findings = check_cd_020(repo)
+    assert any("out of date" in f["finding"] for f in findings)

@@ -794,8 +794,10 @@ def _check_lock_is_current(repo_path: Path) -> list[Finding]:
     Guarded twice over. The ``uv`` binary is looked up first and the
     sub-check is skipped in silence when it is absent, because a tool
     missing from the evaluator's own environment is not the target
-    repository's violation. The subprocess then runs under an explicit
-    timeout — ``uv lock --check`` reaches the configured indexes and would
+    repository's violation. Nor is a non-zero exit on its own: only the
+    lockfile-needs-updating message is read as staleness, because uv
+    exits non-zero for environment failures too. The subprocess then
+    runs under an explicit timeout — ``uv lock --check`` reaches the configured indexes and would
     otherwise be able to hang the entire conformance sweep on a network
     stall — and a timeout, like any other execution failure, is reported
     as nothing rather than as a violation.
@@ -818,6 +820,23 @@ def _check_lock_is_current(repo_path: Path) -> list[Finding]:
         return findings
 
     if result.returncode == 0:
+        return findings
+
+    # Non-zero is not the same as stale. `uv lock --check` exits 1 with
+    # "The lockfile at `uv.lock` needs to be updated" when the lock is
+    # genuinely out of date, and exits with other codes when it could
+    # not run at all — no usable interpreter, an unreadable .venv, no
+    # network to resolve a git dependency. Treating every failure as
+    # staleness reported identity's lockfile as out of date when
+    # `uv lock --check` on a clean copy of that same tree exits 0; what
+    # actually failed was reading a stale .venv.
+    #
+    # So the definitive message is required, not merely a bad exit code.
+    # A false negative here costs little — the other three clauses still
+    # catch the drift structurally — while a false positive tells you to
+    # regenerate a lockfile that is correct.
+    combined = f"{result.stdout or ''}\n{result.stderr or ''}"
+    if "needs to be updated" not in combined:
         return findings
 
     data, _ = _load_toml(repo_path / "pyproject.toml")
