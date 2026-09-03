@@ -132,3 +132,39 @@ def _is_checker_self_source(py: Path) -> bool:
     source under ``src/evaluator_cog/engine/deterministic/``).
     """
     return "/engine/deterministic/" in str(py).replace("\\", "/")
+
+
+def production_python_text(repo_path: Path) -> str:
+    """All Python under `repo_path/src`, concatenated, checker source excluded.
+
+    Six checks each did ``"\n".join(f.read_text() for f in
+    src.rglob("*.py"))`` independently, so a repo's source was read and
+    joined once per check. Doing it once per repo is the obvious saving,
+    but the reason this exists is the exclusion.
+
+    When the evaluator runs against itself, ``src/`` contains the
+    deterministic checkers, and every literal they match on becomes a
+    hit. CD-005 looks for ``apscheduler`` and finds it in pipeline.py's
+    own pattern list; the guard against reporting that then cost 129
+    seconds. Other checks already skip their own tree via
+    ``_is_checker_self_source``; the ones that concatenate did not,
+    because there was no single place to put it.
+
+    Deliberately not cached. Memoising on the directory path saved
+    0.7 ms per repo and would return stale text for any caller that
+    reads a directory, writes to it, and reads again — which is what
+    every test doing so would do. Correctness is worth more than the
+    0.7 ms.
+    """
+    root = repo_path / "src"
+    if not root.is_dir():
+        return ""
+    parts: list[str] = []
+    for py in sorted(root.rglob("*.py")):
+        if _is_checker_self_source(py):
+            continue
+        try:
+            parts.append(py.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+    return "\n".join(parts)

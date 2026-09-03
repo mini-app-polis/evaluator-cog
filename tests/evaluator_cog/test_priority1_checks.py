@@ -817,3 +817,67 @@ def test_run_all_checks_reports_a_slow_check(tmp_path: Path) -> None:
         runner_mod.check_readme = original
 
     assert any("took" in n for n in notes), f"no slow-check note emitted: {notes}"
+
+
+# --- production_python_text --------------------------------------------------
+
+
+def test_production_python_text_excludes_the_checker_tree(tmp_path: Path) -> None:
+    """A checker's own patterns are not the target repo's source.
+
+    Six checks concatenated every file under src/ and matched patterns
+    over the result. Run against evaluator-cog that includes the
+    deterministic checkers, so each pattern they hunt for is present as a
+    literal — CD-005 finds pipeline.py's own "apscheduler" every time.
+    """
+    from evaluator_cog.engine.deterministic._shared import production_python_text
+
+    app = tmp_path / "src" / "myapp"
+    app.mkdir(parents=True)
+    (app / "service.py").write_text("REAL = 'application code'\n")
+
+    checker = tmp_path / "src" / "evaluator_cog" / "engine" / "deterministic"
+    checker.mkdir(parents=True)
+    (checker / "pipeline.py").write_text("PATTERNS = ('apscheduler', 'celery')\n")
+
+    text = production_python_text(tmp_path)
+    assert "application code" in text
+    assert "apscheduler" not in text, "checker source leaked into the scanned text"
+
+
+def test_production_python_text_is_empty_without_a_src_tree(tmp_path: Path) -> None:
+    from evaluator_cog.engine.deterministic._shared import production_python_text
+
+    assert production_python_text(tmp_path) == ""
+
+
+def test_production_python_text_reflects_later_writes(tmp_path: Path) -> None:
+    """Not memoised — a second read must see what the first did not.
+
+    Caching on the directory path saved 0.7 ms per repo and would have
+    returned stale text to any caller that reads, writes, then reads.
+    """
+    from evaluator_cog.engine.deterministic._shared import production_python_text
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("A = 1\n")
+    assert "B = 2" not in production_python_text(tmp_path)
+    (tmp_path / "src" / "b.py").write_text("B = 2\n")
+    assert "B = 2" in production_python_text(tmp_path)
+
+
+def test_cd005_does_not_flag_its_own_apscheduler_pattern(tmp_path: Path) -> None:
+    """The self-scan CD-005 has been paying for, made explicit."""
+    from evaluator_cog.engine.deterministic import check_prefect_cloud_observability
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\ndependencies = ["prefect>=3.0"]\n'
+    )
+    (tmp_path / ".env.example").write_text(
+        "PREFECT_API_URL=https://api.prefect.cloud\n"
+    )
+    checker = tmp_path / "src" / "evaluator_cog" / "engine" / "deterministic"
+    checker.mkdir(parents=True)
+    (checker / "pipeline.py").write_text('SIGNALS = ("apscheduler",)\n')
+
+    assert check_prefect_cloud_observability(tmp_path) == []

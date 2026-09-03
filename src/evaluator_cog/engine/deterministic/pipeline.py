@@ -11,6 +11,7 @@ from evaluator_cog.engine.deterministic._shared import (
     _finding,
     _is_checker_self_source,
     _is_inside_string_literal,
+    production_python_text,
 )
 
 
@@ -25,11 +26,7 @@ def check_healthchecks_integration(
         return findings
     env_example = repo_path / ".env.example"
     env_text = env_example.read_text() if env_example.exists() else ""
-    src_text = (
-        "\n".join(f.read_text() for f in (repo_path / "src").rglob("*.py"))
-        if (repo_path / "src").is_dir()
-        else ""
-    )
+    src_text = production_python_text(repo_path) if (repo_path / "src").is_dir() else ""
     if "HEALTHCHECKS_URL_" not in env_text or (
         "HEALTHCHECKS_URL_" not in src_text and "healthchecks" not in src_text.lower()
     ):
@@ -98,7 +95,7 @@ def check_prefect_present(
         )
         return findings
 
-    py_src = "\n".join(f.read_text() for f in src.rglob("*.py"))
+    py_src = production_python_text(repo_path)
     if cog_subtype == "trigger":
         # Trigger cogs satisfy PIPE-001 by using any of the three standard
         # Prefect client patterns for creating flow runs. The rule's
@@ -190,7 +187,7 @@ def check_prefect_cloud_observability(
 
     src = repo_path / "src"
     if src.is_dir():
-        py_src = "\n".join(f.read_text() for f in src.rglob("*.py"))
+        py_src = production_python_text(repo_path)
         if (
             "apscheduler" in py_src.lower()
             and not _is_inside_string_literal(py_src, "APScheduler")
@@ -644,7 +641,7 @@ def check_evaluation_step(repo_path: Path) -> list[Finding]:
     src = repo_path / "src"
     if not src.is_dir():
         return findings
-    text = "\n".join(f.read_text() for f in src.rglob("*.py"))
+    text = production_python_text(repo_path)
     signals = (
         "pipeline_eval",
         "post_evaluation",

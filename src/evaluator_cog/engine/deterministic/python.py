@@ -9,6 +9,7 @@ from pathlib import Path
 from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
+    production_python_text,
 )
 
 
@@ -255,7 +256,7 @@ def check_failed_prefix(repo_path: Path) -> list[Finding]:
     if not src.is_dir():
         return findings
 
-    content = "\n".join(f.read_text() for f in src.rglob("*.py"))
+    content = production_python_text(repo_path)
     has_file_processing = (
         ("shutil" in content or "pathlib" in content)
         and "except" in content
@@ -316,7 +317,7 @@ def check_dedup_handling_present(repo_path: Path) -> list[Finding]:
         "uniqueviolation",
     )
 
-    content = "\n".join(f.read_text().lower() for f in src.rglob("*.py"))
+    content = production_python_text(repo_path).lower()
     if not any(signal in content for signal in dedup_signals):
         findings.append(
             _finding(
