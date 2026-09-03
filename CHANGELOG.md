@@ -1,3 +1,15 @@
+# [3.18.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.17.0...v3.18.0) (2026-09-03)
+
+
+### Bug Fixes
+
+* **deps:** refresh the lock to clear 34 known vulnerabilities ([4cdec00](https://github.com/mini-app-polis/evaluator-cog/commit/4cdec0039079f70767fe1e263c19be9da09bb96b))
+
+
+### Features
+
+* **security:** call the shared security workflow ([14b78d1](https://github.com/mini-app-polis/evaluator-cog/commit/14b78d1a422d44ade19062207c154be1c939e7e4))
+
 # [3.17.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.8...v3.17.0) (2026-09-03)
 
 
