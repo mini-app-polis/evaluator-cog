@@ -1,3 +1,10 @@
+## [3.16.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.2...v3.16.3) (2026-09-03)
+
+
+### Bug Fixes
+
+* **reporting:** a run that delivers nothing must not report success ([14a0852](https://github.com/mini-app-polis/evaluator-cog/commit/14a08520cad65c2c0dd1e5a86bae7e4cb134011a))
+
 ## [3.16.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.1...v3.16.2) (2026-09-03)
 
 
