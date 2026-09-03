@@ -5,6 +5,17 @@ on:
   pull_request:
     branches: [main]
 jobs:
+  # Delegates to the fleet's shared security workflow: gitleaks over
+  # full history, pip-audit against the resolved dependency set, semgrep,
+  # and a CycloneDX SBOM retained as a build artifact. The steps live in
+  # mini-app-polis/.github so the pinned tool versions and the gating
+  # decisions are in one place; see that repo's README for the inputs.
+  security:
+    uses: mini-app-polis/.github/.github/workflows/security.yml@v1
+    with:
+      language: python
+      package-manager: uv
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -16,7 +27,7 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run pytest --cov=src --cov-report=term-missing
   release:
-    needs: test
+    needs: [test, security]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
