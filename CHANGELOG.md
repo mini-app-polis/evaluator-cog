@@ -1,3 +1,10 @@
+## [3.16.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.5...v3.16.6) (2026-09-03)
+
+
+### Bug Fixes
+
+* **logging:** report every post site into the Prefect run log ([efa611c](https://github.com/mini-app-polis/evaluator-cog/commit/efa611c63c7f8753a5bed2ed53879e455b0bac13))
+
 ## [3.16.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.4...v3.16.5) (2026-09-03)
 
 
