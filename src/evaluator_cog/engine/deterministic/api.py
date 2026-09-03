@@ -183,7 +183,7 @@ def check_response_shape_parity(
                     _finding(
                         "XSTACK-002",
                         "WARN",
-                        "structural_conformance",
+                        "cross_repo_coherence",
                         f"FastAPI route missing response_model= in {py.relative_to(repo_path)}.",
                         "Declare response_model (or return type) for every public route.",
                     )
@@ -216,7 +216,7 @@ def check_response_shape_parity(
                 _finding(
                     "XSTACK-002",
                     "WARN",
-                    "structural_conformance",
+                    "cross_repo_coherence",
                     f"Hono handler uses raw c.json without success()/error() helper ({ts.relative_to(repo_path)}).",
                     "Wrap JSON responses with the shared success()/error() helpers.",
                 )
@@ -300,7 +300,7 @@ def check_inputs_not_deleted(repo_path: Path) -> list[Finding]:
                 _finding(
                     "PIPE-005",
                     "WARN",
-                    "pipeline_consistency",
+                    "structural_conformance",
                     f"Drive files().delete() referenced in {path.relative_to(repo_path)}.",
                     "Never delete raw input artifacts from Drive — move to derived outputs only.",
                 )
@@ -315,7 +315,7 @@ def check_inputs_not_deleted(repo_path: Path) -> list[Finding]:
                 _finding(
                     "PIPE-005",
                     "WARN",
-                    "pipeline_consistency",
+                    "structural_conformance",
                     f"Potential Drive trash update on input file in {path.relative_to(repo_path)}.",
                     "Avoid trashing upstream inputs; operate on copies.",
                 )
@@ -327,7 +327,7 @@ def check_inputs_not_deleted(repo_path: Path) -> list[Finding]:
                 _finding(
                     "PIPE-005",
                     "WARN",
-                    "pipeline_consistency",
+                    "structural_conformance",
                     f"os.remove/unlink/rmtree may target input paths ({path.relative_to(repo_path)}).",
                     "Only remove scratch/temp paths — never input variables.",
                 )
@@ -876,7 +876,7 @@ def check_health_endpoint(repo_path: Path, language: str = "python") -> list[Fin
             _finding(
                 "API-010",
                 "WARN",
-                "structural_conformance",
+                "cd_readiness",
                 "api-service has no visible GET /health endpoint.",
                 "Add a GET /health route that returns {'status': 'ok'} with no auth "
                 "and no DB queries.",

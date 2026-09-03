@@ -468,7 +468,7 @@ def check_three_layer_observability(
                 _finding(
                     "CD-010",
                     "ERROR",
-                    "structural_conformance",
+                    "cd_readiness",
                     "Layer 1 missing: no HEALTHCHECKS_URL env var or healthchecks.io ping in source.",
                     "Add HEALTHCHECKS_URL (or a per-service HEALTHCHECKS_URL_<NAME>) "
                     "to .env.example and reference it from the main loop to ping "
@@ -498,7 +498,7 @@ def check_three_layer_observability(
             _finding(
                 "CD-010",
                 "ERROR",
-                "structural_conformance",
+                "cd_readiness",
                 "Layer 2 missing: no shared-library logger usage.",
                 layer2_hint,
             )
@@ -528,7 +528,7 @@ def check_three_layer_observability(
             _finding(
                 "CD-010",
                 "ERROR",
-                "structural_conformance",
+                "cd_readiness",
                 "Layer 3 missing: Sentry integration not detected.",
                 layer3_hint,
             )

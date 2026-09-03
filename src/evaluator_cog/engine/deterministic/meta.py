@@ -65,7 +65,7 @@ def check_meta_release_pipeline_wired(repo_path: Path) -> list[Finding]:
             _finding(
                 "META-001",
                 "WARN",
-                "structural_conformance",
+                "cd_readiness",
                 "No GitHub Actions workflow references semantic-release.",
                 "Add a workflow that executes semantic-release on the mainline branch.",
             )
@@ -75,7 +75,7 @@ def check_meta_release_pipeline_wired(repo_path: Path) -> list[Finding]:
             _finding(
                 "META-001",
                 "WARN",
-                "structural_conformance",
+                "cd_readiness",
                 "Missing .releaserc.* configuration alongside semantic-release.",
                 "Add .releaserc.json (or .releaserc.cjs / .yaml) describing branches and plugins.",
             )
@@ -85,7 +85,7 @@ def check_meta_release_pipeline_wired(repo_path: Path) -> list[Finding]:
             _finding(
                 "META-001",
                 "WARN",
-                "structural_conformance",
+                "cd_readiness",
                 "package.json lacks semantic-release wiring (script or dependency).",
                 "Declare semantic-release in devDependencies and expose an npm script if required by the catalog.",
             )
@@ -95,7 +95,7 @@ def check_meta_release_pipeline_wired(repo_path: Path) -> list[Finding]:
             _finding(
                 "META-001",
                 "WARN",
-                "structural_conformance",
+                "cd_readiness",
                 "No workflow appears to trigger on push to main.",
                 "Ensure release automation runs when main updates (push trigger with main branch).",
             )
@@ -116,7 +116,7 @@ def check_meta_no_scattered_metadata(repo_path: Path) -> list[Finding]:
                     _finding(
                         "META-002",
                         "WARN",
-                        "structural_conformance",
+                        "standards_currency",
                         "index.yaml still declares a top-level version: field.",
                         "Remove version from index.yaml — package.json is the single version of record.",
                     )
@@ -126,7 +126,7 @@ def check_meta_no_scattered_metadata(repo_path: Path) -> list[Finding]:
                     _finding(
                         "META-002",
                         "WARN",
-                        "structural_conformance",
+                        "standards_currency",
                         "index.yaml still declares a top-level updated: field.",
                         "Remove updated metadata from index.yaml; rely on git history and package.json.",
                     )
@@ -136,7 +136,7 @@ def check_meta_no_scattered_metadata(repo_path: Path) -> list[Finding]:
                 _finding(
                     "META-002",
                     "WARN",
-                    "structural_conformance",
+                    "standards_currency",
                     f"index.yaml could not be read: {exc}",
                     "Fix permissions/encoding so META-002 can scan for scattered metadata.",
                 )
@@ -149,7 +149,7 @@ def check_meta_no_scattered_metadata(repo_path: Path) -> list[Finding]:
                 _finding(
                     "META-002",
                     "WARN",
-                    "structural_conformance",
+                    "standards_currency",
                     f"Stray plaintext version file exists at repo root ({stray}).",
                     "Delete ad-hoc version files — package.json must remain canonical.",
                 )

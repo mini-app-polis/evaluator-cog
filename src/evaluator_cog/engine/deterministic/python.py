@@ -422,7 +422,7 @@ def check_mypy_in_ci(repo_path: Path) -> list[Finding]:
             _finding(
                 "TEST-012",
                 "WARN",
-                "testing_coverage",
+                "cd_readiness",
                 "[tool.mypy] is configured but mypy is not run in CI workflows.",
                 "Add a mypy step to CI when [tool.mypy] is present.",
             )

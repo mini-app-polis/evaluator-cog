@@ -356,7 +356,8 @@ def _fetch_full_rule_catalog() -> dict[str, dict]:
     """Fetch every checkable rule's metadata from every standards file.
 
     Returns {rule_id: {"applies_to": list[str] | None, "modifies": list[str],
-                       "status": str, "check_mode": "deterministic" | "llm"}}
+                       "status": str, "dimension": str,
+                       "check_mode": "deterministic" | "llm"}}
     covering the entire catalog.
 
     `applies_to` is None when the rule omits the field entirely (v4.0.0
@@ -408,6 +409,7 @@ def _fetch_full_rule_catalog() -> dict[str, dict]:
                 "applies_to": applies_to,
                 "modifies": modifies,
                 "status": str(rule.get("status") or "").strip(),
+                "dimension": str(rule.get("dimension") or "").strip(),
                 "check_mode": classify_check_mode(rule_id, check_notes),
             }
     return catalog

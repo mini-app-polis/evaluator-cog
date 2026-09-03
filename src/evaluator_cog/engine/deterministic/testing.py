@@ -40,7 +40,7 @@ def check_testclient_for_v1_routes(repo_path: Path) -> list[Finding]:
                     _finding(
                         "TEST-008",
                         "WARN",
-                        "test_coverage",
+                        "testing_coverage",
                         f"{rel}::{fn_name}: references /v1/ without TestClient/AsyncClient.",
                         "Use fastapi.testclient.TestClient or httpx.AsyncClient for route tests.",
                     )
@@ -75,7 +75,7 @@ def check_db_test_fixtures(repo_path: Path) -> list[Finding]:
             _finding(
                 "TEST-009",
                 "ERROR",
-                "test_coverage",
+                "testing_coverage",
                 "SQLAlchemy repo has no conftest.py with DB test fixtures.",
                 "Add a conftest.py with DATABASE_URL override, in-memory engine, or "
                 "transaction rollback fixture.",
@@ -94,7 +94,7 @@ def check_db_test_fixtures(repo_path: Path) -> list[Finding]:
             _finding(
                 "TEST-009",
                 "ERROR",
-                "test_coverage",
+                "testing_coverage",
                 "conftest.py has no DB test fixture pattern (DATABASE_URL override, in-memory SQLite, or rollback fixture).",
                 "Add one of: DATABASE_URL override, in-memory SQLite engine, or rollback fixture.",
             )
@@ -183,7 +183,7 @@ def check_route_contract_tests(repo_path: Path) -> list[Finding]:
             _finding(
                 "TEST-010",
                 "ERROR",
-                "test_coverage",
+                "testing_coverage",
                 f"{len(untested)} route(s) have no contract test referencing them: {sample}{suffix}.",
                 "Add tests that exercise each /v1/ route and assert the response shape.",
             )
@@ -441,7 +441,7 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
                 _finding(
                     "TEST-011",
                     "ERROR",
-                    "test_coverage",
+                    "testing_coverage",
                     f"{rel}::{fn.name}: creates mocks but has no verification "
                     f"(mock-API helpers like called / call_args, capture-list "
                     f"assertion, or behavior-injection with at least one "
@@ -488,7 +488,7 @@ def check_test_gap_critical_paths(repo_path: Path) -> list[Finding]:
             _finding(
                 "TEST-GAP-001",
                 "INFO",
-                "test_coverage",
+                "testing_coverage",
                 f"Missing critical-path tests: {', '.join(missing)}.",
                 "Add tests for the missing categories so each pipeline stage has coverage.",
             )

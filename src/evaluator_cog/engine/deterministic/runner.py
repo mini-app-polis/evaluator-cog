@@ -340,6 +340,9 @@ def run_all_checks(
             is_deferred = False
             deferral_expired_on = None
             rule_status = ""
+            # No catalog on the legacy path, so nothing to backfill from —
+            # the check's own dimension literal stands.
+            rule_meta: dict = {}
         else:
             result = evaluator_config.resolve_dispatch(rule_id)
             rule_meta = (evaluator_config.rule_catalog or {}).get(rule_id, {})
@@ -391,6 +394,25 @@ def run_all_checks(
                     ).strip()
                 if rule_status and "status" not in f:
                     f["status"] = rule_status
+                # The catalog decides which dimension a rule reports in.
+                #
+                # Each check passed its own dimension literal, and 47
+                # calls across 25 rules disagreed with the rule's catalog
+                # entry — PIPE-001 filed under pipeline_consistency where
+                # the catalog says structural_conformance, TEST-008 under
+                # a `test_coverage` that is not a declared dimension at
+                # all. Nothing validated it on either side: the field is
+                # a free-form string in the evaluator and in the API, so
+                # Pipeline Health grouped by whatever arrived and showed
+                # buckets the catalog has never declared.
+                #
+                # The literals are corrected and a test holds them to the
+                # catalog, but a literal is a copy and copies drift. This
+                # is the guarantee: whatever a check passes, the rule's
+                # own catalog entry is what the finding reports under.
+                catalog_dimension = str(rule_meta.get("dimension") or "").strip()
+                if catalog_dimension:
+                    f["dimension"] = catalog_dimension
             findings.extend(new_findings)
         except Exception as exc:
             findings.append(

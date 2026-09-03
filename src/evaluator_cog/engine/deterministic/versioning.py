@@ -102,7 +102,7 @@ def check_releaserc_assets(
             _finding(
                 "VER-008",
                 "ERROR",
-                "cd_readiness",
+                "structural_conformance",
                 "CHANGELOG.md is absent from @semantic-release/git assets.",
                 "Add CHANGELOG.md to the assets array in the @semantic-release/git plugin config.",
             )
@@ -114,7 +114,7 @@ def check_releaserc_assets(
                 _finding(
                     "VER-008",
                     "ERROR",
-                    "cd_readiness",
+                    "structural_conformance",
                     f"{f} is written by prepareCmd but absent from @semantic-release/git assets.",
                     f"Add {f} to the assets array in the @semantic-release/git plugin config.",
                 )

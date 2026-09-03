@@ -75,7 +75,7 @@ def check_prefect_present(
             _finding(
                 "PIPE-001",
                 "WARN",
-                "pipeline_consistency",
+                "structural_conformance",
                 "Prefect is not declared as a dependency.",
                 "Add prefect to pyproject.toml (or requirements.txt) for orchestrated flows.",
             )
@@ -88,7 +88,7 @@ def check_prefect_present(
             _finding(
                 "PIPE-001",
                 "WARN",
-                "pipeline_consistency",
+                "structural_conformance",
                 "src/ tree missing — cannot verify Prefect usage in application code.",
                 "Add a src/ package with flow entrypoints.",
             )
@@ -111,7 +111,7 @@ def check_prefect_present(
                 _finding(
                     "PIPE-001",
                     "WARN",
-                    "pipeline_consistency",
+                    "structural_conformance",
                     (
                         "Trigger cog source does not reference Prefect's "
                         "flow-run creation API (run_deployment, PrefectClient "
@@ -131,7 +131,7 @@ def check_prefect_present(
             _finding(
                 "PIPE-001",
                 "WARN",
-                "pipeline_consistency",
+                "structural_conformance",
                 "Pipeline cog source has no @flow-decorated Prefect flow.",
                 "Define orchestration entrypoints with @flow and register them from the cog main module.",
             )
@@ -266,7 +266,7 @@ def check_shared_resource_concurrency(repo_path: Path) -> list[Finding]:
                     _finding(
                         "PIPE-004",
                         "ERROR",
-                        "pipeline_consistency",
+                        "structural_conformance",
                         f"{rel}::{node.name}: flow writes to shared resource without concurrency guard.",
                         "Add concurrency_limit= on the @flow decorator, or wrap the write "
                         "block with a 'with concurrency(...)' slot from prefect.concurrency.sync.",
@@ -351,7 +351,7 @@ def check_prefect_run_logger(repo_path: Path) -> list[Finding]:
                 _finding(
                     "PIPE-006",
                     "WARN",
-                    "pipeline_consistency",
+                    "structural_conformance",
                     f"{rel}::{node.name}: flow does not call get_run_logger() "
                     f"(directly or via a logger-wrapper defined in this repo).",
                     "Use get_run_logger() inside flows for Prefect-integrated logging; "
@@ -513,7 +513,7 @@ def check_retry_logic(repo_path: Path) -> list[Finding]:
                     _finding(
                         "PIPE-007",
                         "WARN",
-                        "pipeline_consistency",
+                        "structural_conformance",
                         f"External-calling task missing retries= in {py_file.relative_to(repo_path)}::{node.name}.",
                         "Add retries= to @task decorators that call external APIs.",
                     )
@@ -653,7 +653,7 @@ def check_evaluation_step(repo_path: Path) -> list[Finding]:
             _finding(
                 "PIPE-009",
                 "WARN",
-                "pipeline_consistency",
+                "pipeline_reliability",
                 "Pipeline cog source has no clear evaluation-step signal.",
                 "Add or document an evaluation step that posts findings to /v1/evaluations.",
             )
@@ -690,7 +690,7 @@ def check_prefect_serve_pattern(repo_path: Path) -> list[Finding]:
             _finding(
                 "CD-015",
                 "ERROR",
-                "cd_readiness",
+                "structural_conformance",
                 "work pool pattern detected — flow.deploy() or work_pool_name found.",
                 "Use prefect.serve() running in-process on Railway instead of work pool deployments.",
             )
@@ -701,7 +701,7 @@ def check_prefect_serve_pattern(repo_path: Path) -> list[Finding]:
             _finding(
                 "CD-015",
                 "ERROR",
-                "cd_readiness",
+                "structural_conformance",
                 "work_pool configuration found in prefect.yaml.",
                 "Remove work pool config and use prefect.serve() instead.",
             )
@@ -725,7 +725,7 @@ def check_prefect_serve_pattern(repo_path: Path) -> list[Finding]:
             _finding(
                 "CD-015",
                 "WARN",
-                "cd_readiness",
+                "structural_conformance",
                 "No prefect.serve() call found in source — flow registration "
                 "pattern missing or unverifiable.",
                 "Ensure flows are registered via prefect.serve() (or "

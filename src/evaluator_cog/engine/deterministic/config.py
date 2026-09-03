@@ -103,7 +103,7 @@ def check_logger_misuse(repo_path: Path) -> list[Finding]:
                     _finding(
                         "CD-008",
                         "WARN",
-                        "structural_conformance",
+                        "cd_readiness",
                         f"{rel}: logger.error used for expected outcome: {msg!r}.",
                         "Downgrade to logger.warning or logger.info — errors should "
                         "indicate unexpected failures.",
@@ -174,7 +174,7 @@ def check_settings_field_consistency(repo_path: Path) -> list[Finding]:
                         _finding(
                             "CFG-001",
                             "WARN",
-                            "configuration_consistency",
+                            "structural_conformance",
                             f"{rel}: getattr(settings, {key!r}) but {key} not declared on Settings.",
                             "Declare the field on Settings or remove the access.",
                         )
@@ -191,7 +191,7 @@ def check_settings_field_consistency(repo_path: Path) -> list[Finding]:
                     _finding(
                         "CFG-001",
                         "WARN",
-                        "configuration_consistency",
+                        "structural_conformance",
                         f"{rel}: settings.{node.attr} access but not declared on Settings.",
                         "Declare the field on Settings or remove the access.",
                     )
@@ -260,7 +260,7 @@ def check_env_example_settings_parity(repo_path: Path) -> list[Finding]:
             _finding(
                 "CFG-002",
                 "WARN",
-                "configuration_consistency",
+                "structural_conformance",
                 f".env.example key {key!r} not declared on Settings.",
                 "Declare the field on Settings or mark the key with a comment noting "
                 "'external tooling'.",
@@ -331,7 +331,7 @@ def check_hardcoded_time_values(
                         _finding(
                             "TEST-013",
                             "INFO",
-                            "principles",
+                            "testing_coverage",
                             f"{rel}: hardcoded numeric value {val} in time/retry/timeout call.",
                             "Source from Settings or env var so tests can override with 0.",
                         )

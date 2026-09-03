@@ -253,7 +253,7 @@ def check_mono_003(
                 _finding(
                     CHECK_ID,
                     "WARN",
-                    "monorepo_coherence",
+                    "pipeline_consistency",
                     f"Monorepo '{mono_id}' emitted {len(group)} duplicate "
                     f"findings for rule {rule_id} across sibling apps "
                     f"({', '.join(affected)}). Expected one collapsed "

@@ -354,7 +354,7 @@ def check_cloudflare_pages_deploy(repo_path: Path) -> list[Finding]:
             _finding(
                 "CD-014",
                 "WARN",
-                "structural_conformance",
+                "cd_readiness",
                 "Static site has netlify.toml — expected Cloudflare Pages deployment.",
                 "Remove netlify.toml and configure Cloudflare Pages deploy instead.",
             )
@@ -364,7 +364,7 @@ def check_cloudflare_pages_deploy(repo_path: Path) -> list[Finding]:
             _finding(
                 "CD-014",
                 "WARN",
-                "structural_conformance",
+                "cd_readiness",
                 "Static site has vercel.json — expected Cloudflare Pages deployment.",
                 "Remove vercel.json and configure Cloudflare Pages deploy instead.",
             )
@@ -374,7 +374,7 @@ def check_cloudflare_pages_deploy(repo_path: Path) -> list[Finding]:
             _finding(
                 "CD-014",
                 "WARN",
-                "structural_conformance",
+                "cd_readiness",
                 "Static site uses GitHub Pages deploy — expected Cloudflare Pages.",
                 "Switch to Cloudflare Pages deploy.",
             )
@@ -385,7 +385,7 @@ def check_cloudflare_pages_deploy(repo_path: Path) -> list[Finding]:
             _finding(
                 "CD-014",
                 "WARN",
-                "structural_conformance",
+                "cd_readiness",
                 "No deployment target detected (no Cloudflare Pages markers in ci.yml or README).",
                 "Document the Cloudflare Pages deploy in ci.yml or README.",
             )

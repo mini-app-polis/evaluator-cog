@@ -265,3 +265,125 @@ jobs:
         }
     )
     assert check_meta_release_pipeline_wired(root) == []
+
+
+# --- dimension integrity -----------------------------------------------------
+
+
+def _emitted_dimensions() -> list[tuple[str, int, str, str]]:
+    """(file, line, rule_id, dimension) for every _finding() in the package.
+
+    Resolves ``CHECK_ID`` per enclosing function. Collecting it as a
+    module-level constant instead attributes every call in a module to
+    whichever function was walked last, which is how a first pass at
+    this audit produced a confidently wrong answer.
+    """
+    import ast
+
+    from evaluator_cog.engine.deterministic import _shared
+
+    pkg = Path(_shared.__file__).parent
+    out: list[tuple[str, int, str, str]] = []
+    for py in sorted(pkg.glob("*.py")):
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        module_consts = {
+            n.targets[0].id: n.value.value
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            and len(n.targets) == 1
+            and isinstance(n.targets[0], ast.Name)
+            and isinstance(n.value, ast.Constant)
+            and isinstance(n.value.value, str)
+        }
+        functions = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        for fn in functions:
+            local = dict(module_consts)
+            for n in ast.walk(fn):
+                if (
+                    isinstance(n, ast.Assign)
+                    and len(n.targets) == 1
+                    and isinstance(n.targets[0], ast.Name)
+                    and isinstance(n.value, ast.Constant)
+                    and isinstance(n.value.value, str)
+                ):
+                    local[n.targets[0].id] = n.value.value
+
+            def resolve(node, scope=local):
+                if isinstance(node, ast.Constant):
+                    return node.value
+                if isinstance(node, ast.Name):
+                    return scope.get(node.id)
+                return None
+
+            for n in ast.walk(fn):
+                if not (
+                    isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Name)
+                    and n.func.id == "_finding"
+                    and len(n.args) >= 3
+                ):
+                    continue
+                rule_id, dimension = resolve(n.args[0]), resolve(n.args[2])
+                if rule_id and dimension and rule_id != "CHECKER":
+                    out.append((py.name, n.lineno, rule_id, dimension))
+    return out
+
+
+def test_every_emitted_dimension_is_one_the_catalog_declares() -> None:
+    """A dimension the catalog does not define is a phantom bucket.
+
+    `dimension` is a free-form string in the evaluator and in the API's
+    request schema, so nothing rejects an invented one — it simply
+    appears in Pipeline Health's GROUP BY as a category that does not
+    exist. `test_coverage` sat beside the real `testing_coverage` for
+    months, splitting the record between them.
+    """
+    import yaml
+
+    index = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "evaluator.yaml").read_text()
+    )
+    assert index is not None  # sanity: the repo's own config parses
+
+    declared = {
+        "structural_conformance",
+        "pipeline_consistency",
+        "pipeline_reliability",
+        "testing_coverage",
+        "documentation_coverage",
+        "cd_readiness",
+        "cross_repo_coherence",
+        "standards_currency",
+        "monorepo_coherence",
+        "security_posture",
+        "operational_readiness",
+    }
+    bad = [
+        (f, ln, rid, dim)
+        for f, ln, rid, dim in _emitted_dimensions()
+        if dim not in declared
+    ]
+    assert not bad, "dimensions the catalog does not declare:\n" + "\n".join(
+        f"  {f}:{ln} {rid} -> {dim!r}" for f, ln, rid, dim in bad
+    )
+
+
+def test_no_rule_emits_two_different_dimensions() -> None:
+    """One rule reports in one dimension.
+
+    A rule split across two dimensions is counted twice in the
+    dashboard's breakdown and fully in neither. PIPE-001 emitted
+    `pipeline_consistency` from four call sites while the catalog filed
+    it under `structural_conformance`.
+    """
+    from collections import defaultdict
+
+    by_rule: dict[str, set[str]] = defaultdict(set)
+    for _f, _ln, rule_id, dimension in _emitted_dimensions():
+        by_rule[rule_id].add(dimension)
+    split = {r: sorted(d) for r, d in by_rule.items() if len(d) > 1}
+    assert not split, f"rules emitting more than one dimension: {split}"
