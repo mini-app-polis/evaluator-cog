@@ -1,3 +1,10 @@
+## [3.16.8](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.7...v3.16.8) (2026-09-03)
+
+
+### Bug Fixes
+
+* **dimensions:** file every finding under the dimension its rule declares ([5e457ef](https://github.com/mini-app-polis/evaluator-cog/commit/5e457ef8aede3a52ea009477b1b098eea6f62705))
+
 ## [3.16.7](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.6...v3.16.7) (2026-09-03)
 
 
