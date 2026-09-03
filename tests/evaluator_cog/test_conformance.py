@@ -554,7 +554,11 @@ def test_conformance_monorepo_service_failure_does_not_abort_flow(
         patch.object(conf, "_download_repo", side_effect=fake_download_repo),
         patch.object(conf, "_parse_check_exceptions", side_effect=tracking_parse),
         patch.object(conf, "run_all_checks", side_effect=fake_run_all_checks),
-        patch.object(conf, "post_findings"),
+        # Return a real PostResult, not a bare MagicMock: the flow now
+        # tallies delivery outcomes and fails the run when nothing
+        # reached the API, so a double that does not answer "how many
+        # posted?" is not a faithful stand-in for the real function.
+        patch.object(conf, "post_findings", return_value=conf.PostResult()),
         patch.object(conf, "_fetch_standards_for_service", return_value=[]),
     ):
         conformance_check_flow(run_llm=False)

@@ -2,12 +2,54 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from mini_app_polis import logger as logger_mod
 from mini_app_polis.api import KaianoApiClient as CommonPythonApiClient
 
 log = logger_mod.get_logger()
+
+
+@dataclass
+class PostResult:
+    """What actually happened when findings were handed to the API.
+
+    ``post_findings`` used to compute this, log one line of it, and throw
+    it away. On 2026-09-03 that cost two full conformance runs: the
+    evaluator computed ~162 findings across 13 repos, every POST failed
+    before leaving the process, and the flow still finished Completed and
+    pinged Healthchecks green — because a swallowed failure is
+    indistinguishable from success to every caller.
+
+    Returning the outcome is what lets the flow tell the difference. The
+    load-bearing property is :attr:`total_failure`: attempted work that
+    posted nothing is a systemic fault (no route, no credential, no
+    service), not N independent unlucky findings, and it must surface as
+    a failed flow run rather than a warning nobody reads.
+    """
+
+    attempted: int = 0
+    posted: int = 0
+    duplicates: int = 0
+    failed: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    @property
+    def total_failure(self) -> bool:
+        """True when findings were offered and none reached the API."""
+        return self.attempted > 0 and self.posted == 0 and self.failed > 0
+
+    @property
+    def last_error(self) -> str:
+        return self.errors[-1] if self.errors else ""
+
+    def merge(self, other: PostResult) -> None:
+        self.attempted += other.attempted
+        self.posted += other.posted
+        self.duplicates += other.duplicates
+        self.failed += other.failed
+        self.errors.extend(other.errors)
 
 
 def _get_latest_stored_finding(
@@ -58,13 +100,19 @@ def post_findings(
     source: str,
     standards_version: str,
     direct_finding_text: str | None = None,
-) -> None:
-    """Post a list of findings to api-kaianolevine-com. Never raises."""
+) -> PostResult:
+    """Post a list of findings to api-kaianolevine-com.
+
+    Never raises — a caller mid-run should not lose the findings it has
+    already computed because one POST failed. But it no longer stays
+    silent either: the returned :class:`PostResult` says how many were
+    offered, accepted, deduplicated and rejected, and the caller is
+    expected to act on ``total_failure``.
+    """
+    result = PostResult()
     err_ct = warn_ct = info_ct = 0
 
     api_client = CommonPythonApiClient.from_env("evaluator-cog")
-    findings_posted = 0
-    evaluator_failed = False
 
     # Fetch once before the loop — avoids one GET per finding.
     # Dedup key: (run_id, finding_text, severity, dimension). Collisions on all
@@ -125,20 +173,32 @@ def post_findings(
                 run_id,
                 finding_text[:60],
             )
+            result.duplicates += 1
             continue
+        result.attempted += 1
         try:
             api_client.post("/v1/evaluations", payload)
-            findings_posted += 1
+            result.posted += 1
         except Exception as e:
             log.warning("pipeline evaluation: failed to POST finding: %s", e)
-            evaluator_failed = True
+            result.failed += 1
+            result.errors.append(str(e))
 
     log.info(
         "🤖 Evaluation complete: %d errors, %d warnings, %d info findings "
-        "(%d posted, evaluator_failed=%s)",
+        "(%d offered, %d posted, %d duplicate, %d failed)",
         err_ct,
         warn_ct,
         info_ct,
-        findings_posted,
-        evaluator_failed,
+        result.attempted,
+        result.posted,
+        result.duplicates,
+        result.failed,
     )
+    if result.total_failure:
+        log.error(
+            "🛑 Nothing reached the API: %d findings offered, 0 posted. Last error: %s",
+            result.attempted,
+            result.last_error,
+        )
+    return result

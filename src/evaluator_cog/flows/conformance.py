@@ -38,7 +38,7 @@ from mini_app_polis import logger as logger_mod
 from prefect import flow, get_run_logger
 from prefect.concurrency.sync import concurrency
 
-from evaluator_cog.engine.api_client import post_findings
+from evaluator_cog.engine.api_client import PostResult, post_findings
 from evaluator_cog.engine.deterministic import run_all_checks
 from evaluator_cog.engine.evaluator_config import EvaluatorConfig, load_evaluator_config
 from evaluator_cog.engine.llm import (
@@ -83,6 +83,73 @@ _FALLBACK_STANDARDS_DOMAINS: tuple[str, ...] = (
     "testing",
     "versioning",
 )
+
+
+# Accumulates every post_findings outcome in one flow invocation.
+#
+# A run that computes findings and delivers none of them is a systemic
+# fault — no route, no credential, no service — not N unlucky findings,
+# and it must fail the flow rather than log a warning. Before this, the
+# 2026-09-03 runs computed ~162 findings across 13 repos, posted zero,
+# and still finished Completed with a green Healthchecks ping, because
+# post_findings swallowed every error and the "posted N findings" log
+# line reported the length of the list handed over rather than what the
+# API accepted.
+_RUN_TALLY = PostResult()
+
+
+def _reset_run_tally() -> None:
+    """Start a fresh tally. Called once at the top of each flow run."""
+    global _RUN_TALLY
+    _RUN_TALLY = PostResult()
+
+
+def _post_tracked(label: str, prefect_log: Any = None, **kwargs: Any) -> PostResult:
+    """post_findings + accumulate + log what the API actually accepted.
+
+    ``label`` names the emitter (a rule id, or a repo) so a partial
+    failure says which one. The logged number is ``result.posted``, never
+    ``len(findings)`` — reporting the size of the list you handed over is
+    how a total outage came to be logged as success three times in one
+    run.
+    """
+    emit = prefect_log if prefect_log is not None else log
+    result = post_findings(**kwargs)
+    _RUN_TALLY.merge(result)
+    if result.posted:
+        emit.info("%s: posted %d findings", label, result.posted)
+    if result.failed:
+        emit.warning(
+            "%s: %d of %d findings failed to POST — last error: %s",
+            label,
+            result.failed,
+            result.attempted,
+            result.last_error,
+        )
+    return result
+
+
+class FindingDeliveryError(RuntimeError):
+    """Raised when a run computed findings and delivered none of them."""
+
+
+def _assert_findings_were_delivered(prefect_log: Any) -> None:
+    """Fail the flow when nothing reached the API.
+
+    Raising is the point. Prefect marks the run Failed, the flow's
+    failure hooks fire, and ``_on_completion`` does not run — so
+    Healthchecks.io is not pinged green for a run that delivered
+    nothing. A partial failure has already been warned about per
+    emitter and does not fail the run.
+    """
+    if not _RUN_TALLY.total_failure:
+        return
+    raise FindingDeliveryError(
+        f"{_RUN_TALLY.attempted} findings were computed and none reached "
+        f"api-kaianolevine-com. The evaluation itself ran; delivery did "
+        f"not. Check KAIANO_API_BASE_URL and EVALUATOR_COG_API_KEY on "
+        f"this service. Last error: {_RUN_TALLY.last_error}"
+    )
 
 
 def _on_completion(flow, flow_run, state) -> None:
@@ -668,7 +735,8 @@ def run_conformance_check(
         ]
 
     if post:
-        post_findings(
+        _post_tracked(
+            repo_id,
             findings=findings_to_post,
             run_id=run_id,
             repo=repo_id,
@@ -859,7 +927,8 @@ def _run_standalone_deterministic(
             }
         ]
 
-    post_findings(
+    _post_tracked(
+        repo_id,
         findings=findings,
         run_id=run_id,
         repo=repo_id,
@@ -891,7 +960,9 @@ def _run_applies_to_absent_checks(
     try:
         eval_003_findings = check_eval_003()
         if eval_003_findings:
-            post_findings(
+            _post_tracked(
+                "EVAL-003",
+                prefect_log,
                 findings=eval_003_findings,
                 run_id=run_id,
                 repo="ecosystem-standards",
@@ -899,7 +970,6 @@ def _run_applies_to_absent_checks(
                 source="data_quality",
                 standards_version=standards_version,
             )
-            prefect_log.info("EVAL-003: posted %d findings", len(eval_003_findings))
     except Exception as exc:
         prefect_log.warning("EVAL-003: check failed: %s", exc)
 
@@ -907,7 +977,9 @@ def _run_applies_to_absent_checks(
     try:
         mono_003_findings = check_mono_003(ecosystem=ecosystem)
         if mono_003_findings:
-            post_findings(
+            _post_tracked(
+                "MONO-003",
+                prefect_log,
                 findings=mono_003_findings,
                 run_id=run_id,
                 repo="ecosystem-standards",
@@ -915,7 +987,6 @@ def _run_applies_to_absent_checks(
                 source="data_quality",
                 standards_version=standards_version,
             )
-            prefect_log.info("MONO-003: posted %d findings", len(mono_003_findings))
     except Exception as exc:
         prefect_log.warning("MONO-003: check failed: %s", exc)
 
@@ -939,7 +1010,9 @@ def _run_applies_to_absent_checks(
         try:
             _findings = _check(ecosystem=ecosystem)
             if _findings:
-                post_findings(
+                _post_tracked(
+                    _rule_id,
+                    prefect_log,
                     findings=_findings,
                     run_id=run_id,
                     repo="ecosystem-standards",
@@ -947,7 +1020,6 @@ def _run_applies_to_absent_checks(
                     source="standards_drift",
                     standards_version=standards_version,
                 )
-                prefect_log.info("%s: posted %d findings", _rule_id, len(_findings))
         except Exception as exc:
             prefect_log.warning("%s: check failed: %s", _rule_id, exc)
 
@@ -959,7 +1031,9 @@ def _run_applies_to_absent_checks(
             evaluator_standards_version=evaluator_standards_version,
         )
         if eval_007_findings:
-            post_findings(
+            _post_tracked(
+                "EVAL-007",
+                prefect_log,
                 findings=eval_007_findings,
                 run_id=run_id,
                 repo="ecosystem-standards",
@@ -967,7 +1041,6 @@ def _run_applies_to_absent_checks(
                 source="standards_drift",
                 standards_version=standards_version,
             )
-            prefect_log.info("EVAL-007: posted %d findings", len(eval_007_findings))
     except Exception as exc:
         prefect_log.warning("EVAL-007: check failed: %s", exc)
 
@@ -995,6 +1068,7 @@ def conformance_check_flow(run_llm: bool = False) -> None:
         import logging
 
         prefect_log = logging.getLogger(__name__)
+    _reset_run_tally()
     flow_label = "conformance" if run_llm else "deterministic"
 
     standards_version = _get_standards_version()
@@ -1369,7 +1443,9 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                                     "suggestion": "",
                                 }
                             ]
-                        post_findings(
+                        _post_tracked(
+                            service_id,
+                            prefect_log,
                             findings=findings,
                             run_id=run_id,
                             repo=service_id,
@@ -1388,4 +1464,17 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                 prefect_log=prefect_log,
             )
 
-    prefect_log.info("%s: complete", flow_label)
+    prefect_log.info(
+        "%s: complete — %d findings offered, %d posted, %d duplicate, %d failed",
+        flow_label,
+        _RUN_TALLY.attempted,
+        _RUN_TALLY.posted,
+        _RUN_TALLY.duplicates,
+        _RUN_TALLY.failed,
+    )
+    # Last statement in the flow, deliberately: everything above has
+    # already run and reported, and this only decides whether the run is
+    # allowed to be called a success. Raising here marks the run Failed,
+    # fires the failure hooks, and stops _on_completion from pinging
+    # Healthchecks green for a run that delivered nothing.
+    _assert_findings_were_delivered(prefect_log)
