@@ -1,3 +1,10 @@
+# [3.17.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.8...v3.17.0) (2026-09-03)
+
+
+### Features
+
+* **security:** accept a delegating job for SEC-003, SEC-004 and SEC-005 ([d1a77a2](https://github.com/mini-app-polis/evaluator-cog/commit/d1a77a29372fffee70ef92ef2c03ce95aed9f6fe))
+
 ## [3.16.8](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.7...v3.16.8) (2026-09-03)
 
 
