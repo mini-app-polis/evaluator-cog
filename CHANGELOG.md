@@ -1,3 +1,11 @@
+## [3.16.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.1...v3.16.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* **cd-016:** register deployments through serve_with_retry ([de51dcf](https://github.com/mini-app-polis/evaluator-cog/commit/de51dcf8250526c56efb8f81ce1ea44e639c0c1e))
+* **sec-006:** validate deadlines against the vulnerability vocabulary ([3979589](https://github.com/mini-app-polis/evaluator-cog/commit/39795899f702f248f28423b662d5642a68c83416))
+
 ## [3.16.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.16.0...v3.16.1) (2026-09-03)
 
 
