@@ -378,7 +378,16 @@ def check_sec_003(repo_path: Path) -> list[Finding]:
         return findings
 
     steps = find_steps(workflows, run_commands=run_commands)
-    if not steps:
+    # A job delegating to the fleet's shared security workflow satisfies
+    # this the same way an inline step does — the same escape hatch
+    # SEC-002 has carried since it landed. Either shape is conformant and
+    # neither is required: a repo may run the audit itself or call the
+    # shared workflow. The check reads a reference rather than steps in
+    # that case, which is why the repo hosting the shared workflow is
+    # registered and evaluated in its own right.
+    reusable = reusable_workflow_jobs(workflows, _SECRET_WORKFLOW_TOKENS)
+
+    if not steps and not reusable:
         findings.append(
             _finding(
                 CHECK_ID,
@@ -386,15 +395,20 @@ def check_sec_003(repo_path: Path) -> list[Finding]:
                 _DIMENSION,
                 f"No step in .github/workflows/ ({_workflow_list(workflows)}) "
                 f"runs a dependency vulnerability scan — expected a `run:` "
-                f"invoking {expectation}.",
+                f"invoking {expectation}, or a job calling a shared security "
+                f"workflow.",
                 f"Add a step running {expectation} to a CI job so every build "
                 f"scans its resolved dependencies, and do not set "
-                f"continue-on-error on it.",
+                f"continue-on-error on it — or call the fleet's shared "
+                f"security workflow, which runs it for you.",
             )
         )
         return findings
 
-    if any(step.is_gating for step in steps):
+    # Gating applies to the delegating job exactly as it does to a step.
+    if any(step.is_gating for step in steps) or any(
+        not job.continue_on_error for job in reusable
+    ):
         return findings
 
     for step in steps:
@@ -410,6 +424,21 @@ def check_sec_003(repo_path: Path) -> list[Finding]:
                 f"{step.location} (and from job `{step.job_id}` if it is set "
                 f"there) so a vulnerable dependency blocks the build rather "
                 f"than producing an advisory nobody reads.",
+            )
+        )
+    for job in reusable:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                _DIMENSION,
+                f"Job {job.workflow}::{job.job_id} calls the shared security "
+                f"workflow ({job.uses}) but sets continue-on-error: true, so "
+                f"the dependency vulnerability scan it runs cannot fail the "
+                f"build.",
+                f"Remove `continue-on-error: true` from job `{job.job_id}` in "
+                f"{job.workflow} so a vulnerable dependency found by the "
+                f"shared security workflow blocks the build.",
             )
         )
     return findings
@@ -449,7 +478,11 @@ def check_sec_004(repo_path: Path) -> list[Finding]:
         )
         return findings
 
-    if find_steps(workflows, uses_patterns=_SAST_USES, run_commands=_SAST_RUNS):
+    # An inline SAST step, or a job delegating to the shared security
+    # workflow that runs one. Gating is not part of this rule either way.
+    if find_steps(
+        workflows, uses_patterns=_SAST_USES, run_commands=_SAST_RUNS
+    ) or reusable_workflow_jobs(workflows, _SECRET_WORKFLOW_TOKENS):
         return findings
 
     findings.append(
@@ -502,6 +535,13 @@ def check_sec_005(repo_path: Path) -> list[Finding]:
                 "job, so each build leaves a retrievable SBOM.",
             )
         )
+        return findings
+
+    # A job delegating to the shared security workflow satisfies this:
+    # the call *is* one job, so the rule's same-job requirement holds by
+    # construction — whatever generation and upload it does, it does
+    # together. Either shape is conformant and neither is required.
+    if reusable_workflow_jobs(workflows, _SECRET_WORKFLOW_TOKENS):
         return findings
 
     sbom_jobs: list[str] = []

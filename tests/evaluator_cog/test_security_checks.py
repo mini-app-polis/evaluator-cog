@@ -792,3 +792,101 @@ def test_sec006_flags_a_missing_vulnerability_severities_block(
     f = _ids(check_sec_006(tmp_path), "SEC-006")
     assert len(f) == 1
     assert "vulnerability_severities" in f[0]["finding"]
+
+
+# --- shared workflow as an option, not a mandate ------------------------------
+#
+# SEC-002 has always accepted a job delegating to a shared security
+# workflow. SEC-003/004/005 now do too: a repo may carry the step itself
+# or call the fleet's shared workflow, and neither shape is required of
+# the other.
+
+
+_SHARED_CALL = (
+    "name: CI\n"
+    "on:\n"
+    "  pull_request:\n"
+    "    branches: [main]\n"
+    "jobs:\n"
+    "  security:\n"
+    "    uses: mini-app-polis/.github/.github/workflows/security.yml@v1\n"
+    "    with:\n"
+    "      language: python\n"
+)
+
+
+def _py_repo(tmp_path: Path, ci: str) -> Path:
+    _write(tmp_path, ".github/workflows/ci.yml", ci)
+    _write(tmp_path, "pyproject.toml", '[project]\nname = "x"\nversion = "1.0"\n')
+    return tmp_path
+
+
+def test_delegating_job_satisfies_sec_003_004_005(tmp_path: Path) -> None:
+    repo = _py_repo(tmp_path, _SHARED_CALL)
+    assert check_sec_003(repo) == []
+    assert check_sec_004(repo) == []
+    assert check_sec_005(repo) == []
+
+
+def test_inline_steps_still_satisfy_sec_003_004_005(tmp_path: Path) -> None:
+    """The shared workflow is an option. Carrying the steps still works."""
+    repo = _py_repo(
+        tmp_path,
+        "name: CI\n"
+        "on:\n"
+        "  pull_request:\n"
+        "    branches: [main]\n"
+        "jobs:\n"
+        "  checks:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - run: pip-audit\n"
+        "      - run: semgrep --config auto\n"
+        "      - uses: anchore/sbom-action@v0\n"
+        "      - uses: actions/upload-artifact@v4\n",
+    )
+    assert check_sec_003(repo) == []
+    assert check_sec_004(repo) == []
+    assert check_sec_005(repo) == []
+
+
+def test_sec_003_still_requires_the_delegating_job_to_gate(tmp_path: Path) -> None:
+    """Delegation does not buy a way out of the gating requirement.
+
+    A call that cannot fail the build is the same defect as an audit
+    step with continue-on-error on it.
+    """
+    repo = _py_repo(
+        tmp_path,
+        _SHARED_CALL.replace(
+            "  security:\n", "  security:\n    continue-on-error: true\n"
+        ),
+    )
+    findings = check_sec_003(repo)
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "ERROR"
+
+
+def test_a_workflow_call_that_is_not_security_named_does_not_count(
+    tmp_path: Path,
+) -> None:
+    """The name token is the whole basis for trusting an unread workflow."""
+    repo = _py_repo(
+        tmp_path,
+        _SHARED_CALL.replace("security.yml@v1", "build.yml@v1").replace(
+            "  security:\n", "  build:\n"
+        ),
+    )
+    assert [f["rule_id"] for f in check_sec_003(repo)] == ["SEC-003"]
+    assert [f["rule_id"] for f in check_sec_004(repo)] == ["SEC-004"]
+
+
+def test_neither_shape_present_still_fails(tmp_path: Path) -> None:
+    repo = _py_repo(
+        tmp_path,
+        "name: CI\non:\n  pull_request:\n    branches: [main]\n"
+        "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pytest\n",
+    )
+    assert [f["rule_id"] for f in check_sec_003(repo)] == ["SEC-003"]
+    assert [f["rule_id"] for f in check_sec_004(repo)] == ["SEC-004"]
+    assert [f["rule_id"] for f in check_sec_005(repo)] == ["SEC-005"]
