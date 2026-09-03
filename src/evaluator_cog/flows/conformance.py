@@ -113,6 +113,13 @@ def _post_tracked(label: str, prefect_log: Any = None, **kwargs: Any) -> PostRes
     ``len(findings)`` — reporting the size of the list you handed over is
     how a total outage came to be logged as success three times in one
     run.
+
+    Pass ``prefect_log`` wherever a run logger is in scope. Omitting it
+    falls back to the shared-library logger, which reaches the service's
+    stdout but not the Prefect run view — so a caller that omits it goes
+    quiet in the window an operator is actually watching, while the
+    callers around it keep reporting. Every call site in this module
+    passes it; the default exists only for callers with no run context.
     """
     emit = prefect_log if prefect_log is not None else log
     result = post_findings(**kwargs)
@@ -738,6 +745,7 @@ def run_conformance_check(
     if post:
         _post_tracked(
             repo_id,
+            prefect_log,
             findings=findings_to_post,
             run_id=run_id,
             repo=repo_id,
@@ -939,6 +947,7 @@ def _run_standalone_deterministic(
 
     _post_tracked(
         repo_id,
+        prefect_log,
         findings=findings,
         run_id=run_id,
         repo=repo_id,

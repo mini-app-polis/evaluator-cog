@@ -181,3 +181,41 @@ def test_post_tracked_accumulates_across_emitters() -> None:
     # Two landed, so this is partial, not total — the run still passes.
     assert conf._RUN_TALLY.total_failure is False
     conf._reset_run_tally()
+
+
+def test_every_post_site_in_the_flow_reports_into_the_run_log() -> None:
+    """No emitter may go quiet in the window an operator watches.
+
+    `_post_tracked` falls back to the shared-library logger when no run
+    logger is passed. That logger reaches the service's stdout but not
+    the Prefect run view, so a call site that omits it disappears from
+    the log while the ones around it keep reporting — which is exactly
+    what happened: eleven standalone repos posted silently while the two
+    monorepo apps and every introspection rule reported normally.
+
+    Asserted against the source rather than by running the flow, because
+    the failure is a missing argument at a call site and a behavioural
+    test would need to reach all eight of them.
+    """
+    import ast
+    import inspect
+
+    from evaluator_cog.flows import conformance as conf
+
+    tree = ast.parse(inspect.getsource(conf))
+    missing: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = getattr(func, "id", None) or getattr(func, "attr", None)
+        if name != "_post_tracked":
+            continue
+        # (label, prefect_log) are the two positional parameters.
+        if len(node.args) < 2:
+            missing.append(node.lineno)
+
+    assert not missing, (
+        f"_post_tracked called without a run logger at line(s) {missing} — "
+        "those findings would post without saying so in the Prefect run log"
+    )
