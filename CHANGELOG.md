@@ -1,3 +1,11 @@
+# [3.16.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.15.2...v3.16.0) (2026-09-03)
+
+
+### Features
+
+* **checks:** register the v5.x rules and honour deferral until: ([43813d2](https://github.com/mini-app-polis/evaluator-cog/commit/43813d2b772a53d02ec4097b60603908c9bd191e))
+* filling out eval ([1a99502](https://github.com/mini-app-polis/evaluator-cog/commit/1a99502d381da573f0e9897f9fc7179c607d9ff0))
+
 ## [3.15.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.15.1...v3.15.2) (2026-09-02)
 
 
