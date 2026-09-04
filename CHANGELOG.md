@@ -1,3 +1,10 @@
+## [3.20.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.3...v3.20.4) (2026-09-04)
+
+
+### Bug Fixes
+
+* **checks:** read CI, descriptors and exemption blocks where they live ([a882206](https://github.com/mini-app-polis/evaluator-cog/commit/a882206d40884484cdd018796d7d827e05b503d5))
+
 ## [3.20.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.2...v3.20.3) (2026-09-04)
 
 
