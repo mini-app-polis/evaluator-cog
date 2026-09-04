@@ -1,6 +1,6 @@
 [project]
 name = "evaluator-cog"
-version = "3.20.7"
+version = "3.20.8"
 description = "Standalone pipeline evaluation flow for the Kaiano ecosystem."
 requires-python = ">=3.11"
 dependencies = [

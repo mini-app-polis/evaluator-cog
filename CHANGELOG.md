@@ -1,3 +1,10 @@
+## [3.20.8](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.7...v3.20.8) (2026-09-04)
+
+
+### Bug Fixes
+
+* **conformance:** retry a throttled download instead of dropping the service ([95546aa](https://github.com/mini-app-polis/evaluator-cog/commit/95546aa15e47b348766bfa2f682bc0ae80f02e98))
+
 ## [3.20.7](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.6...v3.20.7) (2026-09-04)
 
 
