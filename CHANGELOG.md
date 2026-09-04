@@ -1,3 +1,11 @@
+## [3.18.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.18.0...v3.18.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **identity:** CD-019 stops flagging docstrings that record a retirement ([c22a64c](https://github.com/mini-app-polis/evaluator-cog/commit/c22a64ca0d115338bbe45b2e7e3a04e649f6eadf))
+* **routes:** recognise "owner" as a name for the authenticated subject ([fcace09](https://github.com/mini-app-polis/evaluator-cog/commit/fcace09b3a5fc065f0a06a12795d8b48000871d7))
+
 # [3.18.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.17.0...v3.18.0) (2026-09-03)
 
 
