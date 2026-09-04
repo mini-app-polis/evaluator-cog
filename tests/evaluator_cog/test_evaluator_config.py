@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from evaluator_cog.engine.evaluator_config import (
+    VALID_REPO_TYPES,
     EvaluatorConfig,
     _map_legacy_type,
     _parse_evaluator_yaml,
@@ -566,3 +567,37 @@ def test_unparseable_until_is_treated_as_open_ended(tmp_path) -> None:
     assert "CD-019" in cfg.deferral_ids
     assert "CD-019" not in cfg.deferral_until
     assert cfg.is_deferred("CD-019") is True
+
+
+def test_repo_type_vocabulary_comes_from_the_catalog_when_available() -> None:
+    """A type added to index.yaml works without releasing this cog.
+
+    VALID_REPO_TYPES is a copy of the catalog's schema.repo_types, and a
+    copy goes stale. When the catalog fetch succeeded it is authoritative.
+    """
+    cfg = _parse_evaluator_yaml(
+        {"type": "brand-new-type"},
+        catalog_schema={"repo_types": {"brand-new-type": "docs"}},
+    )
+    assert cfg.repo_type == "brand-new-type"
+
+
+def test_shared_workflows_is_a_known_type() -> None:
+    """The hardcoded fallback set had gone stale against index.yaml.
+
+    .github declares type: shared-workflows. Before this, the parse
+    raised, the loader fell back, and _map_legacy_type defaulted the repo
+    to pipeline-cog — so four YAML files were graded as a deployed
+    Prefect worker and collected fifteen findings.
+    """
+    assert "shared-workflows" in VALID_REPO_TYPES
+    assert _parse_evaluator_yaml({"type": "shared-workflows"}).repo_type == (
+        "shared-workflows"
+    )
+
+
+def test_unknown_type_still_falls_back_but_warns(caplog) -> None:
+    """The default is kept so one bad entry cannot kill a run — loudly."""
+    with caplog.at_level("WARNING"):
+        assert _map_legacy_type("not-a-real-type") == "pipeline-cog"
+    assert any("unrecognised repo type" in r.message for r in caplog.records)

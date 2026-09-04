@@ -91,6 +91,7 @@ VALID_REPO_TYPES = {
     "static-site",
     "react-app",
     "standards-repo",
+    "shared-workflows",
 }
 
 # Valid traits per index.yaml schema.traits (migration fallback).
@@ -397,7 +398,9 @@ def load_evaluator_config(
     if evaluator_yaml.exists():
         try:
             raw = yaml.safe_load(evaluator_yaml.read_text()) or {}
-            cfg = _parse_evaluator_yaml(raw, source="evaluator.yaml")
+            cfg = _parse_evaluator_yaml(
+                raw, source="evaluator.yaml", catalog_schema=catalog_schema
+            )
         except Exception as exc:
             log.warning(
                 "evaluator_config: failed to parse evaluator.yaml at %s: %s — falling back",
@@ -417,12 +420,41 @@ def load_evaluator_config(
     return cfg
 
 
-def _parse_evaluator_yaml(raw: dict, source: str = "evaluator.yaml") -> EvaluatorConfig:
+def _known_repo_types(catalog_schema: dict | None) -> set[str]:
+    """The repo-type vocabulary, catalog first.
+
+    VALID_REPO_TYPES is a copy of index.yaml's ``schema.repo_types``,
+    and a copy goes stale. When the catalog fetch succeeded, the catalog
+    is authoritative: a type added there works immediately, without
+    waiting for a release of this cog.
+
+    This is not cosmetic. A type the copy has not caught up with makes
+    _parse_evaluator_yaml raise, the loader fall back, and
+    _map_legacy_type default the repo to 'pipeline-cog' — so a repo of
+    four YAML files gets graded as a deployed Prefect worker and
+    collects a page of findings about Sentry, railway.json and
+    semantic-release. That is exactly what happened to .github.
+    """
+    if isinstance(catalog_schema, dict):
+        declared = catalog_schema.get("repo_types")
+        if isinstance(declared, dict) and declared:
+            return {str(k).strip() for k in declared}
+        if isinstance(declared, list) and declared:
+            return {str(k).strip() for k in declared}
+    return set(VALID_REPO_TYPES)
+
+
+def _parse_evaluator_yaml(
+    raw: dict,
+    source: str = "evaluator.yaml",
+    catalog_schema: dict | None = None,
+) -> EvaluatorConfig:
     repo_type = str(raw.get("type", "")).strip()
-    if repo_type not in VALID_REPO_TYPES:
+    known = _known_repo_types(catalog_schema)
+    if repo_type not in known:
         raise ValueError(
             f"evaluator.yaml: invalid type '{repo_type}'. "
-            f"Must be one of: {sorted(VALID_REPO_TYPES)}"
+            f"Must be one of: {sorted(known)}"
         )
 
     traits = []
@@ -554,4 +586,17 @@ def _map_legacy_type(legacy: str | None) -> str:
     }
     if legacy is None:
         return "shared-library"
-    return mapping.get(str(legacy).strip(), "pipeline-cog")
+    key = str(legacy).strip()
+    if key not in mapping:
+        # Defaulting an unrecognised type to pipeline-cog grades the repo
+        # as a deployed Prefect worker and invents every finding that
+        # follows from that. The default is kept so a run never dies on
+        # one bad entry, but it is loud: a page of wrong findings is
+        # worse than a warning nobody has to read.
+        log.warning(
+            "evaluator_config: unrecognised repo type '%s' — grading it as "
+            "pipeline-cog, which is probably wrong. Add it to index.yaml "
+            "schema.repo_types and to VALID_REPO_TYPES.",
+            key,
+        )
+    return mapping.get(key, "pipeline-cog")
