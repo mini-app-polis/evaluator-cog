@@ -1,0 +1,22 @@
+# Lockfiles are generated artefacts, and git must never three-way merge
+# one. A text merge of two lockfiles produces a file that is
+# syntactically plausible and semantically wrong, with no conflict to
+# warn anybody.
+#
+# That is not hypothetical. Two Dependabot branches each added the same
+# new transitive package at different offsets in api-kaianolevine-com's
+# uv.lock; git merged both hunks cleanly and the result carried two
+# identical [[package]] blocks for truststore. uv then refused to parse
+# its own lockfile, every CI run failed, and `uv lock` could not repair
+# it either — it parses the existing lock before rewriting it. The same
+# merge silently reverted an openai constraint in pyproject.toml while
+# keeping the matching lock bump, so main pinned a version its manifest
+# forbade.
+#
+# `-merge` makes git treat these as unmergeable: when both sides change
+# one, the merge conflicts instead of inventing a result. The correct
+# resolution for a lockfile is always to regenerate it, never to
+# reconcile it line by line. This must be committed before the branches
+# that would diverge — git reads the attribute from the merge base.
+
+uv.lock            -merge
