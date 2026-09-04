@@ -80,7 +80,12 @@ def _get_latest_stored_finding(
     identity is worse than an exception.
     """
     try:
-        response = api_client.get(f"/v1/evaluations?repo={repo}&limit=1")
+        # Passed as params, not written into the path. A query string in
+        # the path was silently dropped by the client, so this read came
+        # back as the newest finding across every repo rather than this
+        # one's — and the duplicate check below then compared one repo's
+        # finding against another repo's row.
+        response = api_client.get("/v1/evaluations", params={"repo": repo, "limit": 1})
 
         if isinstance(response, dict):
             data = response.get("data")
@@ -182,8 +187,8 @@ def post_findings(
             )
             result.duplicates += 1
             result.duplicate_details.append(
-                f"{violation_id or 'finding'} for {repo} matched the row "
-                f"already stored for this repo under the same run_id "
+                f"{violation_id or 'finding'} for {repo} matched a stored "
+                f"row (repo={latest.get('repo')!r}) under the same run_id "
                 f"({run_id}): {finding_text[:120]}"
             )
             continue
