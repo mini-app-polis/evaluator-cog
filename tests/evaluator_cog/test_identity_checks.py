@@ -1470,3 +1470,84 @@ def test_cd019_still_flags_a_live_code_reference(tmp_path: Path) -> None:
     clause2 = _clause(check_cd_019(tmp_path, repo_type="api-service"), "CD-019", 2)
     assert clause2
     assert "code reference" in _texts(clause2)
+
+
+def test_cd019_clause1_ignores_an_import_fallback_shim(tmp_path: Path) -> None:
+    """A shim that exists only when the shared library is absent.
+
+    deejay-cog defines a minimal KaianoApiClient inside `except:` when
+    mini_app_polis cannot be imported. It cannot present an identity —
+    there is no client library to present one with — and in a deployed
+    service it never runs. The real builder passes machine_name.
+    """
+    _write(
+        tmp_path,
+        "src/pkg/ingest.py",
+        "try:\n"
+        "    from mini_app_polis.api import KaianoApiClient\n"
+        "except Exception:\n"
+        "    class KaianoApiClient:\n"
+        "        def __init__(self, base_url):\n"
+        "            self.base_url = base_url\n"
+        "\n"
+        "    def api_client(base_url=None):\n"
+        "        return KaianoApiClient(base_url or '')\n"
+        "\n"
+        "def go():\n"
+        "    return KaianoApiClient(machine_name='deejay-cog')\n",
+    )
+    clause1 = [
+        f
+        for f in check_cd_019(tmp_path, repo_type="pipeline-cog")
+        if "CD-019 (1)" in f["finding"]
+    ]
+    assert clause1 == []
+
+
+def test_cd019_clause1_follows_a_named_wrapper_across_modules(tmp_path: Path) -> None:
+    """The identity can be one hop away, in another module of this repo."""
+    _write(
+        tmp_path,
+        "src/pkg/api_client.py",
+        "from mini_app_polis.api import KaianoApiClient\n"
+        "MACHINE_NAME = 'transcription-cog'\n"
+        "\n"
+        "class SubstrateApiClient:\n"
+        "    def __init__(self):\n"
+        "        self._client = KaianoApiClient.from_env(MACHINE_NAME)\n",
+    )
+    _write(
+        tmp_path,
+        "src/pkg/flow.py",
+        "from .api_client import SubstrateApiClient\n"
+        "\n"
+        "def run():\n"
+        "    return SubstrateApiClient()\n",
+    )
+    clause1 = [
+        f
+        for f in check_cd_019(tmp_path, repo_type="pipeline-cog")
+        if "CD-019 (1)" in f["finding"]
+    ]
+    assert clause1 == []
+
+
+def test_cd019_clause1_still_flags_a_wrapper_around_an_unnamed_client(
+    tmp_path: Path,
+) -> None:
+    """Wrapping an unnamed construction does not launder it."""
+    _write(
+        tmp_path,
+        "src/pkg/api_client.py",
+        "from mini_app_polis.api import KaianoApiClient\n"
+        "\n"
+        "class SubstrateApiClient:\n"
+        "    def __init__(self):\n"
+        "        self._client = KaianoApiClient.from_env()\n",
+    )
+    clause1 = [
+        f
+        for f in check_cd_019(tmp_path, repo_type="pipeline-cog")
+        if "CD-019 (1)" in f["finding"]
+    ]
+    assert clause1

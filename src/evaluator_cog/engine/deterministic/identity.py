@@ -1836,10 +1836,33 @@ def _ecosystem_client_sites(
     machine_names: set[str] = set()
     outbound = False
 
+    # Wrappers are collected across the whole repo, not per module: the
+    # class is defined in api_client.py and constructed in flow.py, which
+    # is the normal shape and the one a per-file lookup misses.
+    wrappers: set[str] = set()
+    for f in files:
+        if not f.is_test:
+            wrappers |= _named_client_wrappers(f.tree)
+
     for f in files:
         if f.is_test:
             continue
+        skip_lines = _import_fallback_lines(f.tree)
         for node in ast.walk(f.tree):
+            if getattr(node, "lineno", None) in skip_lines:
+                # Inside `except ImportError:` shadowing a failed import —
+                # a shim that only exists when the shared library is not
+                # installed. It cannot present an identity because there is
+                # no client library to present one with, and in a deployed
+                # service it never runs. deejay-cog's ingest_to_api.py
+                # defines exactly this and was reported for it.
+                continue
+            if isinstance(node, ast.Call) and _call_name(node) in wrappers:
+                # A repo-local wrapper whose __init__ builds the real client
+                # with a machine name. transcription-cog's
+                # SubstrateApiClient() is named — one hop away.
+                outbound = True
+                continue
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
@@ -1879,6 +1902,67 @@ def _ecosystem_client_sites(
                     outbound = True
                     constructions.append((f.rel, node.lineno, _unparse(node)))
     return constructions, machine_names, outbound
+
+
+def _import_fallback_lines(tree: ast.AST) -> set[int]:
+    """Line numbers inside an ``except`` handler guarding an import.
+
+    ``try: from x import Client / except ImportError: class Client: ...``
+    is a shim for the case where the shared library is absent. Reading
+    its constructor as an unnamed ecosystem call reports a repo for code
+    that runs only when the thing it would authenticate with is missing.
+
+    Only handlers whose ``try`` body actually imports qualify — a bare
+    ``except`` around real work is not a shim and stays in scope.
+    """
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        if not any(
+            isinstance(stmt, (ast.Import, ast.ImportFrom)) for stmt in node.body
+        ):
+            continue
+        for handler in node.handlers:
+            for inner in ast.walk(handler):
+                lineno = getattr(inner, "lineno", None)
+                if lineno is not None:
+                    lines.add(lineno)
+    return lines
+
+
+def _named_client_wrappers(tree: ast.AST) -> set[str]:
+    """Repo-local classes that build a named ecosystem client internally.
+
+    A thin typed wrapper — transcription-cog's ``SubstrateApiClient``,
+    whose ``__init__`` calls ``KaianoApiClient.from_env(MACHINE_NAME)`` —
+    is constructed at the call site with no arguments, which reads as
+    unnamed. It is not: the identity is one hop away, in the class this
+    repo defines. Following that hop is the difference between reading a
+    call site and answering the question the rule asks.
+
+    Only classes defined in the same module are followed, and only when
+    the inner construction is itself named. A wrapper around an unnamed
+    client stays a finding, reported at the wrapper's own line.
+    """
+    wrappers: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if not _ECOSYSTEM_CLIENT_RE.search(node.name):
+            continue
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call):
+                continue
+            func = inner.func
+            if isinstance(func, ast.Attribute) and func.attr == "from_env":
+                if _ECOSYSTEM_CLIENT_RE.search(_unparse(func.value)) and inner.args:
+                    wrappers.add(node.name)
+            elif _ECOSYSTEM_CLIENT_RE.search(_call_name(inner)) and any(
+                kw.arg == "machine_name" for kw in inner.keywords
+            ):
+                wrappers.add(node.name)
+    return wrappers
 
 
 # --- CD-019: caller steps (1)-(4) --------------------------------------------
