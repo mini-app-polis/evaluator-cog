@@ -562,6 +562,111 @@ def _declared_branch(record: dict | None) -> str:
     return branch or "main"
 
 
+#: Attempts per repo download, including the first. GitHub's secondary
+#: rate limit clears in seconds, so a small number of tries with backoff
+#: covers it; a larger number would only make a genuinely broken repo
+#: take longer to report.
+_DOWNLOAD_ATTEMPTS = 3
+#: Base backoff. Doubles per attempt, and is overridden by Retry-After
+#: when GitHub sends one.
+_DOWNLOAD_BACKOFF_SECONDS = 2.0
+#: Cap on an honoured Retry-After, so a long one cannot stall the run.
+_DOWNLOAD_BACKOFF_CAP_SECONDS = 30.0
+
+_unauthenticated_warned = False
+
+
+def _warn_unauthenticated_once() -> None:
+    """Say once per process that downloads are unauthenticated."""
+    global _unauthenticated_warned
+    if _unauthenticated_warned:
+        return
+    _unauthenticated_warned = True
+    log.warning(
+        "conformance: GITHUB_TOKEN is not set — repo downloads are "
+        "unauthenticated (60 requests/hour, tight burst limits). Expect "
+        "services to be throttled out of runs."
+    )
+
+
+def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
+    """How long to wait before the next attempt.
+
+    GitHub's own Retry-After wins when present — guessing shorter than
+    what the server asked for is how a retry storm starts — capped so one
+    long value cannot stall the whole run.
+    """
+    if response is not None:
+        raw = response.headers.get("Retry-After", "").strip()
+        if raw:
+            try:
+                return min(float(raw), _DOWNLOAD_BACKOFF_CAP_SECONDS)
+            except ValueError:
+                pass
+    return min(_DOWNLOAD_BACKOFF_SECONDS * (2**attempt), _DOWNLOAD_BACKOFF_CAP_SECONDS)
+
+
+def _fetch_zipball(
+    url: str, headers: dict[str, str], timeout: float, repo_id: str
+) -> bytes | None:
+    """Fetch a repo zipball, retrying transient failures.
+
+    The single-attempt version of this was why services vanished from
+    runs. One 403 from GitHub's secondary rate limit — which clears in
+    seconds — and the repo was dropped for the entire run, with nothing
+    in the report to say it had not been looked at. The failures came in
+    contiguous blocks, four consecutive services in one run, which is
+    what a burst limit looks like and not what a broken repo looks like.
+
+    A 404 is not retried: the repo, the org or the branch is wrong, and
+    trying again cannot change that. Everything else — 403, 429, 5xx,
+    timeouts, connection errors — is worth another attempt.
+    """
+    last_detail = "unknown"
+    for attempt in range(_DOWNLOAD_ATTEMPTS):
+        response: httpx.Response | None = None
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                response = client.get(url, headers=headers)
+                if response.status_code == 404:
+                    log.warning(
+                        "conformance: %s not found (404) — check the repo name "
+                        "and branch in ecosystem.yaml",
+                        repo_id,
+                    )
+                    return None
+                if response.is_success:
+                    return response.content
+                remaining = response.headers.get("X-RateLimit-Remaining", "?")
+                last_detail = (
+                    f"HTTP {response.status_code} (X-RateLimit-Remaining={remaining})"
+                )
+        except Exception as exc:
+            last_detail = f"{type(exc).__name__}: {exc}"
+
+        if attempt == _DOWNLOAD_ATTEMPTS - 1:
+            break
+        delay = _retry_delay(response, attempt)
+        log.warning(
+            "conformance: %s download failed (%s) — retrying in %.1fs "
+            "(attempt %d of %d)",
+            repo_id,
+            last_detail,
+            delay,
+            attempt + 2,
+            _DOWNLOAD_ATTEMPTS,
+        )
+        time.sleep(delay)
+
+    log.warning(
+        "conformance: %s could not be downloaded after %d attempts (%s)",
+        repo_id,
+        _DOWNLOAD_ATTEMPTS,
+        last_detail,
+    )
+    return None
+
+
 def _download_repo(repo_id: str, tmp_dir: str, branch: str = "main") -> Path | None:
     """
     Download a repo from GitHub as a zip archive and extract it.
@@ -579,16 +684,25 @@ def _download_repo(repo_id: str, tmp_dir: str, branch: str = "main") -> Path | N
     headers = {"Accept": "application/vnd.github+json"}
     if github_token:
         headers["Authorization"] = f"Bearer {github_token}"
+    else:
+        # Worth saying out loud once per run. Every repo in the fleet is
+        # public, so an absent token does not 404 — the download still
+        # works, just at 60 requests an hour with much tighter burst
+        # limits instead of 5000. A run makes roughly one core API call
+        # per service, so unauthenticated is the difference between
+        # "always fine" and "a few services throttled every run", and
+        # the symptom is services silently missing from the report
+        # rather than anything that looks like an auth failure.
+        _warn_unauthenticated_once()
 
     url = f"https://api.github.com/repos/mini-app-polis/{repo_id}/zipball/{branch}"
     dest = Path(tmp_dir) / repo_id
 
     try:
         timeout = float(os.environ.get("EVALUATOR_CLONE_TIMEOUT_SECONDS", "60"))
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            r = client.get(url, headers=headers)
-            r.raise_for_status()
-            content = r.content  # capture before client context closes
+        content = _fetch_zipball(url, headers, timeout, repo_id)
+        if content is None:
+            return None
 
         with zipfile.ZipFile(io.BytesIO(content)) as zf:
             zf.extractall(tmp_dir)

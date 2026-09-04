@@ -725,3 +725,98 @@ def test_failed_checks_are_reported_not_silently_skipped(monkeypatch) -> None:
     assert findings[0]["severity"] == "ERROR"
     assert "not evaluated" in findings[0]["finding"]
     assert "RuntimeError" in findings[0]["finding"]
+
+
+def test_transient_download_failure_is_retried(monkeypatch) -> None:
+    """A 403 that clears must not cost a service its whole run.
+
+    GitHub's secondary rate limit returns 403 and lifts in seconds. The
+    single-attempt download treated that as fatal, so a service dropped
+    out of the report entirely — and the failures arrived in contiguous
+    blocks, four consecutive services in one run, which is what a burst
+    limit looks like rather than a broken repo.
+    """
+    import evaluator_cog.flows.conformance as conf
+
+    calls: list[int] = []
+
+    class _Resp:
+        def __init__(self, status: int, content: bytes = b"") -> None:
+            self.status_code = status
+            self.content = content
+            self.headers: dict[str, str] = {}
+
+        @property
+        def is_success(self) -> bool:
+            return 200 <= self.status_code < 300
+
+    class _Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def get(self, _url, headers=None):  # noqa: ARG002
+            calls.append(1)
+            # Throttled twice, then it clears — exactly the shape the
+            # secondary rate limit produces.
+            if len(calls) < 3:
+                return _Resp(403)
+            return _Resp(200, b"zipbytes")
+
+    monkeypatch.setattr(conf.httpx, "Client", lambda **_kw: _Client())
+    monkeypatch.setattr(conf.time, "sleep", lambda _s: None)
+
+    got = conf._fetch_zipball("http://x", {}, 60.0, "deejay-cog")
+    assert got == b"zipbytes"
+    assert len(calls) == 3
+
+
+def test_missing_repo_is_not_retried(monkeypatch) -> None:
+    """A 404 is a wrong name or branch — retrying cannot change it."""
+    import evaluator_cog.flows.conformance as conf
+
+    calls: list[int] = []
+
+    class _Resp:
+        status_code = 404
+        content = b""
+        headers: dict[str, str] = {}
+        is_success = False
+
+    class _Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def get(self, _url, headers=None):  # noqa: ARG002
+            calls.append(1)
+            return _Resp()
+
+    monkeypatch.setattr(conf.httpx, "Client", lambda **_kw: _Client())
+    monkeypatch.setattr(conf.time, "sleep", lambda _s: None)
+
+    assert conf._fetch_zipball("http://x", {}, 60.0, "gone-cog") is None
+    assert len(calls) == 1
+
+
+def test_retry_delay_honours_retry_after(monkeypatch) -> None:
+    """Guessing shorter than the server asked for is how storms start."""
+    import evaluator_cog.flows.conformance as conf
+
+    class _Resp:
+        headers = {"Retry-After": "7"}
+
+    assert conf._retry_delay(_Resp(), 0) == 7.0
+
+    class _Huge:
+        headers = {"Retry-After": "99999"}
+
+    # Capped, so one long value cannot stall the run.
+    assert conf._retry_delay(_Huge(), 0) == conf._DOWNLOAD_BACKOFF_CAP_SECONDS
+    # No header: exponential backoff.
+    assert conf._retry_delay(None, 0) == conf._DOWNLOAD_BACKOFF_SECONDS
+    assert conf._retry_delay(None, 1) == conf._DOWNLOAD_BACKOFF_SECONDS * 2
