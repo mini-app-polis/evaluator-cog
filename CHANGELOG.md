@@ -1,3 +1,11 @@
+## [3.20.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.5...v3.20.6) (2026-09-04)
+
+
+### Bug Fixes
+
+* **CD-011:** check that the env file is actually committed ([8b34cbe](https://github.com/mini-app-polis/evaluator-cog/commit/8b34cbe412f2118bc23ee2534e953412076afed8))
+* **CD-011:** find the working tree above a monorepo service ([7b3e446](https://github.com/mini-app-polis/evaluator-cog/commit/7b3e4463c0e533e3c5d2df35e7cdaf3971c82103))
+
 ## [3.20.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.4...v3.20.5) (2026-09-04)
 
 
