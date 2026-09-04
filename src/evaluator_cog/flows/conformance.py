@@ -1415,6 +1415,31 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                         exc,
                         exc_info=True,
                     )
+                    # The third silent-skip path. The two inside
+                    # _run_standalone_deterministic cover a failed
+                    # download and a raising check; anything that goes
+                    # wrong around them — loading evaluator.yaml, parsing
+                    # check_exceptions — lands here instead, and used to
+                    # log and post nothing, which is the same invisible
+                    # absence by a different route.
+                    _post_not_evaluated(
+                        repo_id,
+                        f"processing raised before findings could be "
+                        f"computed ({type(exc).__name__}: {exc})",
+                        run_id=run_id,
+                        flow_name=(
+                            "conformance-check"
+                            if run_llm
+                            else "deterministic-conformance"
+                        ),
+                        source=(
+                            "conformance_check"
+                            if run_llm
+                            else "conformance_deterministic"
+                        ),
+                        standards_version=standards_version,
+                        prefect_log=prefect_log,
+                    )
 
             for mono_id, services in monorepo_service_groups.items():
                 mono_record = monorepos_registry.get(mono_id)
@@ -1465,6 +1490,24 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                                 rid,
                                 exc,
                                 exc_info=True,
+                            )
+                            _post_not_evaluated(
+                                rid,
+                                f"processing raised before findings could be "
+                                f"computed ({type(exc).__name__}: {exc})",
+                                run_id=run_id,
+                                flow_name=(
+                                    "conformance-check"
+                                    if run_llm
+                                    else "deterministic-conformance"
+                                ),
+                                source=(
+                                    "conformance_check"
+                                    if run_llm
+                                    else "conformance_deterministic"
+                                ),
+                                standards_version=standards_version,
+                                prefect_log=prefect_log,
                             )
                     continue
 
