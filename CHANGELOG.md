@@ -1,3 +1,10 @@
+## [3.20.9](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.8...v3.20.9) (2026-09-04)
+
+
+### Bug Fixes
+
+* **conformance:** close the third path a service can vanish through ([fb72aa6](https://github.com/mini-app-polis/evaluator-cog/commit/fb72aa635870e5dade3cde07eb929c5e43a9a696))
+
 ## [3.20.8](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.7...v3.20.8) (2026-09-04)
 
 
