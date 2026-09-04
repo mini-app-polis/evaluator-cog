@@ -590,3 +590,138 @@ def test_declared_branch_reads_the_registry() -> None:
     workflows it had on dev — findings no change to the repo could clear.
     """
     assert _declared_branch({"id": "deejaytools-com", "branch": "dev"}) == "dev"
+
+
+def _posted_findings(post_calls: list) -> list[dict]:
+    """Flatten every finding handed to post_findings across all calls."""
+    out: list[dict] = []
+    for kwargs in post_calls:
+        out.extend(kwargs.get("findings") or [])
+    return out
+
+
+def test_undownloadable_repo_is_reported_not_silently_skipped(monkeypatch) -> None:
+    """A service that cannot be cloned must still produce a row.
+
+    It used to produce nothing at all: the flow logged "could not clone"
+    and moved on, so the service vanished from the report. A reader then
+    saw only the services that *did* evaluate — every one of them green —
+    and had no way to tell that one had never been looked at. Absence is
+    not a pass.
+    """
+    import evaluator_cog.flows.conformance as conf
+
+    ecosystem = {
+        "services": [
+            {
+                "id": "reachable",
+                "repo": "reachable",
+                "status": "active",
+                "type": "api-service",
+                "language": "python",
+            },
+            {
+                "id": "gone",
+                "repo": "gone",
+                "status": "active",
+                "type": "api-service",
+                "language": "python",
+            },
+        ]
+    }
+
+    def fake_download_repo(repo_name, tmp_dir, branch="main"):
+        if repo_name == "gone":
+            return None
+        root = Path(tmp_dir) / repo_name
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def fake_run_all_checks(*args, **kwargs):
+        result = MagicMock()
+        result.findings = []
+        result.checked_rule_ids = set()
+        return result
+
+    post_calls: list = []
+
+    def tracking_post(**kwargs):
+        post_calls.append(kwargs)
+        return conf.PostResult()
+
+    monkeypatch.setenv("STANDARDS_VERSION", "9.9.9-test")
+    with (
+        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
+        patch.object(conf, "_fetch_yaml", return_value=ecosystem),
+        patch.object(conf, "_download_repo", side_effect=fake_download_repo),
+        patch.object(conf, "run_all_checks", side_effect=fake_run_all_checks),
+        patch.object(conf, "post_findings", side_effect=tracking_post),
+        patch.object(conf, "_fetch_standards_for_service", return_value=[]),
+    ):
+        conformance_check_flow(run_llm=False)
+
+    findings = _posted_findings(post_calls)
+    gone = [f for f in findings if "gone" in f.get("finding", "")]
+    assert gone, "the unreachable service posted nothing at all"
+    assert gone[0]["severity"] == "ERROR"
+    assert "not evaluated" in gone[0]["finding"]
+
+    # The reachable one still reports normally — the new row must not
+    # replace or suppress the ordinary path.
+    assert any(
+        f.get("severity") == "SUCCESS" and "reachable" in f.get("finding", "")
+        for f in findings
+    )
+
+
+def test_failed_checks_are_reported_not_silently_skipped(monkeypatch) -> None:
+    """A service whose checks raise must produce a row saying so.
+
+    Same failure shape as an unreachable repo, one step later: the flow
+    caught the exception, logged it, and returned without posting, so a
+    crashing check made a service disappear rather than fail.
+    """
+    import evaluator_cog.flows.conformance as conf
+
+    ecosystem = {
+        "services": [
+            {
+                "id": "explodes",
+                "repo": "explodes",
+                "status": "active",
+                "type": "api-service",
+                "language": "python",
+            },
+        ]
+    }
+
+    def fake_download_repo(repo_name, tmp_dir, branch="main"):
+        root = Path(tmp_dir) / repo_name
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("check exploded")
+
+    post_calls: list = []
+
+    def tracking_post(**kwargs):
+        post_calls.append(kwargs)
+        return conf.PostResult()
+
+    monkeypatch.setenv("STANDARDS_VERSION", "9.9.9-test")
+    with (
+        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
+        patch.object(conf, "_fetch_yaml", return_value=ecosystem),
+        patch.object(conf, "_download_repo", side_effect=fake_download_repo),
+        patch.object(conf, "run_all_checks", side_effect=boom),
+        patch.object(conf, "post_findings", side_effect=tracking_post),
+        patch.object(conf, "_fetch_standards_for_service", return_value=[]),
+    ):
+        conformance_check_flow(run_llm=False)
+
+    findings = _posted_findings(post_calls)
+    assert findings, "a raising check posted nothing at all"
+    assert findings[0]["severity"] == "ERROR"
+    assert "not evaluated" in findings[0]["finding"]
+    assert "RuntimeError" in findings[0]["finding"]

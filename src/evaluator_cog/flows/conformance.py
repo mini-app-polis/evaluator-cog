@@ -859,6 +859,59 @@ def _build_conformance_run_id(standards_version: str) -> str:
     return f"conformance-{standards_version}-{unique_suffix}"
 
 
+def _post_not_evaluated(
+    repo_id: str,
+    reason: str,
+    *,
+    run_id: str,
+    flow_name: str,
+    source: str,
+    standards_version: str,
+    prefect_log: Any,
+) -> None:
+    """Record that a declared service could not be evaluated in this run.
+
+    Every service that is evaluated posts a row — its findings, or a
+    STATUS/SUCCESS row saying it passed. A service that could not be
+    downloaded, or whose checks raised, used to post nothing and only
+    log, which meant it vanished from the report entirely: the totals
+    said twelve rows and eight successes, and nothing anywhere said
+    that three declared services had not been looked at. A silent
+    absence reads as a clean bill of health, which is the one thing it
+    is not.
+
+    Posted under the same synthetic STATUS id the success row uses, so
+    it needs no catalog rule of its own — it is the same statement
+    about the run, with the opposite value.
+    """
+    _post_tracked(
+        repo_id,
+        prefect_log,
+        findings=[
+            {
+                "rule_id": "STATUS",
+                "dimension": "structural_conformance",
+                "severity": "ERROR",
+                "finding": (
+                    f"{repo_id} was declared active but was not evaluated in "
+                    f"this run: {reason}. Its conformance is unknown, not "
+                    f"clean."
+                ),
+                "suggestion": (
+                    "Check the run log for this repo. Until it evaluates, "
+                    "treat its last known findings as stale rather than "
+                    "treating its absence from this run as a pass."
+                ),
+            }
+        ],
+        run_id=run_id,
+        repo=repo_id,
+        flow_name=flow_name,
+        source=source,
+        standards_version=standards_version,
+    )
+
+
 def _build_deterministic_run_id(standards_version: str) -> str:
     """Build a per-execution run_id for deterministic conformance findings."""
     flow_run_id = ""
@@ -954,6 +1007,15 @@ def _run_standalone_deterministic(
     except Exception as exc:
         prefect_log.warning(
             "deterministic: run_all_checks failed for %s: %s", repo_id, exc
+        )
+        _post_not_evaluated(
+            repo_id,
+            f"the deterministic checks raised ({type(exc).__name__}: {exc})",
+            run_id=run_id,
+            flow_name="deterministic-conformance",
+            source="conformance_deterministic",
+            standards_version=standards_version,
+            prefect_log=prefect_log,
         )
         return
 
@@ -1188,6 +1250,24 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                     prefect_log.warning(
                         "%s: skipping %s — could not clone", flow_label, repo_id
                     )
+                    _post_not_evaluated(
+                        repo_id,
+                        f"the repository could not be downloaded "
+                        f"({repo_name}@{_declared_branch(service)})",
+                        run_id=run_id,
+                        flow_name=(
+                            "conformance-check"
+                            if run_llm
+                            else "deterministic-conformance"
+                        ),
+                        source=(
+                            "conformance_check"
+                            if run_llm
+                            else "conformance_deterministic"
+                        ),
+                        standards_version=standards_version,
+                        prefect_log=prefect_log,
+                    )
                     continue
 
                 try:
@@ -1285,6 +1365,32 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                         flow_label,
                         mono_id,
                     )
+                    # One failed clone hides every app inside it, so the
+                    # row goes against each declared service rather than
+                    # against the monorepo, which is not a repo the
+                    # report has a column for.
+                    for _svc in monorepo_service_groups.get(str(mono_id), []):
+                        _svc_id = _svc.get("id", "")
+                        if not _svc_id:
+                            continue
+                        _post_not_evaluated(
+                            _svc_id,
+                            f"its monorepo could not be downloaded "
+                            f"({repo_name}@{_declared_branch(mono_record)})",
+                            run_id=run_id,
+                            flow_name=(
+                                "conformance-check"
+                                if run_llm
+                                else "deterministic-conformance"
+                            ),
+                            source=(
+                                "conformance_check"
+                                if run_llm
+                                else "conformance_deterministic"
+                            ),
+                            standards_version=standards_version,
+                            prefect_log=prefect_log,
+                        )
                     continue
 
                 workspace_package_json_text = _read_workspace_package_json(
