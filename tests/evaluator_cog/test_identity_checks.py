@@ -1407,3 +1407,66 @@ def test_auth004_still_flags_a_record_missing_fields(tmp_path: Path) -> None:
     assert len(clause3) == 1
     assert "principal" in clause3[0]["finding"]
     assert "reason" in clause3[0]["finding"]
+
+
+def test_cd019_does_not_flag_a_docstring_recording_the_retirement(
+    tmp_path: Path,
+) -> None:
+    """A module documenting what it removed is the opposite of stale.
+
+    api-kaianolevine-com's auth.py names the three FastAPI dependencies it
+    replaced and says they are gone. That sentence is why the module's
+    shape makes sense to the next reader; flagging it asks the author to
+    delete the explanation.
+    """
+    _write(
+        tmp_path,
+        "src/pkg/auth.py",
+        '"""Auth adapters.\n'
+        "\n"
+        "The earlier dependencies it replaced (get_current_caller,\n"
+        "require_wcs_admin, require_wcs_service) are gone -- they encoded\n"
+        "authority in a boolean column and in the shape of a token.\n"
+        '"""\n'
+        "\n"
+        "VALUE = 1\n",
+    )
+    clause2 = _clause(check_cd_019(tmp_path, repo_type="api-service"), "CD-019", 2)
+    assert clause2 == []
+
+
+def test_cd019_still_flags_a_docstring_that_instructs_use(tmp_path: Path) -> None:
+    """Retirement language elsewhere does not exempt an instruction."""
+    _write(
+        tmp_path,
+        "src/pkg/guide.py",
+        '"""How to authenticate.\n'
+        "\n"
+        "Clerk M2M was retired across the fleet.\n"
+        "\n"
+        "For a machine caller, obtain a credential with get_m2m_token and\n"
+        "pass it in the Authorization header.\n"
+        '"""\n'
+        "\n"
+        "VALUE = 1\n",
+    )
+    clause2 = _clause(check_cd_019(tmp_path, repo_type="pipeline-cog"), "CD-019", 2)
+    assert len(clause2) == 1
+    assert "docstring" in clause2[0]["finding"]
+
+
+def test_cd019_still_flags_a_live_code_reference(tmp_path: Path) -> None:
+    """The exemption is for prose only; code is unaffected."""
+    _write(
+        tmp_path,
+        "src/pkg/live.py",
+        '"""These helpers are gone and were replaced by require_scope."""\n'
+        "\n"
+        "from .deps import get_current_caller\n"
+        "\n"
+        "def who():\n"
+        "    return get_current_caller()\n",
+    )
+    clause2 = _clause(check_cd_019(tmp_path, repo_type="api-service"), "CD-019", 2)
+    assert clause2
+    assert "code reference" in _texts(clause2)

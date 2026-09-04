@@ -1615,15 +1615,82 @@ def _retired_hits_in_python(f: _PyFile) -> list[tuple[int, str, str]]:
             if position:
                 hits.append((node.lineno, symbol, position))
 
-    # Retired identifiers named in prose: a stale docstring documenting a
-    # helper that no longer exists is explicitly not exempt.
+    # Retired identifiers named in prose: a stale docstring still telling a
+    # reader to use a helper that no longer exists is explicitly not exempt.
+    # A docstring that *records the retirement* is the opposite of stale and
+    # is not a violation — see _records_retirement.
     for node in ast.walk(f.tree):
         if id(node) not in doc_ids or not isinstance(node, ast.Constant):
             continue
+        text = str(node.value)
         for symbol in sorted(_RETIRED_IDENTIFIERS):
-            if symbol in str(node.value):
-                hits.append((node.lineno, symbol, "docstring"))
+            if symbol not in text:
+                continue
+            if _records_retirement(text, symbol):
+                continue
+            hits.append((node.lineno, symbol, "docstring"))
     return hits
+
+
+# Words that mark a mention as a record of the retirement rather than an
+# instruction to use the thing. Deliberately past-tense and negational:
+# a docstring saying a helper "is gone" is documentation working as
+# intended, and flagging it teaches people that the checker is wrong
+# about correct code — which is how a checker stops being read at all.
+_RETIREMENT_MARKERS = (
+    "retired",
+    "removed",
+    "no longer",
+    "are gone",
+    "is gone",
+    "was replaced",
+    "were replaced",
+    "it replaced",
+    "they replaced",
+    "deleted",
+    "superseded",
+)
+# Deliberately absent: "used to" and "deprecated". Both are ambiguous —
+# "X used to do Y" reads as a retirement record but is also how a stale
+# note describes a helper it still expects you to reach for, and
+# "deprecated" implies the thing still exists. Neither is strong enough
+# evidence to suppress a finding.
+
+
+def _retirement_sentences(text: str) -> list[str]:
+    """Split a docstring into sentences, lowercased.
+
+    Retirement is recorded in the sentence that names the symbol, not
+    somewhere else in the same docstring — a paragraph that opens "Clerk
+    M2M was retired" and later tells you to call ``get_m2m_token`` is
+    exactly the stale instruction the rule is for. Splitting on sentence
+    and blank-line boundaries is what keeps those two apart.
+    """
+    parts = re.split(r"(?<=[.!?])\s+|\n\s*\n", text.lower())
+    return [p for p in parts if p]
+
+
+def _records_retirement(text: str, symbol: str) -> bool:
+    """True when every sentence naming ``symbol`` marks it as retired.
+
+    CD-019 (2) exists to catch a docstring that still instructs a reader
+    to reach for a helper that was removed. It is not meant to catch the
+    docstring that *announces* the removal — "the earlier dependencies
+    (``get_current_caller``, ...) are gone" is exactly what a module
+    should say after a migration, and flagging it asks the author to
+    delete the one sentence explaining why the code looks as it does.
+
+    Every mention must be accounted for: one sentence recording the
+    retirement does not license another sentence telling you to use it.
+    """
+    needle = symbol.lower()
+    mentions = [s for s in _retirement_sentences(text) if needle in s]
+    if not mentions:
+        return False
+    return all(
+        any(marker in sentence for marker in _RETIREMENT_MARKERS)
+        for sentence in mentions
+    )
 
 
 def _clerk_secret_violations(f: _PyFile) -> list[tuple[int, str]]:
