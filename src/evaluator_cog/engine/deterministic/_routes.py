@@ -151,6 +151,14 @@ AUTH_DEP_HINTS = (
     "guard",
     "identity",
     "clerk",
+    # "owner" is this fleet's third word for the authenticated subject,
+    # alongside "caller" and "principal": api-kaianolevine-com's
+    # get_current_owner returns the Clerk `sub`, and rows across that
+    # database key ownership by it. Without this, the two intentionally
+    # authenticated-only /wcs/me routes classify as unresolvable and
+    # AUTH-003 reports a guard it cannot read — when the guard is
+    # readable and does exactly what the rule wants.
+    "owner",
 )
 
 
