@@ -1,3 +1,10 @@
+## [3.20.11](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.10...v3.20.11) (2026-09-04)
+
+
+### Bug Fixes
+
+* **delivery:** scope the duplicate check to the repo it claims to check ([2e2e728](https://github.com/mini-app-polis/evaluator-cog/commit/2e2e7284c2d87d0ce808539a7d96b35787b19f3a))
+
 ## [3.20.10](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.9...v3.20.10) (2026-09-04)
 
 
