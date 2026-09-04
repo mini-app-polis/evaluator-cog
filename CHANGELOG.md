@@ -1,3 +1,15 @@
+# [3.19.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.18.1...v3.19.0) (2026-09-04)
+
+
+### Bug Fixes
+
+* **config:** take the repo-type vocabulary from the catalog, not a stale copy ([652c13b](https://github.com/mini-app-polis/evaluator-cog/commit/652c13b03bd847a424dd2387a2b1af894e53bc93))
+
+
+### Features
+
+* **deploy:** version-control the restart policy ([838a8fa](https://github.com/mini-app-polis/evaluator-cog/commit/838a8fa85f538b37316fdc1688fe0c761154dafe))
+
 ## [3.18.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.18.0...v3.18.1) (2026-09-04)
 
 
