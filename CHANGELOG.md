@@ -1,3 +1,10 @@
+# [3.21.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.11...v3.21.0) (2026-09-04)
+
+
+### Features
+
+* **SEC-007:** check that dependency updates are automated and cover what is used ([cf8bf6d](https://github.com/mini-app-polis/evaluator-cog/commit/cf8bf6ddbac28c1a705e6a7b2edb8b4160353ccc))
+
 ## [3.20.11](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.10...v3.20.11) (2026-09-04)
 
 
