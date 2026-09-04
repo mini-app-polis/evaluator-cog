@@ -126,6 +126,21 @@ def _post_tracked(label: str, prefect_log: Any = None, **kwargs: Any) -> PostRes
     _RUN_TALLY.merge(result)
     if result.posted:
         emit.info("%s: posted %d findings", label, result.posted)
+    if result.duplicates:
+        # This is why deejay-cog and evaluator-cog looked absent from the
+        # 6.9.1 run rather than suppressed: each computed exactly one
+        # finding, that finding was dropped as a duplicate, and nothing
+        # here logged it. posted was 0 and failed was 0, so the repo
+        # produced no line at all and read as though it had never been
+        # processed. A dropped finding is a decision and belongs in the
+        # run view, not only in stdout.
+        emit.warning(
+            "%s: %d of %d findings suppressed as duplicates — %s",
+            label,
+            result.duplicates,
+            result.duplicates + result.attempted,
+            "; ".join(result.duplicate_details) or "no detail recorded",
+        )
     if result.failed:
         emit.warning(
             "%s: %d of %d findings failed to POST — last error: %s",

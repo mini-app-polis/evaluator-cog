@@ -33,6 +33,10 @@ class PostResult:
     posted: int = 0
     duplicates: int = 0
     failed: int = 0
+    #: One line per suppressed finding, saying what it matched against.
+    #: A count alone cannot be acted on: three duplicates in a run tells
+    #: you nothing about which rule stopped being reported, or why.
+    duplicate_details: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -50,6 +54,7 @@ class PostResult:
         self.attempted += other.attempted
         self.posted += other.posted
         self.duplicates += other.duplicates
+        self.duplicate_details.extend(other.duplicate_details)
         self.failed += other.failed
         self.errors.extend(other.errors)
 
@@ -176,6 +181,11 @@ def post_findings(
                 finding_text[:60],
             )
             result.duplicates += 1
+            result.duplicate_details.append(
+                f"{violation_id or 'finding'} for {repo} matched the row "
+                f"already stored for this repo under the same run_id "
+                f"({run_id}): {finding_text[:120]}"
+            )
             continue
         result.attempted += 1
         try:

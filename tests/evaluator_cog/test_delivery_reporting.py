@@ -252,3 +252,32 @@ def test_every_post_site_in_the_flow_reports_into_the_run_log() -> None:
         f"_post_tracked called without a run logger at line(s) {missing} — "
         "those findings would post without saying so in the Prefect run log"
     )
+
+
+def test_suppressed_duplicates_are_reported_in_the_run_view() -> None:
+    """A repo whose only finding is dropped must not log nothing.
+
+    deejay-cog and evaluator-cog each computed exactly one finding in the
+    6.9.1 run. Both were dropped as duplicates, so posted was 0 and
+    failed was 0, and _post_tracked logged neither — the repos produced
+    no line at all and read as though they had never been processed. The
+    finding was real, current, and silently discarded.
+    """
+    from unittest.mock import MagicMock
+
+    import evaluator_cog.flows.conformance as conf
+
+    result = conf.PostResult()
+    result.duplicates = 1
+    result.duplicate_details = ["CD-021 for deejay-cog matched the stored row"]
+
+    prefect_log = MagicMock()
+    with patch.object(conf, "post_findings", return_value=result):
+        conf._post_tracked("deejay-cog", prefect_log, findings=[{}], repo="deejay-cog")
+
+    assert prefect_log.warning.called, "a suppressed finding logged nothing"
+    message = " ".join(str(c) for c in prefect_log.warning.call_args[0])
+    assert "duplicate" in message.lower()
+    assert "deejay-cog" in " ".join(
+        str(a) for a in prefect_log.warning.call_args[0]
+    ) or "deejay-cog" in str(prefect_log.warning.call_args)
