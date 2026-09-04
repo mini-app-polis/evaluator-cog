@@ -298,7 +298,14 @@ def _tracked_paths(repo_path: Path) -> set[str] | None:
         if prefix_str and not line.startswith(prefix_str):
             continue
         tracked.add(line[len(prefix_str) :])
-    return tracked
+
+    # An empty answer is not "this directory tracks nothing" — a real
+    # checkout always tracks something. It means the walk upward found a
+    # working tree this directory is not actually part of, which is what
+    # happens if an extracted archive lands inside an unrelated repo.
+    # Returning the empty set there would filter out every match and
+    # disable the check without saying so.
+    return tracked or None
 
 
 def check_no_hardcoded_secrets(repo_path: Path) -> list[Finding]:
