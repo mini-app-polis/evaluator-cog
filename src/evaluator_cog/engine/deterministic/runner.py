@@ -816,11 +816,14 @@ def run_all_checks(
     # / MONO-003 / EVAL-007.
 
     # security_posture — SEC-001..006.
-    _run(check_sec_001, "SEC-001")
-    _run(check_sec_002, "SEC-002")
-    _run(check_sec_003, "SEC-003")
-    _run(check_sec_004, "SEC-004")
-    _run(check_sec_005, "SEC-005")
+    # A monorepo service is evaluated at its own subdirectory, but one set
+    # of workflows at the repo root covers every app in it — so the CI root
+    # has to be handed down or every app is reported for CI it shares.
+    _run(lambda p: check_sec_001(p, monorepo_root=monorepo_root), "SEC-001")
+    _run(lambda p: check_sec_002(p, monorepo_root=monorepo_root), "SEC-002")
+    _run(lambda p: check_sec_003(p, monorepo_root=monorepo_root), "SEC-003")
+    _run(lambda p: check_sec_004(p, monorepo_root=monorepo_root), "SEC-004")
+    _run(lambda p: check_sec_005(p, monorepo_root=monorepo_root), "SEC-005")
     _run(check_sec_006, "SEC-006")
 
     # operational_readiness — only OPS-002 is checkable.
@@ -845,7 +848,11 @@ def run_all_checks(
     # absence of an image definition is CD-021's finding, and reporting
     # it from three rules would obscure which one is actually open.
     def _cd_017_check(p: Path) -> list[Finding]:
-        return check_cd_017(p, monorepo_path=None)
+        # The descriptor sits beside the service in a monorepo, so the
+        # service's own directory is searched first and the repo root is
+        # the fallback. Passing None meant a monorepo service was only
+        # ever looked for at the root it does not own.
+        return check_cd_017(p, monorepo_path=monorepo_root)
 
     _run(_cd_017_check, "CD-017")
     _run(check_cd_021, "CD-021")

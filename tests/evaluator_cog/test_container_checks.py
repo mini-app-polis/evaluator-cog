@@ -53,14 +53,48 @@ def test_cd017_passes_on_compliant_railway_json(tmp_path: Path) -> None:
 def test_cd017_flags_absent_railway_json(tmp_path: Path) -> None:
     findings = check_cd_017(tmp_path)
     assert _ids(findings) == {"CD-017"}
-    assert "railway.json not found" in _blob(findings)
+    assert "No railway.json or railway.toml found" in _blob(findings)
+
+
+def test_cd017_reads_a_railway_toml(tmp_path: Path) -> None:
+    """Railway accepts either spelling and CD-024 already read both.
+
+    deejaytools-com keeps its descriptor in railway.toml and was reported
+    for having no restart policy at all, when what it actually has is a
+    policy with too few retries. Which file the policy lives in was never
+    the rule's question.
+    """
+    _write(
+        tmp_path,
+        "railway.toml",
+        "[deploy]\n"
+        'startCommand = "python -m pkg.main"\n'
+        'restartPolicyType = "ON_FAILURE"\n'
+        "restartPolicyMaxRetries = 10\n",
+    )
+    assert check_cd_017(tmp_path) == []
+
+
+def test_cd017_flags_a_railway_toml_with_too_few_retries(tmp_path: Path) -> None:
+    """The toml is read for content, not merely accepted for existing."""
+    _write(
+        tmp_path,
+        "railway.toml",
+        "[deploy]\n"
+        'startCommand = "python -m pkg.main"\n'
+        'restartPolicyType = "ON_FAILURE"\n'
+        "restartPolicyMaxRetries = 3\n",
+    )
+    findings = check_cd_017(tmp_path)
+    assert len(findings) == 1
+    assert "restartPolicyMaxRetries" in findings[0]["finding"]
 
 
 def test_cd017_flags_malformed_railway_json(tmp_path: Path) -> None:
     _write(tmp_path, "railway.json", "{ this is not json")
     findings = check_cd_017(tmp_path)
     assert len(findings) == 1
-    assert "does not parse as JSON" in findings[0]["finding"]
+    assert "does not parse" in findings[0]["finding"]
 
 
 def test_cd017_flags_restart_policy_never(tmp_path: Path) -> None:

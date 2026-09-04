@@ -234,6 +234,12 @@ def check_cd_017(
     Monorepo services keep their descriptor beside the service rather
     than at the repository root, so ``monorepo_path`` is consulted first
     and the root is the fallback.
+
+    ``railway.toml`` counts. Railway accepts either spelling and CD-024
+    already reads both; this check looked only for ``railway.json`` and
+    so reported deejaytools-com, whose descriptor is a railway.toml, for
+    having no restart policy at all. Which file the policy lives in was
+    never the rule's question.
     """
     CHECK_ID = "CD-017"
     findings: list[Finding] = []
@@ -244,10 +250,14 @@ def check_cd_017(
     search_roots.append(repo_path)
 
     target: Path | None = None
+    data: dict[str, Any] | None = None
+    error: str | None = None
+    found_root: Path = repo_path
     for root in search_roots:
-        candidate = root / "railway.json"
-        if candidate.is_file():
-            target = candidate
+        candidate, candidate_data, candidate_error = _load_platform_descriptor(root)
+        if candidate is not None:
+            target, data, error = candidate, candidate_data, candidate_error
+            found_root = root
             break
 
     if target is None:
@@ -257,27 +267,32 @@ def check_cd_017(
                 CHECK_ID,
                 "ERROR",
                 _DIMENSION,
-                f"railway.json not found (looked at: {looked_in}) — the restart "
-                f"policy is therefore dashboard-owned and not version-controlled.",
-                "Commit a railway.json with a deploy block setting "
-                'restartPolicyType to "ON_FAILURE", restartPolicyMaxRetries to '
-                "at least 10, and an explicit startCommand.",
+                f"No railway.json or railway.toml found (looked at: "
+                f"{looked_in}) — the restart policy is therefore "
+                f"dashboard-owned and not version-controlled.",
+                "Commit a railway.json (or railway.toml) with a deploy block "
+                'setting restartPolicyType to "ON_FAILURE", '
+                "restartPolicyMaxRetries to at least 10, and an explicit "
+                "startCommand.",
             )
         )
         return findings
 
-    rel = _rel(target, repo_path)
-    data, error = _load_json(target)
+    # Relative to the root it was actually found under: a monorepo
+    # service is evaluated at apps/<name>, and its descriptor may sit at
+    # the repo root above that, where _rel against the service directory
+    # gives up and prints an absolute container path.
+    rel = _rel(target, found_root)
     if data is None:
         findings.append(
             _finding(
                 CHECK_ID,
                 "ERROR",
                 _DIMENSION,
-                f"{rel} does not parse as JSON ({error}) — the restart policy "
-                f"cannot be verified and the platform will ignore the file.",
-                "Fix the JSON syntax in railway.json so the deploy block is "
-                "parseable, then re-verify the restart policy settings.",
+                f"{rel} does not parse ({error}) — the restart policy cannot "
+                f"be verified and the platform will ignore the file.",
+                f"Fix the syntax in {rel} so the deploy block is parseable, "
+                f"then re-verify the restart policy settings.",
             )
         )
         return findings

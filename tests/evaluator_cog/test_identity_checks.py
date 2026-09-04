@@ -149,23 +149,29 @@ def test_auth003_flags_bare_depends_as_unresolvable_rather_than_passing(
 ) -> None:
     """An unresolvable guard is a finding, never a silent pass.
 
-    ``Depends(current_user)`` is a bare reference: what it requires is
-    decided in another module, so the registration site cannot say
-    whether the route is scope-guarded or merely authenticated. Recording
-    that as "authenticated-only" would downgrade a route that might be
-    neither, so the enumerator marks it unresolvable and clause (1)
-    reports it.
+    ``Depends(require_admin)`` is a bare reference that *asserts*
+    something: what it requires is decided in another module, so the
+    registration site cannot say whether the route is scope-guarded or
+    merely authenticated. Recording that as "authenticated-only" would
+    downgrade a route that might be neither, so the enumerator marks it
+    unresolvable and clause (1) reports it.
+
+    This originally used ``current_user``, which is a different case: a
+    name of that shape *resolves the caller* rather than asserting a
+    requirement, and cannot be a scope guard because AUTH-003 defines
+    one as a dependency that takes a scope string. The distinction is
+    the point, so the guard here is a name that really is unreadable.
     """
     _write(
         tmp_path,
         "src/pkg/routes.py",
         "from fastapi import APIRouter, Depends\n"
-        "from pkg.deps import current_user\n"
+        "from pkg.deps import require_admin\n"
         "\n"
         "router = APIRouter()\n"
         "\n"
         '@router.get("/items")\n'
-        "async def list_items(user=Depends(current_user)):\n"
+        "async def list_items(user=Depends(require_admin)):\n"
         "    return user\n",
     )
     findings = check_auth_003(tmp_path)
@@ -1284,10 +1290,36 @@ def test_auth003_still_flags_an_unreadable_auth_dependency(tmp_path: Path) -> No
         "router = APIRouter()\n"
         "\n"
         "@router.get('/me')\n"
-        "def me(user = Depends(get_current_user)): ...\n",
+        "def me(user = Depends(verify_caller)): ...\n",
     )
     findings = check_auth_003(tmp_path)
     assert any("cannot be resolved" in f["finding"] for f in findings)
+
+
+def test_auth003_reads_a_subject_resolver_as_authenticated_only(
+    tmp_path: Path,
+) -> None:
+    """`get_current_owner` returns the caller; it asserts nothing.
+
+    AUTH-003 defines a scope guard as "a dependency that takes a scope
+    string". A bare name takes none, so a dependency whose name says it
+    resolves the current subject is authenticated-only, not unreadable.
+    api-kaianolevine-com's GET /wcs/me is one of exactly three routes its
+    auth.py documents as intentionally authenticated-only, and the check
+    was telling it to add a scope — the one thing that design rejects.
+    """
+    _write(
+        tmp_path,
+        "src/pkg/routers/me.py",
+        "from fastapi import APIRouter, Depends\n"
+        "from pkg.auth import get_current_owner\n"
+        "router = APIRouter()\n"
+        "\n"
+        "@router.get('/me')\n"
+        "def me(owner = Depends(get_current_owner)): ...\n",
+    )
+    clause1 = _clause(check_auth_003(tmp_path), "AUTH-003", 1)
+    assert clause1 == []
 
 
 def test_auth003_keeps_a_scope_guard_alongside_plumbing(tmp_path: Path) -> None:

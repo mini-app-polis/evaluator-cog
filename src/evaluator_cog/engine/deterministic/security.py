@@ -49,6 +49,23 @@ from evaluator_cog.engine.deterministic._workflows import (
 
 _DIMENSION = "security_posture"
 
+
+def _ci_root(repo_path: Path, monorepo_root: Path | None) -> Path:
+    """Where this service's CI actually lives.
+
+    A monorepo service is evaluated at its own subdirectory — the
+    per_app strategy hands the check ``apps/api`` — but its workflows
+    and pre-commit hook sit at the repository root, one set covering
+    every app. ecosystem.yaml says so for deejaytools-com in as many
+    words: "CI is evaluated at the repo root."
+
+    Without this, SEC-001 through SEC-005 looked for
+    ``apps/api/.github/workflows`` and reported five findings per app
+    against a monorepo whose CI was wired correctly at the root.
+    """
+    return monorepo_root or repo_path
+
+
 # SEC-001: matched against the `repo:` URL of each pre-commit entry
 # rather than against hook ids, because the ids differ between the three
 # tools and churn between their releases while the URL does not.
@@ -113,7 +130,7 @@ def _first_error_line(exc: Exception) -> str:
     return text[0] if text else exc.__class__.__name__
 
 
-def check_sec_001(repo_path: Path) -> list[Finding]:
+def check_sec_001(repo_path: Path, monorepo_root: Path | None = None) -> list[Finding]:
     """SEC-001: a pre-commit hook scans for secrets before they are pushed.
 
     Reads ``.pre-commit-config.yaml`` at the repo root and passes when any
@@ -132,7 +149,7 @@ def check_sec_001(repo_path: Path) -> list[Finding]:
     """
     CHECK_ID = "SEC-001"
     findings: list[Finding] = []
-    config = repo_path / ".pre-commit-config.yaml"
+    config = _ci_root(repo_path, monorepo_root) / ".pre-commit-config.yaml"
 
     if not config.is_file():
         findings.append(
@@ -198,7 +215,7 @@ def check_sec_001(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_sec_002(repo_path: Path) -> list[Finding]:
+def check_sec_002(repo_path: Path, monorepo_root: Path | None = None) -> list[Finding]:
     """SEC-002: secret scanning runs on pull-request diffs and can fail the build.
 
     Restricted to workflows whose ``on:`` includes ``pull_request`` — a
@@ -223,7 +240,7 @@ def check_sec_002(repo_path: Path) -> list[Finding]:
     """
     CHECK_ID = "SEC-002"
     findings: list[Finding] = []
-    workflows = load_workflows(repo_path)
+    workflows = load_workflows(_ci_root(repo_path, monorepo_root))
 
     if not workflows:
         findings.append(
@@ -319,7 +336,7 @@ def check_sec_002(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_sec_003(repo_path: Path) -> list[Finding]:
+def check_sec_003(repo_path: Path, monorepo_root: Path | None = None) -> list[Finding]:
     """SEC-003: a dependency vulnerability scan runs in CI and gates the build.
 
     Which scanner is expected follows the manifests present: a repo with
@@ -360,7 +377,7 @@ def check_sec_003(repo_path: Path) -> list[Finding]:
         run_commands += _TS_AUDIT_RUNS
     expectation = " or ".join(expected)
 
-    workflows = load_workflows(repo_path)
+    workflows = load_workflows(_ci_root(repo_path, monorepo_root))
     if not workflows:
         findings.append(
             _finding(
@@ -444,7 +461,7 @@ def check_sec_003(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_sec_004(repo_path: Path) -> list[Finding]:
+def check_sec_004(repo_path: Path, monorepo_root: Path | None = None) -> list[Finding]:
     """SEC-004: a static analysis workflow is present.
 
     Passes on any step using ``github/codeql-action/analyze@*`` or
@@ -460,7 +477,7 @@ def check_sec_004(repo_path: Path) -> list[Finding]:
     """
     CHECK_ID = "SEC-004"
     findings: list[Finding] = []
-    workflows = load_workflows(repo_path)
+    workflows = load_workflows(_ci_root(repo_path, monorepo_root))
 
     if not workflows:
         findings.append(
@@ -502,7 +519,7 @@ def check_sec_004(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_sec_005(repo_path: Path) -> list[Finding]:
+def check_sec_005(repo_path: Path, monorepo_root: Path | None = None) -> list[Finding]:
     """SEC-005: an SBOM is generated per build and retained as an artifact.
 
     Both halves — generation (``anchore/sbom-action@*``, or a ``run:``
@@ -520,7 +537,7 @@ def check_sec_005(repo_path: Path) -> list[Finding]:
     """
     CHECK_ID = "SEC-005"
     findings: list[Finding] = []
-    workflows = load_workflows(repo_path)
+    workflows = load_workflows(_ci_root(repo_path, monorepo_root))
 
     if not workflows:
         findings.append(

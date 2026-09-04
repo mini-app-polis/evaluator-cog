@@ -162,6 +162,27 @@ AUTH_DEP_HINTS = (
 )
 
 
+# Dependencies that *resolve* the caller rather than *assert* a
+# requirement. `get_current_owner`, `get_current_user`,
+# `current_principal` return who the caller is; none of them can be a
+# scope guard, because AUTH-003 defines one as "a dependency that takes
+# a scope string" and these take nothing. So a bare
+# `Depends(get_current_owner)` is not an unread guard — it is a read
+# guard requiring authentication and no scope, which is exactly the
+# "authenticated-only" class the rule asks us to classify.
+#
+# Deliberately narrow. `Depends(require_admin)` stays unresolvable: a
+# bare name that *asserts* something may encode authority we cannot see
+# from the registration site, and the rule is right to flag it. Only
+# names that read as "give me the current X" qualify.
+_SUBJECT_RESOLVER = re.compile(r"(^|_)current_[a-z0-9_]+$")
+
+
+def resolves_subject(callee: str) -> bool:
+    """True for a dependency whose name says it returns the caller."""
+    return bool(_SUBJECT_RESOLVER.search((callee or "").lower()))
+
+
 def _dep_kind(callee: str) -> str:
     """'auth', 'infrastructure', or 'unknown' for a dependency callee."""
     name = (callee or "").lower()
@@ -317,13 +338,14 @@ def _build_dependency(node: ast.AST, origin: str) -> Dependency | None:
             # fine, it just is not a scope guard.
             dep.resolvable = True
     elif isinstance(inner, ast.Name):
-        # Depends(current_user) — a bare reference. We cannot see what
-        # it requires from here.
+        # Depends(current_user) — a bare reference. What it requires is
+        # decided elsewhere, unless the name says it resolves the caller
+        # rather than asserting a requirement.
         dep.callee = inner.id
-        dep.resolvable = False
+        dep.resolvable = resolves_subject(dep.callee)
     elif isinstance(inner, ast.Attribute):
         dep.callee = inner.attr
-        dep.resolvable = False
+        dep.resolvable = resolves_subject(dep.callee)
     return dep
 
 
