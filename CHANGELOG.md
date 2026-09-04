@@ -1,3 +1,10 @@
+## [3.20.10](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.9...v3.20.10) (2026-09-04)
+
+
+### Bug Fixes
+
+* **delivery:** report suppressed duplicates instead of logging nothing ([c90732e](https://github.com/mini-app-polis/evaluator-cog/commit/c90732e04000c0e388414734087b730878760df9))
+
 ## [3.20.9](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.8...v3.20.9) (2026-09-04)
 
 
