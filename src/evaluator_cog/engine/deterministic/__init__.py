@@ -152,6 +152,7 @@ from evaluator_cog.engine.deterministic.security import (
     check_sec_004,
     check_sec_005,
     check_sec_006,
+    check_sec_007,
 )
 from evaluator_cog.engine.deterministic.testing import (
     check_db_test_fixtures,
@@ -188,6 +189,7 @@ __all__ = [
     "check_sec_004",
     "check_sec_005",
     "check_sec_006",
+    "check_sec_007",
     "check_xstack_006",
     "check_xstack_007",
     "CheckResult",

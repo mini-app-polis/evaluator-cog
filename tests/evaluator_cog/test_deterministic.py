@@ -2064,3 +2064,124 @@ def test_cd015_bare_serve_needs_the_prefect_import(tmp_path: Path) -> None:
         "from .helpers import serve\n\ndef main():\n    serve(thing)\n"
     )
     assert check_prefect_serve_pattern(tmp_path) != []
+
+
+# --------------------------------------------------------------------------
+# SEC-007 — automated dependency updates
+# --------------------------------------------------------------------------
+
+
+def _sec007_repo(tmp_path, *, files: dict[str, str]):
+    for rel, content in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+    return tmp_path
+
+
+_GOOD = """version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule: {interval: "weekly"}
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule: {interval: "weekly"}
+"""
+
+
+def test_sec_007_passes_when_every_used_ecosystem_is_covered(tmp_path) -> None:
+    from evaluator_cog.engine.deterministic.security import check_sec_007
+
+    repo = _sec007_repo(
+        tmp_path,
+        files={
+            "pyproject.toml": "[project]\nname='x'\n",
+            "uv.lock": "",
+            ".github/workflows/ci.yml": "name: CI\n",
+            ".github/dependabot.yml": _GOOD,
+        },
+    )
+    assert check_sec_007(repo) == []
+
+
+def test_sec_007_reports_a_missing_config(tmp_path) -> None:
+    from evaluator_cog.engine.deterministic.security import check_sec_007
+
+    repo = _sec007_repo(
+        tmp_path,
+        files={"pyproject.toml": "[project]\nname='x'\n", "uv.lock": ""},
+    )
+    findings = check_sec_007(repo)
+    assert len(findings) == 1
+    assert "No .github/dependabot.yml" in findings[0]["finding"]
+
+
+def test_sec_007_catches_the_half_configured_case(tmp_path) -> None:
+    """Covering only Actions is the shape a half-finished config takes.
+
+    Actions is the easiest ecosystem to declare, so a config that stops
+    there is the common way this rule gets passed without being met —
+    the repo's real exposure is its dependency tree, which stays manual.
+    """
+    from evaluator_cog.engine.deterministic.security import check_sec_007
+
+    repo = _sec007_repo(
+        tmp_path,
+        files={
+            "package.json": '{"name":"x"}',
+            ".github/workflows/ci.yml": "name: CI\n",
+            ".github/dependabot.yml": (
+                "version: 2\n"
+                "updates:\n"
+                '  - package-ecosystem: "github-actions"\n'
+                '    directory: "/"\n'
+                '    schedule: {interval: "weekly"}\n'
+            ),
+        },
+    )
+    findings = check_sec_007(repo)
+    assert len(findings) == 1
+    assert "does not cover JavaScript" in findings[0]["finding"]
+    assert "github-actions" in findings[0]["finding"]
+
+
+def test_sec_007_accepts_any_tool_that_delivers_updates(tmp_path) -> None:
+    """The rule is that updates arrive, not which tool delivers them."""
+    from evaluator_cog.engine.deterministic.security import check_sec_007
+
+    for eco in ("npm", "pnpm", "yarn"):
+        repo = _sec007_repo(
+            tmp_path / eco,
+            files={
+                "package.json": '{"name":"x"}',
+                ".github/dependabot.yml": (
+                    f'version: 2\nupdates:\n  - package-ecosystem: "{eco}"\n'
+                    '    directory: "/"\n'
+                ),
+            },
+        )
+        assert check_sec_007(repo) == [], eco
+
+
+def test_sec_007_reports_an_unparseable_config(tmp_path) -> None:
+    """A config GitHub cannot parse is inert — nothing fails, updates
+    simply never arrive, which is worse than not having one."""
+    from evaluator_cog.engine.deterministic.security import check_sec_007
+
+    repo = _sec007_repo(
+        tmp_path,
+        files={
+            "pyproject.toml": "[project]\nname='x'\n",
+            ".github/dependabot.yml": "version: 2\nupdates: [oops\n",
+        },
+    )
+    findings = check_sec_007(repo)
+    assert len(findings) == 1
+    assert "could not be parsed" in findings[0]["finding"]
+
+
+def test_sec_007_is_silent_when_there_is_nothing_to_update(tmp_path) -> None:
+    from evaluator_cog.engine.deterministic.security import check_sec_007
+
+    assert check_sec_007(_sec007_repo(tmp_path, files={"README.md": "# x"})) == []

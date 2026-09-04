@@ -1,0 +1,42 @@
+# Automated dependency updates.
+#
+# The fleet audits dependencies on every build (ecosystem-standards
+# SEC-003), which finds what has gone vulnerable but never fixes it.
+# Clearing those by hand does not scale — one repo needed 45 advisories
+# closed in a single sitting. This is the other half: keep dependencies
+# current so the audit has less to find.
+#
+# `commit-message.prefix` is load-bearing, not cosmetic. Dependabot's
+# default subject is "Bump x from y to z", which is not a Conventional
+# Commit. Every repo here releases through semantic-release, so an
+# unprefixed subject both trips VER-001 and cuts no release — the fix
+# would land on main and never reach the registry.
+#
+# Minor and patch updates are grouped into one pull request per
+# ecosystem per week. Majors arrive on their own, because a major is a
+# decision rather than a bump.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-and-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "fix(deps)"
+      prefix-development: "chore(deps)"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci(deps)"

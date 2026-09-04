@@ -826,3 +826,157 @@ def check_sec_006(repo_path: Path) -> list[Finding]:
                 )
             )
     return findings
+
+
+# --------------------------------------------------------------------------
+# SEC-007 — automated dependency updates
+# --------------------------------------------------------------------------
+
+#: package-ecosystem values that satisfy each ecosystem a repo can use.
+#: More than one is valid per ecosystem because the rule is about updates
+#: arriving, not about which tool delivers them.
+_DEPENDABOT_ECOSYSTEMS: dict[str, tuple[str, ...]] = {
+    "Python": ("uv", "pip", "poetry", "pipenv"),
+    "JavaScript": ("npm", "pnpm", "yarn", "bun"),
+    "GitHub Actions": ("github-actions",),
+}
+
+
+def _used_ecosystems(root: Path) -> list[str]:
+    """Which package ecosystems this repo demonstrably uses.
+
+    Read from files on disk rather than from any configuration, so a
+    repo cannot satisfy the rule by describing itself differently. A
+    lockfile or manifest is evidence; a config entry is a claim.
+    """
+    used: list[str] = []
+    if (root / "uv.lock").is_file() or (root / "pyproject.toml").is_file():
+        used.append("Python")
+    if (root / "package.json").is_file():
+        used.append("JavaScript")
+    workflows = root / ".github" / "workflows"
+    if workflows.is_dir() and any(
+        p.suffix in (".yml", ".yaml") for p in workflows.iterdir() if p.is_file()
+    ):
+        used.append("GitHub Actions")
+    return used
+
+
+def check_sec_007(repo_path: Path, monorepo_root: Path | None = None) -> list[Finding]:
+    """SEC-007: dependency updates arrive automatically, and cover what is used.
+
+    SEC-003 finds what has gone vulnerable and fixes nothing. This is
+    the other half of that pair, and the check is deliberately about
+    *coverage* rather than about a file existing.
+
+    A config that updates GitHub Actions in a repo whose real exposure
+    is its transitive npm tree is the appearance of automation rather
+    than automation, and it is the shape a half-finished config takes
+    naturally, because Actions is the easiest ecosystem to declare. So
+    the ecosystems a repo uses are read off the filesystem — a lockfile
+    or manifest is evidence — and compared against what the config
+    declares.
+    """
+    CHECK_ID = "SEC-007"
+    findings: list[Finding] = []
+    root = _ci_root(repo_path, monorepo_root)
+
+    config = None
+    for name in ("dependabot.yml", "dependabot.yaml"):
+        candidate = root / ".github" / name
+        if candidate.is_file():
+            config = candidate
+            break
+
+    used = _used_ecosystems(repo_path) or _used_ecosystems(root)
+    if not used:
+        # Nothing to keep current. Saying so is not a violation.
+        return findings
+
+    if config is None:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                _DIMENSION,
+                f"No .github/dependabot.yml — dependency updates for "
+                f"{', '.join(used)} are manual, so this repo only learns a "
+                f"dependency went bad when SEC-003 fails a build.",
+                "Add .github/dependabot.yml declaring an updates entry per "
+                "ecosystem this repo uses. Set commit-message.prefix to a "
+                "Conventional Commit type: the default subject shape trips "
+                "VER-001 and cuts no release, so the update would land on "
+                "main and never reach the registry.",
+            )
+        )
+        return findings
+
+    rel = config.relative_to(root) if config.is_relative_to(root) else config.name
+    try:
+        data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    except Exception as exc:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                _DIMENSION,
+                f"{rel} could not be parsed as YAML ({exc}), so no dependency "
+                f"updates are configured regardless of what it says.",
+                "Fix the YAML. A config GitHub cannot parse is silently "
+                "inert — nothing fails, updates simply never arrive.",
+            )
+        )
+        return findings
+
+    if not isinstance(data, dict) or data.get("version") != 2:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                _DIMENSION,
+                f"{rel} does not declare `version: 2`, which is the only "
+                f"version GitHub reads.",
+                "Set `version: 2` at the top of the file.",
+            )
+        )
+        return findings
+
+    updates = data.get("updates")
+    if not isinstance(updates, list) or not updates:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                _DIMENSION,
+                f"{rel} declares no `updates` entries, so it configures nothing.",
+                "Add one updates entry per ecosystem this repo uses.",
+            )
+        )
+        return findings
+
+    declared = {
+        str(entry.get("package-ecosystem", "")).strip().lower()
+        for entry in updates
+        if isinstance(entry, dict)
+    }
+
+    missing = [
+        ecosystem
+        for ecosystem in used
+        if not (set(_DEPENDABOT_ECOSYSTEMS[ecosystem]) & declared)
+    ]
+    if missing:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                _DIMENSION,
+                f"{rel} does not cover {', '.join(missing)}, which this repo "
+                f"uses. Declared: {', '.join(sorted(declared)) or 'nothing'}.",
+                f"Add an updates entry for {', '.join(missing)}. A config "
+                f"that covers only some of what a repo depends on leaves the "
+                f"rest updated by hand, which is the state this rule exists "
+                f"to end.",
+            )
+        )
+    return findings

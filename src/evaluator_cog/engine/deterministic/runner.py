@@ -136,6 +136,7 @@ from evaluator_cog.engine.deterministic.security import (
     check_sec_004,
     check_sec_005,
     check_sec_006,
+    check_sec_007,
 )
 from evaluator_cog.engine.deterministic.testing import (
     check_db_test_fixtures,
@@ -825,6 +826,7 @@ def run_all_checks(
     _run(lambda p: check_sec_004(p, monorepo_root=monorepo_root), "SEC-004")
     _run(lambda p: check_sec_005(p, monorepo_root=monorepo_root), "SEC-005")
     _run(check_sec_006, "SEC-006")
+    _run(lambda p: check_sec_007(p, monorepo_root=monorepo_root), "SEC-007")
 
     # operational_readiness — only OPS-002 is checkable.
     #
