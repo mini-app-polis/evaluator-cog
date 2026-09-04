@@ -1,3 +1,16 @@
+# [3.20.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.19.0...v3.20.0) (2026-09-04)
+
+
+### Bug Fixes
+
+* **identity:** CD-019 (1) reads past the call site to find the identity ([1d22fe8](https://github.com/mini-app-polis/evaluator-cog/commit/1d22fe83371aeaf23b960a21124c30e1b6aa5f71))
+* **identity:** CD-019 (5) reads the TypeScript half of the shared library ([b6b1f68](https://github.com/mini-app-polis/evaluator-cog/commit/b6b1f68320b629e21d3280db4059c5d5aa047b1e))
+
+
+### Features
+
+* **deploy:** declare resource ceilings (placeholder values) ([95239b7](https://github.com/mini-app-polis/evaluator-cog/commit/95239b7ef2acfca86a461273e4aba7ca4fe0ffeb))
+
 # [3.19.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.18.1...v3.19.0) (2026-09-04)
 
 
