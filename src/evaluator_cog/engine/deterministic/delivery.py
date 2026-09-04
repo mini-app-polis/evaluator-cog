@@ -246,29 +246,59 @@ def check_structured_logging(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def _tracked_paths(repo_path: Path) -> set[str] | None:
-    """Repo-relative paths git tracks, or None when git cannot say.
+#: Seconds to wait on the `git ls-files` used to decide whether a file is
+#: committed. Generous for a metadata read, and bounded so a wedged git
+#: cannot stall the run — the check degrades to "git cannot say" instead.
+_GIT_QUERY_TIMEOUT_SECONDS = 30
 
-    None means "no answer available" — no .git directory (the zipball
-    download path), or git failed — and callers must not read that as
-    "nothing is tracked".
+
+def _tracked_paths(repo_path: Path) -> set[str] | None:
+    """Paths git tracks under ``repo_path``, relative to it, or None.
+
+    None means "no answer available" — no working tree above this path
+    (the zipball download path), or git failed — and callers must not
+    read that as "nothing is tracked".
+
+    The .git directory is looked for upward, not only at ``repo_path``:
+    a monorepo service is checked at ``apps/api`` while the working tree
+    lives at the repo root, and asking only at the service directory
+    would answer "cannot say" for every monorepo.
     """
-    if not (repo_path / ".git").exists():
+    root: Path | None = None
+    for candidate in (repo_path, *repo_path.parents):
+        if (candidate / ".git").exists():
+            root = candidate
+            break
+    if root is None:
         return None
     import subprocess
 
     try:
         result = subprocess.run(
-            ["git", "-C", str(repo_path), "ls-files", "-z"],
+            ["git", "-C", str(root), "ls-files", "-z"],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
         )
     except (subprocess.SubprocessError, OSError):
         return None
     if result.returncode != 0:
         return None
-    return {ln for ln in result.stdout.split("\0") if ln}
+
+    try:
+        prefix = repo_path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+    prefix_str = "" if prefix == Path(".") else prefix.as_posix() + "/"
+
+    tracked: set[str] = set()
+    for line in result.stdout.split("\0"):
+        if not line:
+            continue
+        if prefix_str and not line.startswith(prefix_str):
+            continue
+        tracked.add(line[len(prefix_str) :])
+    return tracked
 
 
 def check_no_hardcoded_secrets(repo_path: Path) -> list[Finding]:
