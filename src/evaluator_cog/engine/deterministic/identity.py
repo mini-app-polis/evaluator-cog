@@ -2354,10 +2354,76 @@ def _verification_functions(
     return out
 
 
-def _cd019_clause5(check_id: str, files: list[_PyFile]) -> list[Finding]:
-    """(5) Verification is consumed from the shared library, not rewritten."""
+# The TypeScript half of the shared verification surface. `identity` is a
+# Python package; a Hono service cannot import it, and asking one to is
+# advice that cannot be followed. common-typescript-utils exports
+# verifyClerkToken from auth.ts and is what a TypeScript service is meant
+# to consume instead.
+_TS_SHARED_AUTH_PACKAGE = "common-typescript-utils"
+_TS_VERIFY_SYMBOLS = ("verifyClerkToken", "ClerkPayload", "verifyToken")
+_TS_SOURCE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs")
+
+
+def _imports_shared_ts_auth(repo_path: Path) -> bool:
+    """True when any non-test TS/JS module imports the shared auth surface.
+
+    Read as text rather than parsed: this module has no TypeScript
+    parser, and the question is only whether the shared package is
+    imported for verification, which an import statement answers.
+    """
+    for path in repo_path.rglob("*"):
+        if path.suffix not in _TS_SOURCE_SUFFIXES or not path.is_file():
+            continue
+        parts = set(path.parts)
+        if "node_modules" in parts or "dist" in parts or ".git" in parts:
+            continue
+        if ".test." in path.name or ".spec." in path.name:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if _TS_SHARED_AUTH_PACKAGE not in text:
+            continue
+        if any(symbol in text for symbol in _TS_VERIFY_SYMBOLS):
+            return True
+    return False
+
+
+def _cd019_clause5(
+    check_id: str, files: list[_PyFile], repo_path: Path | None = None
+) -> list[Finding]:
+    """(5) Verification is consumed from the shared library, not rewritten.
+
+    The shared library has two halves. `identity` is Python; a
+    TypeScript service consumes `common-typescript-utils` instead. A
+    repo with no Python sources was previously reported for importing
+    nothing from `identity` — advice it could not act on, against a
+    service that was already delegating correctly.
+    """
     findings: list[Finding] = []
     modules, _names = _imported_modules(files)
+    has_python = any(not f.is_test for f in files)
+
+    if not has_python and repo_path is not None:
+        if not _imports_shared_ts_auth(repo_path):
+            findings.append(
+                _finding(
+                    check_id,
+                    _SEVERITY,
+                    _DIMENSION,
+                    f"CD-019 (5): the service imports no verification helper from "
+                    f"the shared TypeScript utilities "
+                    f"({_TS_SHARED_AUTH_PACKAGE}), so its credential verification "
+                    f"is local.",
+                    f"Import verifyClerkToken from {_TS_SHARED_AUTH_PACKAGE} and "
+                    f"delete the in-repo equivalent, so session-JWT verification "
+                    f"is one implementation across the fleet rather than one per "
+                    f"service.",
+                )
+            )
+        return findings
+
     if not any(m == "identity" or m.startswith("identity.") for m in modules):
         findings.append(
             _finding(
@@ -2767,7 +2833,7 @@ def check_cd_019(repo_path: Path, *, repo_type: str = "") -> list[Finding]:
     if is_receiver:
         receiver_files = [f for f in files if not f.is_test]
         clauses = [
-            lambda: _cd019_clause5(CHECK_ID, receiver_files),
+            lambda: _cd019_clause5(CHECK_ID, receiver_files, repo_path),
             lambda: _cd019_clause6(CHECK_ID, receiver_files),
             lambda: _cd019_clause7(CHECK_ID, receiver_files),
             lambda: _cd019_clause8(CHECK_ID, repo_path, receiver_files),

@@ -1551,3 +1551,47 @@ def test_cd019_clause1_still_flags_a_wrapper_around_an_unnamed_client(
         if "CD-019 (1)" in f["finding"]
     ]
     assert clause1
+
+
+def test_cd019_clause5_reads_the_typescript_half_of_the_shared_library(
+    tmp_path: Path,
+) -> None:
+    """`identity` is Python; a Hono service consumes common-typescript-utils.
+
+    deejaytools-com-api imports verifyClerkToken from the shared TS
+    package — it is delegating correctly — and was reported for
+    importing nothing from `identity`, which it cannot import at all.
+    """
+    (tmp_path / "package.json").write_text('{"name": "svc"}\n')
+    src = tmp_path / "apps/api/src/middleware"
+    src.mkdir(parents=True)
+    (src / "auth.ts").write_text(
+        'import { verifyClerkToken } from "common-typescript-utils";\n'
+        "export const guard = () => verifyClerkToken;\n"
+    )
+    clause5 = [
+        f
+        for f in check_cd_019(tmp_path, repo_type="api-service")
+        if "CD-019 (5)" in f["finding"]
+    ]
+    assert clause5 == []
+
+
+def test_cd019_clause5_still_flags_local_typescript_verification(
+    tmp_path: Path,
+) -> None:
+    """A TS service that verifies locally is still reported — in TS terms."""
+    (tmp_path / "package.json").write_text('{"name": "svc"}\n')
+    src = tmp_path / "apps/api/src/middleware"
+    src.mkdir(parents=True)
+    (src / "auth.ts").write_text(
+        'import { jwtVerify } from "jose";\nexport const guard = () => jwtVerify;\n'
+    )
+    clause5 = [
+        f
+        for f in check_cd_019(tmp_path, repo_type="api-service")
+        if "CD-019 (5)" in f["finding"]
+    ]
+    assert len(clause5) == 1
+    assert "common-typescript-utils" in clause5[0]["finding"]
+    assert "identity.chain" not in clause5[0]["finding"]
