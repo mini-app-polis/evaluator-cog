@@ -133,17 +133,40 @@ def test_delivery_assertion_raises_when_nothing_landed() -> None:
 
 
 def test_delivery_assertion_is_silent_on_a_partial_failure() -> None:
-    """One landing proves the route works; the rest are warned about."""
+    """One landing proves the route works; the rest are warned about.
+
+    The assertion that matters is total_failure: nine findings reached
+    the API, so the route is up and the run must not be failed. The log
+    is a stand-in here — the per-emitter warning is asserted in
+    test_post_tracked_logs_what_landed_not_what_was_handed_over.
+    """
     conf._reset_run_tally()
     conf._RUN_TALLY.merge(PostResult(attempted=10, posted=9, failed=1))
-    conf._assert_findings_were_delivered(MagicMock())
+    prefect_log = MagicMock()
+
+    conf._assert_findings_were_delivered(prefect_log)
+
+    assert conf._RUN_TALLY.total_failure is False
+    assert conf._RUN_TALLY.posted == 9
+    assert conf._RUN_TALLY.attempted == 10
     conf._reset_run_tally()
 
 
 def test_delivery_assertion_is_silent_when_nothing_was_offered() -> None:
-    """A wholly conformant fleet posts nothing and that is not a failure."""
+    """A wholly conformant fleet posts nothing and that is not a failure.
+
+    Nothing attempted is not the same as nothing delivered, and only the
+    second is a failure. This pins that distinction: an empty tally
+    leaves total_failure False and the run succeeds.
+    """
     conf._reset_run_tally()
-    conf._assert_findings_were_delivered(MagicMock())
+    prefect_log = MagicMock()
+
+    conf._assert_findings_were_delivered(prefect_log)
+
+    assert conf._RUN_TALLY.attempted == 0
+    assert conf._RUN_TALLY.total_failure is False
+    conf._reset_run_tally()
 
 
 def test_post_tracked_logs_what_landed_not_what_was_handed_over() -> None:
