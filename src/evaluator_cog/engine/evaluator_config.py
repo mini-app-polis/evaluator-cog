@@ -15,14 +15,17 @@ It falls back gracefully when evaluator.yaml is absent (migration period).
 from __future__ import annotations
 
 import datetime as _dt
-import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
 import yaml
+from mini_app_polis import logger as logger_mod
 
-log = logging.getLogger(__name__)
+# CD-009. The shared logger, like every other module in this repo that logs.
+# A module-private stdlib logger here would sit outside the format and level
+# the rest of the fleet's output is read with.
+log = logger_mod.get_logger()
 
 
 class Disposition(StrEnum):

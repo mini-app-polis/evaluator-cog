@@ -25,11 +25,13 @@ themselves.
 
 from __future__ import annotations
 
-import logging
 import re
 from typing import Literal
 
-log = logging.getLogger(__name__)
+from mini_app_polis import logger as logger_mod
+
+# CD-009. The shared logger — see evaluator_config for the same note.
+log = logger_mod.get_logger()
 
 CheckMode = Literal["deterministic", "llm"]
 

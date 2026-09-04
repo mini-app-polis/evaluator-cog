@@ -163,6 +163,52 @@ def check_no_hardcoded_urls(repo_path: Path) -> list[Finding]:
     return findings
 
 
+def _stdlib_logging_is_primary(text: str) -> bool:
+    """True when this module reaches for stdlib logging as its own logger.
+
+    Parsed rather than searched. The strings ``import logging`` and
+    ``logging.getLogger`` appear in this very file as the patterns a
+    text scan would look for, and in any module that documents the rule
+    — matching those is matching prose, not code.
+
+    A stdlib logger built inside an ``except`` handler is a fallback for
+    a shared logger that was tried first (the Prefect run logger outside
+    a run, say), not the module's primary logger, so it does not count.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+
+    fallback: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler):
+            for inner in ast.walk(node):
+                fallback.add(id(inner))
+
+    for node in ast.walk(tree):
+        if id(node) in fallback:
+            continue
+        if isinstance(node, ast.Import):
+            if any(
+                a.name == "logging" or a.name.startswith("logging.") for a in node.names
+            ):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "logging":
+                return True
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in {"getLogger", "basicConfig"}
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "logging"
+            ):
+                return True
+    return False
+
+
 def check_structured_logging(repo_path: Path) -> list[Finding]:
     """CD-009: Structured logging via shared library."""
     CHECK_ID = "CD-009"
@@ -173,11 +219,7 @@ def check_structured_logging(repo_path: Path) -> list[Finding]:
 
     for py_file in src.rglob("*.py"):
         text = py_file.read_text()
-        if (
-            "import logging" in text
-            or "logging.basicConfig" in text
-            or "logging.getLogger" in text
-        ):
+        if _stdlib_logging_is_primary(text):
             findings.append(
                 _finding(
                     "CD-009",
