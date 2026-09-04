@@ -1,3 +1,10 @@
+## [3.20.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.0...v3.20.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **cd-015:** detect registration in the tree, and honour clause (c) ([668adb0](https://github.com/mini-app-polis/evaluator-cog/commit/668adb021e6f6de24e88c2039c2d36b4b0eb892d))
+
 # [3.20.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.19.0...v3.20.0) (2026-09-04)
 
 
