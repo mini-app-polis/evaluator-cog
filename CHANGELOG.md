@@ -1,3 +1,10 @@
+## [3.20.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.1...v3.20.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* **conformance:** read the branch a repo actually develops on ([e6f0e54](https://github.com/mini-app-polis/evaluator-cog/commit/e6f0e54466accd1c058ff9ac3ab1c448a4e256b6))
+
 ## [3.20.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.0...v3.20.1) (2026-09-04)
 
 
