@@ -235,26 +235,35 @@ def check_env_example_settings_parity(repo_path: Path) -> list[Finding]:
 
     env_text = env_example.read_text()
     lines = env_text.splitlines()
+    # An "external tooling" comment heads the *block* of keys under it,
+    # not one key. api-kaianolevine-com writes five per-machine API keys
+    # under a five-line explanation of why they cannot be Settings
+    # fields; clearing the marker on the first key flagged the other
+    # four, against a file that had already answered the question.
+    #
+    # A comment block is read as a whole: the marker may appear on any
+    # line of it, and the continuation lines that explain the exemption
+    # do not cancel it. Only a blank line ends the block, which is how
+    # .env files separate their sections in practice.
     prev_is_external_marker = False
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("#"):
-            # Check if this comment marks the next key as external tooling
             if "external" in stripped.lower() or "tooling" in stripped.lower():
                 prev_is_external_marker = True
             continue
-        if not stripped or "=" not in stripped:
+        if not stripped:
             prev_is_external_marker = False
+            continue
+        if "=" not in stripped:
             continue
         key = stripped.split("=", 1)[0].strip()
         # Uppercase env vars correspond to Settings fields case-insensitively
         if key in declared_fields or key.upper() in (
             f.upper() for f in declared_fields
         ):
-            prev_is_external_marker = False
             continue
         if prev_is_external_marker:
-            prev_is_external_marker = False
             continue
         findings.append(
             _finding(

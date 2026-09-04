@@ -350,7 +350,7 @@ def check_cd_017(
     return findings
 
 
-def check_cd_021(repo_path: Path) -> list[Finding]:
+def check_cd_021(repo_path: Path, monorepo_path: Path | None = None) -> list[Finding]:
     """CD-021: deployable services define their runtime image explicitly.
 
     This rule is catalogued as a ``gap``, not a requirement, and the
@@ -374,8 +374,15 @@ def check_cd_021(repo_path: Path) -> list[Finding]:
 
     dockerfile = repo_path / "Dockerfile"
     has_dockerfile = dockerfile.is_file()
+    if not has_dockerfile and monorepo_path is not None:
+        has_dockerfile = (monorepo_path / "Dockerfile").is_file()
 
     descriptor, data, _error = _load_platform_descriptor(repo_path)
+    if descriptor is None and monorepo_path is not None:
+        # Same reason as CD-024: the image definition governing a
+        # monorepo service can live at the repo root, and "no descriptor"
+        # is not true of the service just because it is not beside it.
+        descriptor, data, _error = _load_platform_descriptor(monorepo_path)
     builder_selected = False
     if data is not None:
         build = data.get("build")
@@ -562,7 +569,7 @@ def check_cd_023(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_cd_024(repo_path: Path) -> list[Finding]:
+def check_cd_024(repo_path: Path, monorepo_path: Path | None = None) -> list[Finding]:
     """CD-024: deployable services declare memory and CPU limits.
 
     An unbounded service is a noisy neighbour: a leak or a runaway query
@@ -587,6 +594,12 @@ def check_cd_024(repo_path: Path) -> list[Finding]:
     findings: list[Finding] = []
 
     descriptor, data, error = _load_platform_descriptor(repo_path)
+    if descriptor is None and monorepo_path is not None:
+        # A monorepo service is evaluated at apps/<name>; its platform
+        # descriptor may be the one at the repo root that governs the
+        # whole deploy. Reporting "no descriptor" for a service whose
+        # descriptor is one directory up says nothing true.
+        descriptor, data, error = _load_platform_descriptor(monorepo_path)
 
     if descriptor is None:
         findings.append(

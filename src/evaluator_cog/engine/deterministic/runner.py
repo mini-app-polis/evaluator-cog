@@ -855,10 +855,10 @@ def run_all_checks(
         return check_cd_017(p, monorepo_path=monorepo_root)
 
     _run(_cd_017_check, "CD-017")
-    _run(check_cd_021, "CD-021")
+    _run(lambda p: check_cd_021(p, monorepo_path=monorepo_root), "CD-021")
     _run(check_cd_022, "CD-022")
     _run(check_cd_023, "CD-023")
-    _run(check_cd_024, "CD-024")
+    _run(lambda p: check_cd_024(p, monorepo_path=monorepo_root), "CD-024")
 
     # cd_readiness — packaging. CD-016 carries its own applicability
     # gate (a repo with no serve() call has no subject) inside the check.
