@@ -1,3 +1,10 @@
+## [3.20.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.2...v3.20.3) (2026-09-04)
+
+
+### Bug Fixes
+
+* **checks:** read the monorepo's CI root, railway.toml, and subject guards ([b287d4a](https://github.com/mini-app-polis/evaluator-cog/commit/b287d4a88280209b9cc2b95f9dd212a13ad6e4df))
+
 ## [3.20.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.1...v3.20.2) (2026-09-04)
 
 
