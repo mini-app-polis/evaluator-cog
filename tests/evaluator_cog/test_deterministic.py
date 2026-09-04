@@ -2012,3 +2012,55 @@ def test_type_to_dod_mapping(
     expected: str | None,
 ) -> None:
     assert _type_to_dod(repo_type, language) == expected
+
+
+def test_cd015_accepts_serve_with_retry(tmp_path: Path) -> None:
+    """Clause (c) of the rule, which the check never implemented.
+
+    CD-016 requires registration through serve_with_retry; CD-015 was
+    only looking for prefect.serve. A cog that took CD-016's advice
+    collected a CD-015 WARN for it — the two rules contradicted each
+    other in practice.
+    """
+    src = tmp_path / "src/pkg"
+    src.mkdir(parents=True)
+    (src / "main.py").write_text(
+        "from mini_app_polis.serve_resilience import serve_with_retry\n"
+        "\n"
+        "def main():\n"
+        "    serve_with_retry(thing, repo='pkg')\n"
+    )
+    assert check_prefect_serve_pattern(tmp_path) == []
+
+
+def test_cd015_does_not_pass_on_a_comment_about_serve(tmp_path: Path) -> None:
+    """A docstring explaining why the repo does NOT call it is not a call.
+
+    evaluator-cog and deejay-cog were both passing on the string
+    "prefect.serve(" appearing in prose, while a repo that registered
+    correctly through serve_with_retry failed.
+    """
+    src = tmp_path / "src/pkg"
+    src.mkdir(parents=True)
+    (src / "main.py").write_text(
+        '"""This cog does not use prefect.serve() — it fires runs via\n'
+        "get_client() instead. See prefect.serve( for the shape we avoid.\n"
+        '"""\n'
+        "\n"
+        "def main():\n"
+        "    return None\n"
+    )
+    findings = check_prefect_serve_pattern(tmp_path)
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "CD-015"
+
+
+def test_cd015_bare_serve_needs_the_prefect_import(tmp_path: Path) -> None:
+    """A bare serve() only counts where serve came from prefect."""
+    src = tmp_path / "src/pkg"
+    src.mkdir(parents=True)
+    (src / "other.py").write_text("from prefect import serve\n")
+    (src / "main.py").write_text(
+        "from .helpers import serve\n\ndef main():\n    serve(thing)\n"
+    )
+    assert check_prefect_serve_pattern(tmp_path) != []

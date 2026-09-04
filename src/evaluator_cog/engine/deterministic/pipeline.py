@@ -661,6 +661,61 @@ def check_evaluation_step(repo_path: Path) -> list[Finding]:
     return findings
 
 
+def _registers_flows(src: Path) -> bool:
+    """True when the source actually calls an accepted registration shape.
+
+    CD-015 names three, and the catalog is explicit that the third is not
+    a violation — it wraps prefect.serve():
+
+      (a) ``prefect.serve(...)`` or ``flow.serve(...)``
+      (b) a bare ``serve(...)`` where ``serve`` came from ``prefect``
+      (c) ``serve_with_retry(...)`` from ``mini_app_polis.serve_resilience``
+
+    (c) was never implemented, which put a WARN on every cog that took
+    CD-016's advice — the two rules contradicted each other in practice.
+
+    Read per module: a bare ``serve(`` only counts in a module that
+    imported ``serve`` from prefect, which concatenating every file into
+    one string cannot express.
+    """
+    for path in src.rglob("*.py"):
+        if _is_checker_self_source(path):
+            continue
+        try:
+            tree = ast.parse(path.read_text(errors="replace"))
+        except SyntaxError:
+            continue
+
+        serve_names: set[str] = set()
+        retry_names: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            module = node.module or ""
+            for alias in node.names:
+                if module == "prefect" and alias.name == "serve":
+                    serve_names.add(alias.asname or alias.name)
+                if (
+                    module.endswith("serve_resilience")
+                    and alias.name == "serve_with_retry"
+                ):
+                    retry_names.add(alias.asname or alias.name)
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "serve":
+                # (a) prefect.serve(...) / flow.serve(...)
+                return True
+            if isinstance(func, ast.Name) and (
+                func.id in serve_names or func.id in retry_names
+            ):
+                # (b) bare serve(...) from prefect, or (c) serve_with_retry(...)
+                return True
+    return False
+
+
 def check_prefect_serve_pattern(repo_path: Path) -> list[Finding]:
     """CD-015: Prefect serve() — no work pool.
 
@@ -707,20 +762,13 @@ def check_prefect_serve_pattern(repo_path: Path) -> list[Finding]:
             )
         )
 
-    # Accepted serve patterns.
-    has_qualified_serve = "prefect.serve(" in content or "flow.serve(" in content
-    # ``from prefect import serve`` (optionally with other names) followed
-    # anywhere by a bare ``serve(`` call.
-    imports_serve = bool(
-        re.search(
-            r"from\s+prefect\s+import\s+[^\n]*\bserve\b",
-            content,
-        )
-    )
-    has_bare_serve_call = bool(re.search(r"(?:^|[\s(=,])serve\s*\(", content))
-    has_imported_serve = imports_serve and has_bare_serve_call
-
-    if not (has_qualified_serve or has_imported_serve):
+    # Accepted serve patterns, read from the tree rather than the text.
+    # Substring matching passed evaluator-cog and deejay-cog on the string
+    # "prefect.serve(" appearing in a docstring explaining why the repo
+    # does NOT call it, while failing transcription-cog, which registers
+    # correctly through serve_with_retry. A comment about a call is not a
+    # call.
+    if not _registers_flows(src):
         findings.append(
             _finding(
                 "CD-015",
