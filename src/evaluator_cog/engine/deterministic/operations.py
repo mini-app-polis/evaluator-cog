@@ -200,6 +200,85 @@ def _reads_setting(tree: ast.AST, field: str) -> bool:
     return False
 
 
+# A fourth migration entry point shape, alongside the three check_notes
+# names. A service deployed from a platform descriptor runs its migration
+# step from that descriptor's start command — `python
+# scripts/apply_migrations.py && uvicorn ...` — and the script it names is
+# the migration entry point as surely as an alembic env.py is. Looking
+# only for alembic, drizzle and workflow files reports "no migration entry
+# point" at a repo whose entry point is sitting in railway.json.
+_START_COMMAND_KEYS = ("railway.json", "railway.toml")
+_SCRIPT_SUFFIXES = (".py", ".sh", ".ts", ".js", ".mjs")
+
+
+# Tokens that mark a connection setting as the privileged, migration-only
+# one. `<runtime>_migrations` is the convention this rule's own suggestion
+# offers; the rest are the other names the same role gets given.
+_MIGRATION_ROLE_TOKENS = ("migration", "migrate", "ddl", "schema_owner", "owner")
+
+
+def _names_migration_role(name: str) -> bool:
+    """True if a connection setting's name marks it as the migration role."""
+    low = name.lower()
+    return any(token in low for token in _MIGRATION_ROLE_TOKENS)
+
+
+def _start_command_scripts(repo_path: Path) -> list[Path]:
+    """Scripts named by the platform descriptor's deploy start command.
+
+    Every whitespace-separated token of the start command that looks
+    like a script path and exists in the repo. Tokens are matched
+    against the filesystem rather than parsed as a shell command:
+    `&&`, flags and interpreter names simply do not resolve to files,
+    so they fall out without needing a shell grammar.
+    """
+    import json as _json
+    import shlex
+
+    data: Any = None
+    for name in _START_COMMAND_KEYS:
+        path = repo_path / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            if name.endswith(".json"):
+                data = _json.loads(text)
+            else:
+                import tomllib
+
+                data = tomllib.loads(text)
+        except Exception:
+            continue
+        break
+
+    if not isinstance(data, dict):
+        return []
+    deploy = data.get("deploy")
+    if not isinstance(deploy, dict):
+        return []
+    command = deploy.get("startCommand")
+    if not isinstance(command, str) or not command.strip():
+        return []
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    found: list[Path] = []
+    for token in tokens:
+        if not token.endswith(_SCRIPT_SUFFIXES):
+            continue
+        candidate = repo_path / token
+        if candidate.is_file() and candidate not in found:
+            found.append(candidate)
+    return found
+
+
 def check_ops_002(repo_path: Path) -> list[Finding]:
     """OPS-002: Migrations run under a database role without DDL on the runtime path.
 
@@ -277,6 +356,13 @@ def check_ops_002(repo_path: Path) -> list[Finding]:
                 )
             except (OSError, UnicodeDecodeError):
                 continue
+    for path in _start_command_scripts(repo_path):
+        try:
+            entrypoints[str(path.relative_to(repo_path))] = path.read_text(
+                encoding="utf-8"
+            )
+        except (OSError, UnicodeDecodeError):
+            continue
 
     if not entrypoints:
         findings.append(
@@ -287,7 +373,8 @@ def check_ops_002(repo_path: Path) -> list[Finding]:
                 f"{len(conn_fields)} database connection settings are "
                 f"declared ({', '.join(conn_fields)}) but no migration entry "
                 f"point was found — searched for an alembic env, a drizzle "
-                f"config and a release-workflow migrate step.",
+                f"config, a release-workflow migrate step, and any script "
+                f"named by the platform descriptor's start command.",
                 "Add an alembic env.py (or drizzle.config.ts, or a migrate "
                 "step in the release workflow) that reads the migration-only "
                 "connection setting, so it is provable which role runs DDL.",
@@ -331,6 +418,10 @@ def check_ops_002(repo_path: Path) -> list[Finding]:
         if fields & set(migration_fields)
     }
 
+    # Which connection settings the application source actually reads,
+    # gathered before anything is reported, because it decides *which*
+    # of the referenced fields is the migration one.
+    app_reads: dict[str, list[Path]] = {field: [] for field in migration_fields}
     for py_file in sorted(src.rglob("*.py")):
         if py_file in declaration_sites:
             continue
@@ -345,24 +436,53 @@ def check_ops_002(repo_path: Path) -> list[Finding]:
             tree = ast.parse(py_file.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, SyntaxError):
             continue
-        rel = py_file.relative_to(repo_path)
         for field in migration_fields:
             if _reads_setting(tree, field):
-                findings.append(
-                    _finding(
-                        CHECK_ID,
-                        "ERROR",
-                        _DIMENSION,
-                        f"{rel} reads the migration connection setting "
-                        f"`{field}` from the application source. Two settings "
-                        f"that both reach the request path are one setting "
-                        f"with two names, so the DDL-capable role is "
-                        f"reachable at runtime.",
-                        f"Remove the `{field}` read from {rel} and use the "
-                        f"runtime connection setting there; `{field}` must be "
-                        f"referenced only by the migration entry point.",
-                    )
+                app_reads[field].append(py_file)
+
+    # A migration entry point may legitimately name more than one
+    # connection setting — a runner that prefers the schema-owning role
+    # and falls back to the runtime one mentions both, and the fallback
+    # is what lets the separation be switched on by provisioning a role
+    # rather than by a deploy that fails until the role and the variable
+    # land together. Naming both does not make both privileged, and
+    # treating them alike reports every ordinary runtime read of the
+    # runtime URL as a leak.
+    #
+    # The name is what distinguishes them, and it is the same convention
+    # the rule's own suggestion offers: `<runtime>_migrations`. When
+    # exactly one referenced field is marked that way, it is the
+    # migration setting and the others are runtime settings that the
+    # application is supposed to read.
+    #
+    # Deciding by "which field the application does not read" is the
+    # tempting alternative and it is wrong in the case that matters: an
+    # application reading `DATABASE_URL_MIGRATIONS` and nothing else
+    # would make the *runtime* URL look like the migration setting and
+    # the leak would be excused. When no field is marked, every
+    # referenced field is kept, which is the conservative reading.
+    marked = [f for f in migration_fields if _names_migration_role(f)]
+    if len(marked) == 1:
+        migration_fields = marked
+
+    for field in migration_fields:
+        for py_file in app_reads[field]:
+            rel = py_file.relative_to(repo_path)
+            findings.append(
+                _finding(
+                    CHECK_ID,
+                    "ERROR",
+                    _DIMENSION,
+                    f"{rel} reads the migration connection setting "
+                    f"`{field}` from the application source. Two settings "
+                    f"that both reach the request path are one setting "
+                    f"with two names, so the DDL-capable role is "
+                    f"reachable at runtime.",
+                    f"Remove the `{field}` read from {rel} and use the "
+                    f"runtime connection setting there; `{field}` must be "
+                    f"referenced only by the migration entry point.",
                 )
+            )
 
     return findings
 
