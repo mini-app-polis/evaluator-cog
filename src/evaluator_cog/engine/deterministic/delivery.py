@@ -246,6 +246,31 @@ def check_structured_logging(repo_path: Path) -> list[Finding]:
     return findings
 
 
+def _tracked_paths(repo_path: Path) -> set[str] | None:
+    """Repo-relative paths git tracks, or None when git cannot say.
+
+    None means "no answer available" — no .git directory (the zipball
+    download path), or git failed — and callers must not read that as
+    "nothing is tracked".
+    """
+    if not (repo_path / ".git").exists():
+        return None
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    return {ln for ln in result.stdout.split("\0") if ln}
+
+
 def check_no_hardcoded_secrets(repo_path: Path) -> list[Finding]:
     """CD-011: Doppler as canonical secret store."""
     CHECK_ID = "CD-011"
@@ -253,8 +278,22 @@ def check_no_hardcoded_secrets(repo_path: Path) -> list[Finding]:
 
     findings = []
 
-    for env_file in repo_path.rglob(".env*"):
-        if env_file.name == ".env.example":
+    tracked = _tracked_paths(repo_path)
+    for env_file in sorted(repo_path.rglob(".env*")):
+        name = env_file.name
+        if name == ".env.example" or any(
+            marker in name for marker in ("example", "sample", "template")
+        ):
+            continue
+        rel = env_file.relative_to(repo_path)
+        # The finding says "committed", so check that it is. In the
+        # production path the repo arrives as a zipball of tracked files
+        # and every match is committed by construction; run the same
+        # check against a working tree and an ignored local .env — the
+        # very file the rule wants developers to keep — reads as a
+        # violation. Only skip when git can answer; a zipball has no
+        # .git, and there the earlier behaviour is the correct one.
+        if tracked is not None and rel.as_posix() not in tracked:
             continue
         findings.append(
             _finding(
