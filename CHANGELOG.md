@@ -1,3 +1,10 @@
+## [3.20.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.4...v3.20.5) (2026-09-04)
+
+
+### Bug Fixes
+
+* **CD-009:** decide by parse, and use the shared logger here too ([3273f24](https://github.com/mini-app-polis/evaluator-cog/commit/3273f24592d55087c99647448405b7a2ab7f4d12))
+
 ## [3.20.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.3...v3.20.4) (2026-09-04)
 
 
