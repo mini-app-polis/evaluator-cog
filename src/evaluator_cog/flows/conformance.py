@@ -549,17 +549,38 @@ def _deduplicate_sibling_findings(
     return deduplicated
 
 
-def _download_repo(repo_id: str, tmp_dir: str) -> Path | None:
+def _declared_branch(record: dict | None) -> str:
+    """The branch a registry entry says it develops on, else ``main``.
+
+    Read from the service record for a plain repo and from the monorepo
+    record for a monorepo, because that is where the repo is named in
+    each case.
+    """
+    if not isinstance(record, dict):
+        return "main"
+    branch = str(record.get("branch") or "").strip()
+    return branch or "main"
+
+
+def _download_repo(repo_id: str, tmp_dir: str, branch: str = "main") -> Path | None:
     """
     Download a repo from GitHub as a zip archive and extract it.
     Returns the extracted repo path or None on failure.
+
+    ``branch`` is the ref to read, defaulting to ``main``. Not every repo
+    in the fleet develops on ``main``: deejaytools-com works on ``dev``,
+    which sat ten commits ahead while the conformance run kept reading a
+    branch that had none of the work on it. The repo was reported for
+    missing security workflows it had, and no amount of fixing the repo
+    would have cleared it. A registry entry declares its branch with
+    ``branch:`` in ecosystem.yaml; everything else keeps ``main``.
     """
     github_token = os.environ.get("GITHUB_TOKEN", "")
     headers = {"Accept": "application/vnd.github+json"}
     if github_token:
         headers["Authorization"] = f"Bearer {github_token}"
 
-    url = f"https://api.github.com/repos/mini-app-polis/{repo_id}/zipball/main"
+    url = f"https://api.github.com/repos/mini-app-polis/{repo_id}/zipball/{branch}"
     dest = Path(tmp_dir) / repo_id
 
     try:
@@ -584,7 +605,7 @@ def _download_repo(repo_id: str, tmp_dir: str) -> Path | None:
                     shutil.rmtree(dest)
                 top_level.rename(dest)
 
-        log.info("conformance: downloaded %s", repo_id)
+        log.info("conformance: downloaded %s@%s", repo_id, branch)
         return dest
     except Exception as exc:
         log.warning("conformance: failed to download %s: %s", repo_id, exc)
@@ -1160,7 +1181,9 @@ def conformance_check_flow(run_llm: bool = False) -> None:
 
                 prefect_log.info("%s: processing %s", flow_label, repo_id)
 
-                repo_path = _download_repo(repo_name, tmp_dir)
+                repo_path = _download_repo(
+                    repo_name, tmp_dir, _declared_branch(service)
+                )
                 if repo_path is None:
                     prefect_log.warning(
                         "%s: skipping %s — could not clone", flow_label, repo_id
@@ -1215,7 +1238,7 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                             )
                             continue
                         seen_repo_ids.add(rid)
-                        rp = _download_repo(rname, tmp_dir)
+                        rp = _download_repo(rname, tmp_dir, _declared_branch(svc))
                         if rp is None:
                             continue
                         try:
@@ -1253,7 +1276,9 @@ def conformance_check_flow(run_llm: bool = False) -> None:
 
                 repo_name = mono_record.get("repo") or mono_id
                 prefect_log.info("%s: cloning monorepo %s", flow_label, repo_name)
-                monorepo_root = _download_repo(repo_name, tmp_dir)
+                monorepo_root = _download_repo(
+                    repo_name, tmp_dir, _declared_branch(mono_record)
+                )
                 if monorepo_root is None:
                     prefect_log.warning(
                         "%s: skipping monorepo %s — could not clone",

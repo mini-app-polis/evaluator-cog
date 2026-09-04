@@ -12,6 +12,7 @@ import pytest
 from evaluator_cog.engine.deterministic import CheckResult
 from evaluator_cog.engine.evaluator_config import EvaluatorConfig
 from evaluator_cog.flows.conformance import (
+    _declared_branch,
     _fetch_standards_for_service,
     _run_standalone_deterministic,
     conformance_check_flow,
@@ -528,7 +529,7 @@ def test_conformance_monorepo_service_failure_does_not_abort_flow(
         ],
     }
 
-    def fake_download_repo(repo_name, tmp_dir):
+    def fake_download_repo(repo_name, tmp_dir, branch="main"):
         root = Path(tmp_dir) / repo_name
         (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
         (root / "apps" / "b").mkdir(parents=True, exist_ok=True)
@@ -572,3 +573,20 @@ def test_conformance_monorepo_service_failure_does_not_abort_flow(
         conformance_check_flow(run_llm=False)
 
     assert len(run_all_calls) == 1
+
+
+def test_declared_branch_defaults_to_main() -> None:
+    """Only a registry entry that says otherwise reads a different ref."""
+    assert _declared_branch(None) == "main"
+    assert _declared_branch({"id": "watcher-cog"}) == "main"
+    assert _declared_branch({"id": "x", "branch": ""}) == "main"
+    assert _declared_branch({"id": "x", "branch": "  "}) == "main"
+
+
+def test_declared_branch_reads_the_registry() -> None:
+    """deejaytools-com develops on dev, ten commits ahead of main.
+
+    The run kept reading main and reported the repo for security
+    workflows it had on dev — findings no change to the repo could clear.
+    """
+    assert _declared_branch({"id": "deejaytools-com", "branch": "dev"}) == "dev"
