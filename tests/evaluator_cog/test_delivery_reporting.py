@@ -146,6 +146,12 @@ def test_delivery_assertion_is_silent_on_a_partial_failure() -> None:
 
     conf._assert_findings_were_delivered(prefect_log)
 
+    # "Silent" is the claim in the name, so assert it: this function says
+    # nothing on a partial failure. The per-emitter warning is raised by
+    # _post_tracked, not here, and is asserted in
+    # test_post_tracked_logs_what_landed_not_what_was_handed_over.
+    assert not prefect_log.warning.called
+    assert not prefect_log.error.called
     assert conf._RUN_TALLY.total_failure is False
     assert conf._RUN_TALLY.posted == 9
     assert conf._RUN_TALLY.attempted == 10
@@ -164,6 +170,10 @@ def test_delivery_assertion_is_silent_when_nothing_was_offered() -> None:
 
     conf._assert_findings_were_delivered(prefect_log)
 
+    # Silent here too: an empty tally is a conformant fleet, not a
+    # delivery failure, and nothing should be logged about it.
+    assert not prefect_log.warning.called
+    assert not prefect_log.error.called
     assert conf._RUN_TALLY.attempted == 0
     assert conf._RUN_TALLY.total_failure is False
     conf._reset_run_tally()
