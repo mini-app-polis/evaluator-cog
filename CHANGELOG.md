@@ -1,3 +1,12 @@
+## [3.20.7](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.6...v3.20.7) (2026-09-04)
+
+
+### Bug Fixes
+
+* **CD-011:** treat an empty tracked set as no answer ([69ae5b4](https://github.com/mini-app-polis/evaluator-cog/commit/69ae5b410add8822420cc6fe00a7a61a71c54229))
+* **conformance:** a service that cannot be evaluated must say so ([592ce24](https://github.com/mini-app-polis/evaluator-cog/commit/592ce242c418f573d061ec9c111ebe47e55c700c))
+* **OPS-002:** recognise the start-command entry point, name the role by name ([6fc176b](https://github.com/mini-app-polis/evaluator-cog/commit/6fc176bfa5cbb0ded244bcc5e46a6146b6e68875))
+
 ## [3.20.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.5...v3.20.6) (2026-09-04)
 
 
