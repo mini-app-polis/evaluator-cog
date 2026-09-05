@@ -625,26 +625,6 @@ wheels = [
 ]
 
 [[package]]
-name = "common-python-utils"
-version = "4.0.0"
-source = { git = "https://github.com/mini-app-polis/common-python-utils.git?rev=v4.0.0#5f326f59ae6cea3f9eede73ded84315f2b45e2d2" }
-dependencies = [
-    { name = "google-api-python-client" },
-    { name = "google-auth" },
-    { name = "gspread" },
-    { name = "gspread-formatting" },
-    { name = "httpx" },
-    { name = "jsonschema" },
-    { name = "music-tag" },
-    { name = "musicbrainzngs" },
-    { name = "mutagen" },
-    { name = "pyacoustid" },
-    { name = "python-dotenv" },
-    { name = "spotipy" },
-    { name = "tenacity" },
-]
-
-[[package]]
 name = "coolname"
 version = "5.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -903,8 +883,8 @@ name = "evaluator-cog"
 version = "3.21.1"
 source = { editable = "." }
 dependencies = [
-    { name = "common-python-utils" },
     { name = "httpx" },
+    { name = "miniapppolis-common-utils" },
     { name = "prefect" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -923,8 +903,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "common-python-utils", git = "https://github.com/mini-app-polis/common-python-utils.git?rev=v4.0.0" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "miniapppolis-common-utils", specifier = ">=5.0,<6" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8.0" },
     { name = "prefect", specifier = ">=3.0,<4.0" },
@@ -1636,6 +1616,30 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "miniapppolis-common-utils"
+version = "5.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-python-client" },
+    { name = "google-auth" },
+    { name = "gspread" },
+    { name = "gspread-formatting" },
+    { name = "httpx" },
+    { name = "jsonschema" },
+    { name = "music-tag" },
+    { name = "musicbrainzngs" },
+    { name = "mutagen" },
+    { name = "pyacoustid" },
+    { name = "python-dotenv" },
+    { name = "spotipy" },
+    { name = "tenacity" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b3/e1/0547e60ae88388ec85d975b8e723dc993cbeb4356c78963c54cb6cb89c0c/miniapppolis_common_utils-5.0.1.tar.gz", hash = "sha256:cbb109b7cd49afe97b5e62f7bdd4b17f7512ec0470f1a04411c29d72ab0bd67b", size = 233303, upload-time = "2026-09-05T21:28:52.168Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/af/3871224cdcca43d146652f41b1a7ef151ac773b0fd9d50582d747572d5e3/miniapppolis_common_utils-5.0.1-py3-none-any.whl", hash = "sha256:9239b154f7684feec48a56df5ef54c74dabc1f044a8e37a63091fbf53873920b", size = 78597, upload-time = "2026-09-05T21:28:51.02Z" },
 ]
 
 [[package]]
