@@ -1,3 +1,10 @@
+## [3.21.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.3...v3.21.4) (2026-09-05)
+
+
+### Bug Fixes
+
+* **py-011:** implement the split-identity carve-out and judge the import package ([3d69af2](https://github.com/mini-app-polis/evaluator-cog/commit/3d69af28c11dc9042c2118fa919df699184ee1eb))
+
 ## [3.21.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.2...v3.21.3) (2026-09-05)
 
 
