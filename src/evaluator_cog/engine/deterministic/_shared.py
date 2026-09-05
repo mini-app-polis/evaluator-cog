@@ -10,6 +10,37 @@ from typing import Any
 Finding = dict[str, Any]
 
 
+# ── Shared-library distribution names ────────────────────────────────────
+#
+# Two Python names per library, not one, because the fleet migrates one
+# consumer at a time. `miniapppolis-common-utils` is what PyPI has served
+# since September 2026; `common-python-utils` is what a repo still pinned to
+# a pre-5.0.0 git ref declares. A check that accepted only the new name would
+# fire on every unmigrated repo — which is most of them, for as long as the
+# migration takes — and a check that accepted only the old one would go
+# quietly blind the moment a repo switched. Both are wrong in the same way:
+# they report on a name rather than on the dependency.
+#
+# When the last consumer is off git refs, drop the legacy entries and resolve
+# the survivor from ecosystem.yaml's `package:` field instead of listing it
+# here. See common-python-utils/docs/pypi-package-publishing.md §7.
+PYTHON_SHARED_LIBRARY_NAMES = ("miniapppolis-common-utils", "common-python-utils")
+IDENTITY_LIBRARY_NAMES = ("miniapppolis-identity", "identity")
+TYPESCRIPT_SHARED_LIBRARY_NAMES = ("common-typescript-utils",)
+
+
+def declares_shared_library(text: str, names: tuple[str, ...]) -> bool:
+    """True when `text` mentions any accepted name for a shared library.
+
+    Substring matching, matching the checks this replaces. The import name
+    (`mini_app_polis`) is deliberately not accepted: these checks are about
+    the dependency being *declared*, and an import proves only that someone
+    wrote an import.
+    """
+    lowered = text.lower()
+    return any(name in lowered for name in names)
+
+
 @dataclass
 class CheckResult:
     """Return value of run_all_checks.

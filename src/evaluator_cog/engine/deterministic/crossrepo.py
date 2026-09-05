@@ -167,8 +167,18 @@ def _tracked_libraries(ecosystem: dict) -> dict[str, str]:
             if str(entry.get("type") or "") != "shared-library":
                 continue
             repo_name = str(entry.get("repo") or entry.get("id") or "").strip()
-            if repo_name:
-                libs[_normalize(repo_name)] = repo_name
+            if not repo_name:
+                continue
+            # The registry entry is keyed by repo, but a consumer declares a
+            # *distribution*, and since September 2026 those differ: repo
+            # `common-python-utils` publishes `miniapppolis-common-utils`.
+            # Key on both. Matching only the repo name made this rule look
+            # for a name no migrated consumer declares — it would have found
+            # nothing and passed, which is the failure this rule exists to
+            # catch, in the rule itself.
+            for alias in (repo_name, str(entry.get("package") or "").strip()):
+                if alias:
+                    libs[_normalize(alias)] = repo_name
     return libs
 
 

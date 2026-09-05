@@ -6,8 +6,10 @@ import ast
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic._shared import (
+    PYTHON_SHARED_LIBRARY_NAMES,
     Finding,
     _finding,
+    declares_shared_library,
 )
 
 
@@ -203,7 +205,10 @@ def check_auth_header_parity(repo_path: Path) -> list[Finding]:
             text = auth_file.read_text()
         except Exception:
             continue
-        if "common-python-utils" not in text and "common_python_utils" not in text:
+        if (
+            not declares_shared_library(text, PYTHON_SHARED_LIBRARY_NAMES)
+            and "common_python_utils" not in text
+        ):
             rel = auth_file.relative_to(repo_path)
             findings.append(
                 _finding(

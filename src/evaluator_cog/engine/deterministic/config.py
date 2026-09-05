@@ -7,8 +7,11 @@ import re
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic._shared import (
+    PYTHON_SHARED_LIBRARY_NAMES,
+    TYPESCRIPT_SHARED_LIBRARY_NAMES,
     Finding,
     _finding,
+    declares_shared_library,
 )
 
 
@@ -365,21 +368,22 @@ def check_shared_library_used(
     if language == "python":
         pyproject = repo_path / "pyproject.toml"
         py_text = pyproject.read_text().lower() if pyproject.exists() else ""
-        if "common-python-utils" not in py_text:
+        if not declares_shared_library(py_text, PYTHON_SHARED_LIBRARY_NAMES):
             findings.append(
                 _finding(
                     "XSTACK-001",
                     "ERROR",
                     "cross_repo_coherence",
-                    "common-python-utils is not declared for this Python service.",
-                    "Depend on common-python-utils and consume shared behaviors from it.",
+                    "The shared Python library is not declared for this service.",
+                    f"Depend on {PYTHON_SHARED_LIBRARY_NAMES[0]} and consume shared "
+                    "behaviors from it.",
                 )
             )
     else:
         pkg = repo_path / "package.json"
         per_app_text = pkg.read_text().lower() if pkg.exists() else ""
         pkg_text = per_app_text + (workspace_package_json_text or "").lower()
-        if "common-typescript-utils" not in pkg_text:
+        if not declares_shared_library(pkg_text, TYPESCRIPT_SHARED_LIBRARY_NAMES):
             findings.append(
                 _finding(
                     "XSTACK-001",

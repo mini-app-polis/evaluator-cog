@@ -172,6 +172,38 @@ def test_check_common_python_utils_dep_missing() -> None:
     assert any(f["rule_id"] == "PY-006" for f in findings)
 
 
+def test_check_common_python_utils_dep_accepts_the_pypi_distribution() -> None:
+    """PY-006 passes on the published name, not just the legacy git-ref name.
+
+    The distribution was renamed to miniapppolis-common-utils in September
+    2026. A check that matched only the old string would have fired ERROR on
+    every repo the moment it migrated.
+    """
+    repo = _make_repo(
+        {
+            "pyproject.toml": (
+                '[project]\nname = "my-cog"\n'
+                'dependencies = ["miniapppolis-common-utils>=5.0,<6"]\n'
+            ),
+            "uv.lock": "",
+        }
+    )
+    assert check_common_python_utils_dep(repo) == []
+
+
+def test_check_common_python_utils_dep_still_accepts_the_legacy_name() -> None:
+    """Consumers migrate one at a time; the pre-rename git-ref name stays valid."""
+    repo = _make_repo(
+        {
+            "pyproject.toml": (
+                '[project]\nname = "my-cog"\ndependencies = ["common-python-utils"]\n'
+            ),
+            "uv.lock": "",
+        }
+    )
+    assert check_common_python_utils_dep(repo) == []
+
+
 def test_check_pyproject_missing_common_utils_not_emitted_by_check_pyproject() -> None:
     repo = _make_repo(
         {
@@ -670,6 +702,20 @@ def test_check_shared_library_python_passes_when_present() -> None:
     repo = _make_repo(
         {
             "pyproject.toml": "[project]\nname='x'\ndependencies=['common-python-utils']\n",
+            "src/x/main.py": "from mini_app_polis import logger as logger_mod\n",
+        }
+    )
+    assert check_shared_library_used(repo, language="python") == []
+
+
+def test_check_shared_library_python_accepts_the_pypi_distribution() -> None:
+    """XSTACK-001 resolves the published distribution name, not the repo name."""
+    repo = _make_repo(
+        {
+            "pyproject.toml": (
+                "[project]\nname='x'\n"
+                "dependencies=['miniapppolis-common-utils>=5.0,<6']\n"
+            ),
             "src/x/main.py": "from mini_app_polis import logger as logger_mod\n",
         }
     )

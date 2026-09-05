@@ -7,8 +7,10 @@ import re
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic._shared import (
+    PYTHON_SHARED_LIBRARY_NAMES,
     Finding,
     _finding,
+    declares_shared_library,
     production_python_text,
 )
 
@@ -72,14 +74,14 @@ def check_common_python_utils_dep(repo_path: Path) -> list[Finding]:
     pyproject = repo_path / "pyproject.toml"
     if not pyproject.exists():
         return findings
-    if "common-python-utils" not in pyproject.read_text():
+    if not declares_shared_library(pyproject.read_text(), PYTHON_SHARED_LIBRARY_NAMES):
         findings.append(
             _finding(
                 "PY-006",
                 "ERROR",
                 "structural_conformance",
-                "common-python-utils not declared as a dependency.",
-                "Add common-python-utils to [project].dependencies.",
+                "The shared Python library is not declared as a dependency.",
+                f"Add {PYTHON_SHARED_LIBRARY_NAMES[0]} to [project].dependencies.",
             )
         )
     return findings

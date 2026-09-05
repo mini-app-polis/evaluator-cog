@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from evaluator_cog.engine.deterministic._shared import (
+    PYTHON_SHARED_LIBRARY_NAMES,
     Finding,
     _finding,
     _is_checker_self_source,
@@ -365,9 +366,9 @@ def _declares_common_python_utils(repo_path: Path) -> bool | None:
             if isinstance(group, list):
                 requirements.extend(str(item) for item in group)
 
+    accepted = {_canonical_name(name) for name in PYTHON_SHARED_LIBRARY_NAMES}
     return any(
-        _canonical_name(_requirement_name(req)) == "common-python-utils"
-        for req in requirements
+        _canonical_name(_requirement_name(req)) in accepted for req in requirements
     )
 
 
