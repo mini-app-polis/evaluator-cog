@@ -10,15 +10,46 @@ from evaluator_cog.engine.deterministic._shared import (
 )
 from evaluator_cog.engine.routing import classify_check_mode
 
+# /v1/evaluations caps `limit` at 500 (Query(ge=1, le=500)). Both checks in
+# this module used to ask for 1000 and 2000 and got a 422 on every run, which
+# they reported as "could not fetch pipeline_evaluations ... Investigate
+# api-kaianolevine-com connectivity." The API was reachable the whole time;
+# the request was out of range. Page instead of asking for more than the
+# endpoint will give.
+_PAGE_SIZE = 500
+_MAX_PAGES = 20  # 10k rows. A run needing more than this has a different problem.
 
-def check_eval_003(
-    *,
-    lookback_days: int = 30,
-) -> list[Finding]:
+
+def _fetch_evaluations(api: object, query: str) -> list[dict]:
+    """All rows for `query`, paged at the endpoint's maximum limit.
+
+    `query` carries the filters only — this adds `limit` and `offset`.
+    """
+    rows: list[dict] = []
+    for page in range(_MAX_PAGES):
+        response = api.get(  # type: ignore[attr-defined]
+            f"{query}&limit={_PAGE_SIZE}&offset={page * _PAGE_SIZE}"
+        )
+        if isinstance(response, dict):
+            batch = response.get("data") or response.get("items") or []
+        elif isinstance(response, list):
+            batch = response
+        else:
+            batch = []
+        rows.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+    return rows
+
+
+def check_eval_003() -> list[Finding]:
     """EVAL-003: Findings emitted by evaluator-cog must be specific and actionable.
 
     Reads pipeline_evaluations for findings emitted by evaluator-cog
-    internal sources in the last `lookback_days`. The historical source
+    internal sources. There is no date filter: /v1/evaluations exposes no
+    date parameter, and the `lookback_days` argument this function used to
+    take was passed into the query string, silently dropped by FastAPI as an
+    unknown param, and set by no caller. The historical source
     name 'conformance_check' is also included so findings stored before
     the conformance_llm / conformance_deterministic / data_quality split
     are still covered by the quality check.
@@ -70,9 +101,8 @@ def check_eval_003(
 
     try:
         api = KaianoApiClient.from_env("evaluator-cog")
-        response = api.get(
-            f"/v1/evaluations?source={_eval_003_sources}"
-            f"&lookback_days={lookback_days}&limit=1000"
+        response = _fetch_evaluations(
+            api, f"/v1/evaluations?source={_eval_003_sources}"
         )
     except Exception as exc:
         return [
@@ -81,7 +111,9 @@ def check_eval_003(
                 "WARN",
                 "pipeline_consistency",
                 f"EVAL-003: could not fetch pipeline_evaluations: {exc}",
-                "Investigate api-kaianolevine-com connectivity.",
+                "Check the request against /v1/evaluations' parameters before "
+                "suspecting connectivity — a 422 here is a bad query, not a "
+                "reachable-service problem.",
             )
         ]
 
@@ -175,7 +207,6 @@ def check_eval_003(
 def check_mono_003(
     *,
     ecosystem: dict | None = None,
-    lookback_days: int = 30,
 ) -> list[Finding]:
     """MONO-003: Sibling findings with same root cause must be deduplicated."""
     CHECK_ID = "MONO-003"
@@ -202,9 +233,11 @@ def check_mono_003(
     try:
         api = KaianoApiClient.from_env("evaluator-cog")
         service_ids = ",".join(monorepo_services.keys())
-        response = api.get(
-            f"/v1/evaluations?repos={service_ids}&lookback_days={lookback_days}&limit=2000"
-        )
+        # `repos=` was never a parameter either — the API takes `repo=`, and
+        # the misspelling was silently dropped, as `lookback_days` was.
+        # Once the 422 was fixed this would have started returning every
+        # repo's rows unfiltered, which is worse than failing loudly.
+        response = _fetch_evaluations(api, f"/v1/evaluations?repo={service_ids}")
     except Exception as exc:
         return [
             _finding(
@@ -212,7 +245,9 @@ def check_mono_003(
                 "WARN",
                 "monorepo_coherence",
                 f"MONO-003: could not fetch pipeline_evaluations: {exc}",
-                "Investigate api-kaianolevine-com connectivity.",
+                "Check the request against /v1/evaluations' parameters before "
+                "suspecting connectivity — a 422 here is a bad query, not a "
+                "reachable-service problem.",
             )
         ]
 
