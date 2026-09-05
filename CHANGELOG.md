@@ -1,3 +1,10 @@
+## [3.21.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.0...v3.21.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **git:** never three-way merge a lockfile ([4c3b512](https://github.com/mini-app-polis/evaluator-cog/commit/4c3b512e2fb02d64d814b4bc810f10f607a2fc7a))
+
 # [3.21.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.20.11...v3.21.0) (2026-09-04)
 
 
