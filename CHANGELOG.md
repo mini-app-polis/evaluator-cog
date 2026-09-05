@@ -1,3 +1,10 @@
+## [3.21.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.2...v3.21.3) (2026-09-05)
+
+
+### Bug Fixes
+
+* **introspection:** page /v1/evaluations within its limit and filter by the parameters it has ([93b6c56](https://github.com/mini-app-polis/evaluator-cog/commit/93b6c5603607703e14c3485ff08d4a0422030109))
+
 ## [3.21.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.1...v3.21.2) (2026-09-05)
 
 
