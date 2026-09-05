@@ -121,9 +121,17 @@ def _attach_catalog(cfg: EvaluatorConfig) -> EvaluatorConfig:
     return cfg
 
 
-def _make_repo(files: dict[str, str]) -> Path:
-    """Create a temporary repo directory with the given files."""
+def _make_repo(files: dict[str, str], name: str | None = None) -> Path:
+    """Create a temporary repo directory with the given files.
+
+    `name` sets the directory's own name. Checks that derive the expected
+    repo name from the directory — PY-011 does — need it; everything else
+    can leave it unset and get the random tempdir name.
+    """
     tmp = Path(tempfile.mkdtemp())
+    if name is not None:
+        tmp = tmp / name
+        tmp.mkdir()
     for rel_path, content in files.items():
         full = tmp / rel_path
         full.parent.mkdir(parents=True, exist_ok=True)
@@ -170,6 +178,66 @@ def test_check_common_python_utils_dep_missing() -> None:
     )
     findings = check_common_python_utils_dep(repo)
     assert any(f["rule_id"] == "PY-006" for f in findings)
+
+
+def test_py011_documented_split_identity_is_not_flagged() -> None:
+    """PY-011's split-identity carve-out: DOC-009 passing suppresses the split.
+
+    identity's shape — distribution miniapppolis-identity, import package
+    identity, repo identity. The convention is judged on the import package,
+    which matches the repo, so nothing is flagged.
+    """
+    repo = _make_repo(
+        {
+            "pyproject.toml": '[project]\nname = "miniapppolis-identity"\n',
+            "src/identity/__init__.py": (
+                '"""Install name: miniapppolis-identity. Import name: identity."""\n'
+            ),
+            "README.md": (
+                "# identity\n\nInstall `miniapppolis-identity`, import `identity`.\n"
+            ),
+        },
+        name="identity",
+    )
+    assert check_split_package_identity(repo) == []
+    assert check_naming_conventions(repo) == []
+
+
+def test_py011_undocumented_split_identity_is_still_flagged() -> None:
+    """The carve-out is conditional. Without DOC-009, both halves still fire."""
+    repo = _make_repo(
+        {
+            "pyproject.toml": '[project]\nname = "miniapppolis-identity"\n',
+            "src/identity/__init__.py": '"""No mention of either name."""\n',
+            "README.md": "# identity\n",
+        },
+        name="identity",
+    )
+    assert check_split_package_identity(repo) != []
+    findings = check_naming_conventions(repo)
+    assert len(findings) == 2, findings
+
+
+def test_py011_documented_split_still_flags_an_import_package_mismatch() -> None:
+    """common-python-utils' shape: documented, but the import package still
+    does not match the repo. That is a real deferral, not a carve-out case."""
+    repo = _make_repo(
+        {
+            "pyproject.toml": '[project]\nname = "miniapppolis-common-utils"\n',
+            "src/mini_app_polis/__init__.py": (
+                '"""Install name: miniapppolis-common-utils. '
+                'Import name: mini_app_polis."""\n'
+            ),
+            "README.md": (
+                "# common-python-utils\n\nInstall `miniapppolis-common-utils`, "
+                "import `mini_app_polis`.\n"
+            ),
+        },
+        name="common-python-utils",
+    )
+    assert check_split_package_identity(repo) == []
+    findings = check_naming_conventions(repo)
+    assert len(findings) == 1, findings
 
 
 def test_check_common_python_utils_dep_accepts_the_pypi_distribution() -> None:

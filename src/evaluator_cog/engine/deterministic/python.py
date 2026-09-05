@@ -13,6 +13,9 @@ from evaluator_cog.engine.deterministic._shared import (
     declares_shared_library,
     production_python_text,
 )
+from evaluator_cog.engine.deterministic.docs import (
+    check_split_package_identity,
+)
 
 
 def check_pre_commit(repo_path: Path) -> list[Finding]:
@@ -211,25 +214,54 @@ def check_naming_conventions(repo_path: Path) -> list[Finding]:
                 src_pkg = child.name
                 break
 
-    if project_name and project_name != repo_expected:
+    # PY-011's SPLIT IDENTITY CARVE-OUT, which the catalog states and this
+    # check did not implement. When the distribution name and the import
+    # package differ and DOC-009 passes — both names documented in
+    # __init__.py and README — the split is sanctioned, and PY-011 must not
+    # flag it. Without this the two rules contradict each other: DOC-009
+    # blesses a documented split while PY-011 reports it twice.
+    #
+    # The carve-out also settles *which* name the convention is about. A
+    # distribution name is a registry identifier, chosen against a public
+    # namespace and sometimes forced (PyPI `identity` belongs to someone
+    # else). The import package is the name people write in source, and
+    # matching it to the repository is what makes a repo navigable. So on a
+    # documented split the convention is judged on the import package and
+    # the distribution name is DOC-009's business, not this rule's.
+    documented_split = bool(
+        src_pkg
+        and project_name
+        and src_pkg != project_name
+        and not check_split_package_identity(repo_path)
+    )
+
+    conventional_name = src_pkg if documented_split else project_name
+    label = "Import package" if documented_split else "Project name"
+
+    if conventional_name and conventional_name != repo_expected:
         findings.append(
             _finding(
                 "PY-011",
                 "WARN",
                 "structural_conformance",
-                f"Project name '{project_name}' does not match repo naming '{repo_expected}'.",
-                "Align [project].name with repository name (hyphens -> underscores).",
+                f"{label} '{conventional_name}' does not match repo naming "
+                f"'{repo_expected}'.",
+                "Align the import package with the repository name (hyphens -> "
+                "underscores), or document the split per DOC-009 and record the "
+                "remaining mismatch as an exemption.",
             )
         )
 
-    if src_pkg and project_name and src_pkg != project_name:
+    if src_pkg and project_name and src_pkg != project_name and not documented_split:
         findings.append(
             _finding(
                 "PY-011",
                 "WARN",
                 "structural_conformance",
                 f"src package '{src_pkg}' does not match project name '{project_name}'.",
-                "Rename the src package folder to match the project package identity.",
+                "Rename the src package folder to match the project package "
+                "identity, or document the split in __init__.py and README so "
+                "DOC-009 passes and the split-identity carve-out applies.",
             )
         )
 
