@@ -1,3 +1,11 @@
+## [3.21.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.1...v3.21.2) (2026-09-05)
+
+
+### Bug Fixes
+
+* **conformance:** resolve shared libraries by distribution name, not repo name ([8212689](https://github.com/mini-app-polis/evaluator-cog/commit/82126893a9af2ff0806cd315859066aec2c0068a))
+* **deps:** consume miniapppolis-common-utils from PyPI ([dc49c56](https://github.com/mini-app-polis/evaluator-cog/commit/dc49c56aff40ede6977dfcdedfecb81a9119aae7))
+
 ## [3.21.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.0...v3.21.1) (2026-09-05)
 
 
