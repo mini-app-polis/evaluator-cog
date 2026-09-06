@@ -1,3 +1,10 @@
+## [3.21.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.4...v3.21.5) (2026-09-06)
+
+
+### Bug Fixes
+
+* **release:** source the version from a committed file instead of pyproject.toml ([21c8b09](https://github.com/mini-app-polis/evaluator-cog/commit/21c8b0904cff3350dc572ac9dae1390d2ac564eb))
+
 ## [3.21.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.3...v3.21.4) (2026-09-05)
 
 
