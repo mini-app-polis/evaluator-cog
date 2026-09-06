@@ -1,3 +1,10 @@
+# [3.22.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.5...v3.22.0) (2026-09-06)
+
+
+### Features
+
+* **py-017:** check the version source and the release commit's assets ([cb60bb5](https://github.com/mini-app-polis/evaluator-cog/commit/cb60bb5e81864a4b4a7f912a0455a5430dcd0310))
+
 ## [3.21.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.4...v3.21.5) (2026-09-06)
 
 
