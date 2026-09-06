@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
 
@@ -87,6 +88,151 @@ def check_common_python_utils_dep(repo_path: Path) -> list[Finding]:
                 f"Add {PYTHON_SHARED_LIBRARY_NAMES[0]} to [project].dependencies.",
             )
         )
+    return findings
+
+
+def check_version_source(repo_path: Path) -> list[Finding]:
+    """PY-017: the released version is sourced from a committed version file.
+
+    Only the assets list actually prevents the failure this rule exists for.
+    A repo can declare a dynamic version correctly and still commit uv.lock
+    on every release, which is what leaves branches one pull away from a
+    conflict on a file .gitattributes forbids merging. So each condition is
+    reported separately rather than collapsed into one pass/fail.
+    """
+    CHECK_ID = "PY-017"
+    findings: list[Finding] = []
+
+    releaserc = repo_path / ".releaserc.json"
+    pyproject = repo_path / "pyproject.toml"
+    if not releaserc.is_file() or not pyproject.is_file():
+        # No release config means no release commit to keep clean.
+        return findings
+
+    py_text = pyproject.read_text()
+
+    # (1) dynamic version, and no static one left behind
+    if not re.search(r'^dynamic\s*=\s*\[[^\]]*"version"', py_text, re.MULTILINE):
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "structural_conformance",
+                'pyproject.toml [project] does not declare dynamic = ["version"].',
+                "Source the version from a committed file so uv.lock stops "
+                "recording it. See PY-017.",
+            )
+        )
+    if re.search(r'^version\s*=\s*"', py_text, re.MULTILINE):
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "structural_conformance",
+                "pyproject.toml still declares a static [project] version.",
+                "Remove it; hatchling reads the version from "
+                "[tool.hatch.version] path instead.",
+            )
+        )
+
+    # (2) + (3) the source file is declared, exists, and hatchling can read it
+    m = re.search(
+        r'^\[tool\.hatch\.version\]\s*\npath\s*=\s*"([^"]+)"', py_text, re.MULTILINE
+    )
+    if not m:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "structural_conformance",
+                "No [tool.hatch.version] path declared.",
+                'Add [tool.hatch.version] with path = "src/<pkg>/_version.py".',
+            )
+        )
+        version_file = None
+    else:
+        version_file = m.group(1)
+        target = repo_path / version_file
+        if not target.is_file():
+            findings.append(
+                _finding(
+                    CHECK_ID,
+                    "WARN",
+                    "structural_conformance",
+                    f"[tool.hatch.version] path points at {version_file}, "
+                    "which does not exist.",
+                    "Create it, or correct the path.",
+                )
+            )
+        elif not re.search(
+            r'^__version__\s*=\s*"[^"]+"', target.read_text(), re.MULTILINE
+        ):
+            findings.append(
+                _finding(
+                    CHECK_ID,
+                    "WARN",
+                    "structural_conformance",
+                    f'{version_file} has no __version__ = "..." assignment.',
+                    "hatchling cannot read a version from this file.",
+                )
+            )
+
+    rc_text = releaserc.read_text()
+    try:
+        rc = json.loads(rc_text)
+    except json.JSONDecodeError:
+        return findings
+
+    for entry in rc.get("plugins") or []:
+        if not (
+            isinstance(entry, list) and len(entry) == 2 and isinstance(entry[1], dict)
+        ):
+            continue
+        name, config = entry[0], entry[1]
+
+        # (4) the release commit must not carry pyproject.toml or uv.lock
+        if name == "@semantic-release/git":
+            assets = config.get("assets") or []
+            for bad in ("pyproject.toml", "uv.lock"):
+                if bad in assets:
+                    findings.append(
+                        _finding(
+                            CHECK_ID,
+                            "WARN",
+                            "structural_conformance",
+                            f"The release commit still includes {bad}.",
+                            "Remove it from @semantic-release/git assets — "
+                            "this is the condition that actually causes the "
+                            "rebase conflicts PY-017 exists to prevent.",
+                        )
+                    )
+            if version_file and version_file not in assets:
+                findings.append(
+                    _finding(
+                        CHECK_ID,
+                        "WARN",
+                        "structural_conformance",
+                        f"{version_file} is not in the release commit's assets.",
+                        "semantic-release writes it during prepare; without it "
+                        "in assets the bump is never committed.",
+                    )
+                )
+
+        # (5) the old mechanism must not still be live
+        if name == "@semantic-release/exec":
+            prepare = str(config.get("prepareCmd") or "")
+            if "uv lock" in prepare or "uv version" in prepare:
+                findings.append(
+                    _finding(
+                        CHECK_ID,
+                        "WARN",
+                        "structural_conformance",
+                        "prepareCmd still runs uv version / uv lock.",
+                        "Write the version file instead; re-locking on release "
+                        "is what put uv.lock in the release commit.",
+                    )
+                )
+
     return findings
 
 

@@ -49,6 +49,7 @@ from evaluator_cog.engine.deterministic import (
     check_src_layout,
     check_structured_logging,
     check_tailwind,
+    check_version_source,
     check_vite_react_ts,
     run_all_checks,
 )
@@ -178,6 +179,55 @@ def test_check_common_python_utils_dep_missing() -> None:
     )
     findings = check_common_python_utils_dep(repo)
     assert any(f["rule_id"] == "PY-006" for f in findings)
+
+
+def test_py017_passes_on_a_file_sourced_version() -> None:
+    """PY-017: the shape all eight Python repos moved to on 2026-09-06."""
+    repo = _make_repo(
+        {
+            "pyproject.toml": (
+                '[project]\nname = "x"\ndynamic = ["version"]\n\n'
+                '[tool.hatch.version]\npath = "src/x/_version.py"\n'
+            ),
+            "src/x/_version.py": '__version__ = "1.2.3"\n',
+            ".releaserc.json": (
+                '{"plugins": [["@semantic-release/exec", {"prepareCmd": '
+                '"printf ... > src/x/_version.py"}], ["@semantic-release/git", '
+                '{"assets": ["CHANGELOG.md", "src/x/_version.py"]}]]}'
+            ),
+        }
+    )
+    assert check_version_source(repo) == []
+
+
+def test_py017_flags_a_lockfile_in_the_release_commit() -> None:
+    """The assets list is the condition that actually causes the conflicts.
+
+    Everything else can be correct while the release still commits uv.lock,
+    so this must be reported on its own.
+    """
+    repo = _make_repo(
+        {
+            "pyproject.toml": (
+                '[project]\nname = "x"\ndynamic = ["version"]\n\n'
+                '[tool.hatch.version]\npath = "src/x/_version.py"\n'
+            ),
+            "src/x/_version.py": '__version__ = "1.2.3"\n',
+            ".releaserc.json": (
+                '{"plugins": [["@semantic-release/git", {"assets": '
+                '["CHANGELOG.md", "uv.lock", "src/x/_version.py"]}]]}'
+            ),
+        }
+    )
+    findings = check_version_source(repo)
+    assert len(findings) == 1, findings
+    assert "uv.lock" in str(findings[0])
+
+
+def test_py017_ignores_a_repo_that_does_not_release() -> None:
+    """No .releaserc.json means no release commit to keep clean."""
+    repo = _make_repo({"pyproject.toml": '[project]\nname = "x"\nversion = "1.0.0"\n'})
+    assert check_version_source(repo) == []
 
 
 def test_py011_documented_split_identity_is_not_flagged() -> None:

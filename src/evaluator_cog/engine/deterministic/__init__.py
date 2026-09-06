@@ -139,6 +139,7 @@ from evaluator_cog.engine.deterministic.python import (
     check_pre_commit,
     check_pyproject,
     check_src_layout,
+    check_version_source,
 )
 from evaluator_cog.engine.deterministic.runner import (
     _deduplicate_same_repo_findings,
@@ -210,6 +211,7 @@ __all__ = [
     "check_clerk_auth_dep",
     "check_cloudflare_pages_deploy",
     "check_common_python_utils_dep",
+    "check_version_source",
     "check_conventional_commits",
     "check_cors_config",
     "check_db_test_fixtures",

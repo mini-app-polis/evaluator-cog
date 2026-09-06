@@ -128,6 +128,7 @@ from evaluator_cog.engine.deterministic.python import (
     check_pre_commit,
     check_pyproject,
     check_src_layout,
+    check_version_source,
 )
 from evaluator_cog.engine.deterministic.security import (
     check_sec_001,
@@ -463,6 +464,9 @@ def run_all_checks(
 
     if (is_python or is_fastapi) and not is_library and not is_frontend:
         _run(check_common_python_utils_dep, "PY-006")
+
+    if is_python or is_fastapi:
+        _run(check_version_source, "PY-017")
 
     # Healthchecks only applies to trigger cogs
     _mark_checked("CD-007")
