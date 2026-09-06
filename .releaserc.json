@@ -5,10 +5,10 @@
     "@semantic-release/release-notes-generator",
     ["@semantic-release/changelog", { "changelogFile": "CHANGELOG.md" }],
     ["@semantic-release/exec", { 
-      "prepareCmd": "uv version ${nextRelease.version} && uv lock"
+      "prepareCmd": "printf '__version__ = \"%s\"\\n' \"${nextRelease.version}\" > src/evaluator_cog/_version.py"
     }],
     ["@semantic-release/git", {
-      "assets": ["CHANGELOG.md", "pyproject.toml", "uv.lock"],
+      "assets": ["CHANGELOG.md", "src/evaluator_cog/_version.py"],
       "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
     }],
     

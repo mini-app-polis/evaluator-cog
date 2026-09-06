@@ -1,6 +1,6 @@
 [project]
 name = "evaluator-cog"
-version = "3.21.4"
+dynamic = ["version"]
 description = "Standalone pipeline evaluation flow for the Kaiano ecosystem."
 requires-python = ">=3.11"
 dependencies = [
@@ -28,6 +28,9 @@ package = true
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/evaluator_cog/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/evaluator_cog"]
