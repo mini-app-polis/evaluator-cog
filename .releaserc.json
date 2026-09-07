@@ -14,7 +14,7 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "printf '__version__ = \"%s\"\\n' \"${nextRelease.version}\" > src/evaluator_cog/_version.py && uv lock"
+        "prepareCmd": "printf '__version__ = \"%s\"\\n' \"${nextRelease.version}\" > src/evaluator_cog/_version.py"
       }
     ],
     [
@@ -22,8 +22,7 @@
       {
         "assets": [
           "CHANGELOG.md",
-          "src/evaluator_cog/_version.py",
-          "uv.lock"
+          "src/evaluator_cog/_version.py"
         ],
         "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }
