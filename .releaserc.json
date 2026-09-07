@@ -1,17 +1,33 @@
 {
-  "branches": ["main"],
+  "branches": [
+    "main"
+  ],
   "plugins": [
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
-    ["@semantic-release/changelog", { "changelogFile": "CHANGELOG.md" }],
-    ["@semantic-release/exec", { 
-      "prepareCmd": "printf '__version__ = \"%s\"\\n' \"${nextRelease.version}\" > src/evaluator_cog/_version.py"
-    }],
-    ["@semantic-release/git", {
-      "assets": ["CHANGELOG.md", "src/evaluator_cog/_version.py"],
-      "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
-    }],
-    
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "CHANGELOG.md"
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "printf '__version__ = \"%s\"\\n' \"${nextRelease.version}\" > src/evaluator_cog/_version.py && uv lock"
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": [
+          "CHANGELOG.md",
+          "src/evaluator_cog/_version.py",
+          "uv.lock"
+        ],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ],
     "@semantic-release/github"
   ]
 }
