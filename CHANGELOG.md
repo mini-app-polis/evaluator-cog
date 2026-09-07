@@ -1,3 +1,10 @@
+## [3.22.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.22.1...v3.22.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* remove uv.lock from release (PY-017) ([8f759c4](https://github.com/mini-app-polis/evaluator-cog/commit/8f759c44526ed355206bd22090447bac5bba1bc6))
+
 ## [3.22.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.22.0...v3.22.1) (2026-09-07)
 
 
