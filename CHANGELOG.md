@@ -1,3 +1,10 @@
+## [3.22.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.22.0...v3.22.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* include uv.lock in release artifacts ([ffaade0](https://github.com/mini-app-polis/evaluator-cog/commit/ffaade059b5b5cf218d1a05ff595c9771d2487f7))
+
 # [3.22.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.21.5...v3.22.0) (2026-09-06)
 
 
