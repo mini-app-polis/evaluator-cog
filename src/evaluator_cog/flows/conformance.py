@@ -36,6 +36,7 @@ from typing import Any
 import httpx
 import yaml
 from mini_app_polis import logger as logger_mod
+from mini_app_polis.pipeline_status import make_failure_hook, post_run_finding
 from prefect import flow, get_run_logger
 from prefect.concurrency.sync import concurrency
 
@@ -1278,7 +1279,17 @@ def _run_applies_to_absent_checks(
         prefect_log.warning("EVAL-007: check failed: %s", exc)
 
 
-@flow(name="conformance-check", log_prints=True, on_completion=[_on_completion])
+_REPO = "evaluator-cog"
+_report_failure = make_failure_hook("conformance-check", repo=_REPO)
+
+
+@flow(
+    name="conformance-check",
+    log_prints=True,
+    on_completion=[_on_completion],
+    on_failure=[_report_failure],
+    on_crashed=[_report_failure],
+)
 def conformance_check_flow(run_llm: bool = False) -> None:
     """
     Clone each active repo and run conformance checks.
@@ -1796,6 +1807,31 @@ def conformance_check_flow(run_llm: bool = False) -> None:
         _RUN_TALLY.duplicates,
         _RUN_TALLY.failed,
     )
+
+    # The run's own outcome, as a notification. Not a finding: what this
+    # flow computed about other repos is graded and stays in the
+    # evaluations table; whether the flow itself worked is not.
+    #
+    # Skipped when nothing was delivered at all, because the assertion
+    # below is about to fail the run and the failure hook will report it.
+    # Two messages for one event is how a channel earns being ignored.
+    if not _RUN_TALLY.total_failure:
+        post_run_finding(
+            "conformance-check",
+            "WARN" if _RUN_TALLY.failed else "SUCCESS",
+            text=(
+                f"{flow_label}: {_RUN_TALLY.attempted} finding(s) offered, "
+                f"{_RUN_TALLY.posted} posted, "
+                f"{_RUN_TALLY.duplicates} duplicate, "
+                f"{_RUN_TALLY.failed} failed"
+            ),
+            repo=_REPO,
+            # A run that evaluated nothing had nothing to say. A run that
+            # offered findings reports either way — "162 offered, 0
+            # posted" and "162 offered, 162 posted" must not look alike
+            # from outside, which is the whole lesson of September 3rd.
+            notable=_RUN_TALLY.attempted > 0,
+        )
     # Last statement in the flow, deliberately: everything above has
     # already run and reported, and this only decides whether the run is
     # allowed to be called a success. Raising here marks the run Failed,
