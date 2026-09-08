@@ -1,3 +1,10 @@
+## [3.23.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.23.0...v3.23.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* dependency ([678492b](https://github.com/mini-app-polis/evaluator-cog/commit/678492b21f07ce38dcf2c3ca46593d06bf4cbd83))
+
 # [3.23.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.22.2...v3.23.0) (2026-09-08)
 
 
