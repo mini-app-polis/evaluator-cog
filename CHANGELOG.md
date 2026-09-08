@@ -1,3 +1,10 @@
+# [3.23.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.22.2...v3.23.0) (2026-09-08)
+
+
+### Features
+
+* utilizing common and notification at the cog level ([6102d22](https://github.com/mini-app-polis/evaluator-cog/commit/6102d2291ec710266ee199ac0f371de16544e637))
+
 ## [3.22.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.22.1...v3.22.2) (2026-09-07)
 
 
