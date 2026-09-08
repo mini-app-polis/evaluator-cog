@@ -1,3 +1,10 @@
+## [3.23.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.23.2...v3.23.3) (2026-09-08)
+
+
+### Bug Fixes
+
+* ci verification ([ac25b83](https://github.com/mini-app-polis/evaluator-cog/commit/ac25b83385bdb2a23533b1a1b552086b22727012))
+
 ## [3.23.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.23.1...v3.23.2) (2026-09-08)
 
 
