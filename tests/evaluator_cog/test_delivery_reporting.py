@@ -283,6 +283,84 @@ def test_suppressed_duplicates_are_reported_in_the_run_view() -> None:
     ) or "deejay-cog" in str(prefect_log.warning.call_args)
 
 
+# --- coverage, as opposed to delivery ------------------------------------
+#
+# _RUN_TALLY answers "did the findings reach the API". These pin the other
+# question: was every declared repo actually looked at, and looked at
+# completely. A run can be perfect on the first and wrong on the second.
+
+
+def test_repo_whose_checks_raise_is_named_in_the_run_report() -> None:
+    """A repo evaluated with zero deterministic checks is not a clean repo."""
+    from mini_app_polis.pipeline_status import RunReport
+
+    conf._RUN_REPORT = RunReport(flow_name="conformance-check", repo="evaluator-cog")
+    conf._report_issue(
+        "deterministic_checks_failed", "watcher-cog", RuntimeError("catalog fetch")
+    )
+
+    assert conf._RUN_REPORT.severity == "WARN"
+    text = conf._RUN_REPORT.text()
+    assert "deterministic_checks_failed" in text
+    assert "watcher-cog" in text
+    assert "RuntimeError" in text
+    conf._RUN_REPORT = None
+
+
+def test_missing_api_key_counts_without_escalating() -> None:
+    """One configuration fact must not turn every LLM run WARN."""
+    from mini_app_polis.pipeline_status import RunReport
+
+    conf._RUN_REPORT = RunReport(flow_name="conformance-check", repo="evaluator-cog")
+    for repo in ("a-cog", "b-cog", "c-cog"):
+        conf._report_note("llm_skipped_no_api_key", repo)
+
+    assert conf._RUN_REPORT.severity == "SUCCESS"
+    assert "llm_skipped_no_api_key=3" in conf._RUN_REPORT.text()
+    conf._RUN_REPORT = None
+
+
+def test_helpers_are_noops_outside_a_run() -> None:
+    """Called outside a flow run these write nowhere rather than raising."""
+    conf._RUN_REPORT = None
+    conf._report_issue("repo_download_failed", "x-cog", RuntimeError("boom"))
+    conf._report_note("llm_skipped_no_api_key", "x-cog")
+    assert conf._RUN_REPORT is None
+
+
+def test_reset_starts_a_fresh_coverage_report() -> None:
+    """A run's coverage must not inherit the previous run's issues."""
+    conf._reset_run_tally()
+    conf._report_issue("repo_download_failed", "x-cog", RuntimeError("boom"))
+    assert conf._RUN_REPORT is not None
+    assert conf._RUN_REPORT.severity == "WARN"
+
+    conf._reset_run_tally()
+    assert conf._RUN_REPORT is not None
+    assert conf._RUN_REPORT.severity == "SUCCESS"
+    assert conf._RUN_REPORT.text() == "Run complete — nothing to do."
+    conf._RUN_REPORT = None
+
+
+def test_coverage_issue_makes_a_fully_delivered_run_warn() -> None:
+    """The gap this closes: delivery was perfect, coverage was not.
+
+    Before, a run that skipped a repo entirely still reported
+    "162 offered, 162 posted, 0 failed" as SUCCESS, because the tally is
+    honest about delivery and silent about coverage.
+    """
+    from mini_app_polis.pipeline_status import RunReport
+
+    conf._RUN_REPORT = RunReport(flow_name="conformance-check", repo="evaluator-cog")
+    conf._RUN_REPORT.count("offered", 162)
+    conf._RUN_REPORT.count("posted", 162)
+    assert conf._RUN_REPORT.severity == "SUCCESS"
+
+    conf._report_issue("repo_download_failed", "deejay-cog", RuntimeError("404"))
+    assert conf._RUN_REPORT.severity == "WARN"
+    conf._RUN_REPORT = None
+
+
 def test_latest_stored_finding_is_scoped_to_the_repo() -> None:
     """The repo filter must reach the API as a parameter.
 

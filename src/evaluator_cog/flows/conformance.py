@@ -36,7 +36,7 @@ from typing import Any
 import httpx
 import yaml
 from mini_app_polis import logger as logger_mod
-from mini_app_polis.pipeline_status import make_failure_hook, post_run_finding
+from mini_app_polis.pipeline_status import RunReport, make_failure_hook
 from prefect import flow, get_run_logger
 from prefect.concurrency.sync import concurrency
 
@@ -99,11 +99,37 @@ _FALLBACK_STANDARDS_DOMAINS: tuple[str, ...] = (
 # API accepted.
 _RUN_TALLY = PostResult()
 
+#: Coverage, as opposed to delivery. _RUN_TALLY answers "did the findings
+#: reach the API"; this answers "was every declared repo actually looked
+#: at, and looked at completely". A run can be perfect on the first and
+#: wrong on the second, which is what a green SUCCESS on a run that
+#: silently skipped three repos looks like.
+#:
+#: None until a flow run resets it, so the helpers below are no-ops when
+#: this module's functions are called outside a run (tests, one-off
+#: scripts) rather than writing into a report nobody will send.
+_RUN_REPORT: RunReport | None = None
+
 
 def _reset_run_tally() -> None:
-    """Start a fresh tally. Called once at the top of each flow run."""
-    global _RUN_TALLY
+    """Start a fresh tally and coverage report. Called at the top of each run."""
+    global _RUN_TALLY, _RUN_REPORT
     _RUN_TALLY = PostResult()
+    _RUN_REPORT = RunReport(flow_name="conformance-check", repo=_REPO)
+
+
+def _report_issue(reason: str, repo_id: str, exc: BaseException | None = None) -> None:
+    """Flag a repo this run did not fully evaluate. Makes the run WARN."""
+    if _RUN_REPORT is None:
+        return
+    detail = f"{type(exc).__name__}: {exc}" if exc is not None else None
+    _RUN_REPORT.issue(reason, repo_id, detail=detail)
+
+
+def _report_note(reason: str, repo_id: str) -> None:
+    """Record an ordinary skip. Counted in the message, severity unchanged."""
+    if _RUN_REPORT is not None:
+        _RUN_REPORT.note(reason, repo_id)
 
 
 def _post_tracked(label: str, prefect_log: Any = None, **kwargs: Any) -> PostResult:
@@ -739,6 +765,10 @@ def _download_repo(repo_id: str, tmp_dir: str, branch: str = "main") -> Path | N
         return dest
     except Exception as exc:
         log.warning("conformance: failed to download %s: %s", repo_id, exc)
+        # Also recorded as a STATUS finding by _post_not_evaluated at the
+        # call site. Two sinks on purpose: the finding is the durable row
+        # in Pipeline Health, this is the line in the channel.
+        _report_issue("repo_download_failed", repo_id, exc)
         return None
 
 
@@ -798,6 +828,11 @@ def run_conformance_check(
         log.exception("conformance: run_all_checks failed for %s: %s", repo_id, exc)
         deterministic_findings = []
         checked_rule_ids = set()
+        # Not caught by _post_not_evaluated: structurally this repo *was*
+        # evaluated, so it posts a clean STATUS row and counts toward the
+        # total. Zero deterministic findings from zero deterministic
+        # checks is indistinguishable from a repo that passed them all.
+        _report_issue("deterministic_checks_failed", repo_id, exc)
 
     prefect_log.info(
         "conformance: %d deterministic findings for %s",
@@ -875,11 +910,18 @@ def run_conformance_check(
             )
         except Exception as exc:
             log.warning("conformance: LLM assessment failed for %s: %s", repo_id, exc)
+            _report_issue("llm_assessment_failed", repo_id, exc)
     else:
         prefect_log.warning(
             "conformance: ANTHROPIC_API_KEY not set, skipping LLM assessment for %s",
             repo_id,
         )
+        # A note, not an issue. A missing key is one configuration fact
+        # that would otherwise fire once per repo and turn every LLM run
+        # WARN for a single cause. Counted so the message says how many
+        # repos went unassessed; not escalated, because the count is the
+        # information and the run is otherwise fine.
+        _report_note("llm_skipped_no_api_key", repo_id)
 
     all_findings = deterministic_findings + llm_findings
     findings_to_post = llm_findings if post_llm_only else all_findings
@@ -971,6 +1013,7 @@ def _run_standalone_conformance(
         )
     except Exception as exc:
         prefect_log.warning("conformance: check failed for %s: %s", repo_id, exc)
+        _report_issue("repo_check_failed", repo_id, exc)
 
 
 def _build_conformance_run_id(standards_version: str) -> str:
@@ -1815,23 +1858,21 @@ def conformance_check_flow(run_llm: bool = False) -> None:
     # Skipped when nothing was delivered at all, because the assertion
     # below is about to fail the run and the failure hook will report it.
     # Two messages for one event is how a channel earns being ignored.
-    if not _RUN_TALLY.total_failure:
-        post_run_finding(
-            "conformance-check",
-            "WARN" if _RUN_TALLY.failed else "SUCCESS",
-            text=(
-                f"{flow_label}: {_RUN_TALLY.attempted} finding(s) offered, "
-                f"{_RUN_TALLY.posted} posted, "
-                f"{_RUN_TALLY.duplicates} duplicate, "
-                f"{_RUN_TALLY.failed} failed"
-            ),
-            repo=_REPO,
-            # A run that evaluated nothing had nothing to say. A run that
-            # offered findings reports either way — "162 offered, 0
-            # posted" and "162 offered, 162 posted" must not look alike
-            # from outside, which is the whole lesson of September 3rd.
-            notable=_RUN_TALLY.attempted > 0,
-        )
+    if not _RUN_TALLY.total_failure and _RUN_REPORT is not None:
+        # Delivery failure is an issue like any other, so a run that
+        # posted nine of ten batches is WARN for the same reason a run
+        # that skipped a repo is.
+        if _RUN_TALLY.failed:
+            _RUN_REPORT.issue("delivery_failed", f"{_RUN_TALLY.failed} finding(s)")
+        _RUN_REPORT.count("flow", flow_label)
+        _RUN_REPORT.count("offered", _RUN_TALLY.attempted)
+        _RUN_REPORT.count("posted", _RUN_TALLY.posted)
+        _RUN_REPORT.count("duplicate", _RUN_TALLY.duplicates)
+        # A run that evaluated nothing had nothing to say. A run that
+        # offered findings reports either way — "162 offered, 0 posted"
+        # and "162 offered, 162 posted" must not look alike from outside,
+        # which is the whole lesson of September 3rd.
+        _RUN_REPORT.send(notable=_RUN_TALLY.attempted > 0)
     # Last statement in the flow, deliberately: everything above has
     # already run and reported, and this only decides whether the run is
     # allowed to be called a success. Raising here marks the run Failed,
