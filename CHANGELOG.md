@@ -1,3 +1,15 @@
+# [3.24.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.23.3...v3.24.0) (2026-09-09)
+
+
+### Bug Fixes
+
+* **conformance:** say how many repos came through clean ([4b0f549](https://github.com/mini-app-polis/evaluator-cog/commit/4b0f54961bb80f26cf41d53bdd9d3a5ee81a248b))
+
+
+### Features
+
+* **conformance:** report repos that could not be fully evaluated ([e79f8b6](https://github.com/mini-app-polis/evaluator-cog/commit/e79f8b67d9bd4557a87c189b716c955db61a5d1a))
+
 ## [3.23.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.23.2...v3.23.3) (2026-09-08)
 
 
