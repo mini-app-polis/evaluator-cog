@@ -110,12 +110,23 @@ _RUN_TALLY = PostResult()
 #: scripts) rather than writing into a report nobody will send.
 _RUN_REPORT: RunReport | None = None
 
+#: Every repo name flagged by :func:`_report_issue` this run, so the
+#: message can say how many repos came through clean without counting a
+#: flagged one twice when two things went wrong with it.
+#:
+#: Holds whatever string the call site had — a declared service id in most
+#: places, a monorepo repo name in :func:`_download_repo`. Only the
+#: intersection with declared service ids is ever counted, so the entries
+#: that name no service are ignored rather than skewing the total.
+_RUN_FLAGGED: set[str] = set()
+
 
 def _reset_run_tally() -> None:
     """Start a fresh tally and coverage report. Called at the top of each run."""
-    global _RUN_TALLY, _RUN_REPORT
+    global _RUN_TALLY, _RUN_REPORT, _RUN_FLAGGED
     _RUN_TALLY = PostResult()
     _RUN_REPORT = RunReport(flow_name="conformance-check", repo=_REPO)
+    _RUN_FLAGGED = set()
 
 
 def _report_issue(reason: str, repo_id: str, exc: BaseException | None = None) -> None:
@@ -124,6 +135,7 @@ def _report_issue(reason: str, repo_id: str, exc: BaseException | None = None) -
         return
     detail = f"{type(exc).__name__}: {exc}" if exc is not None else None
     _RUN_REPORT.issue(reason, repo_id, detail=detail)
+    _RUN_FLAGGED.add(repo_id)
 
 
 def _report_note(reason: str, repo_id: str) -> None:
@@ -1599,6 +1611,11 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                         _svc_id = _svc.get("id", "")
                         if not _svc_id:
                             continue
+                        # Against each service for the same reason the
+                        # finding is: _download_repo flagged the monorepo,
+                        # which is not a repo the report has a column for,
+                        # and the services it hid are what went unevaluated.
+                        _report_issue("repo_download_failed", _svc_id)
                         _post_not_evaluated(
                             _svc_id,
                             f"its monorepo could not be downloaded "
@@ -1859,6 +1876,18 @@ def conformance_check_flow(run_llm: bool = False) -> None:
     # below is about to fail the run and the failure hook will report it.
     # Two messages for one event is how a channel earns being ignored.
     if not _RUN_TALLY.total_failure and _RUN_REPORT is not None:
+        # The repos that came through whole. Counted against the declared
+        # list rather than by incrementing as we go, so a repo flagged for
+        # two separate reasons is still one repo missing from the total —
+        # and so the message reads "processed=11, repo_download_failed=1"
+        # rather than "nothing to do" on a run that evaluated the fleet.
+        _RUN_REPORT.ok(
+            sum(
+                1
+                for _svc in active_repos
+                if _svc.get("id") and _svc["id"] not in _RUN_FLAGGED
+            )
+        )
         # Delivery failure is an issue like any other, so a run that
         # posted nine of ten batches is WARN for the same reason a run
         # that skipped a repo is.

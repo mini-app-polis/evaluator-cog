@@ -328,6 +328,31 @@ def test_helpers_are_noops_outside_a_run() -> None:
     assert conf._RUN_REPORT is None
 
 
+def test_a_repo_flagged_twice_is_still_one_repo_missing() -> None:
+    """The clean count is derived, not incremented, so it cannot drift.
+
+    A repo whose deterministic checks raise and whose LLM pass then fails
+    is one repo that did not come through whole, not two.
+    """
+    conf._reset_run_tally()
+    conf._report_issue("deterministic_checks_failed", "watcher-cog", RuntimeError("a"))
+    conf._report_issue("llm_assessment_failed", "watcher-cog", RuntimeError("b"))
+
+    active = [{"id": "watcher-cog"}, {"id": "deejay-cog"}, {"id": "retag-cog"}]
+    clean = sum(1 for s in active if s.get("id") and s["id"] not in conf._RUN_FLAGGED)
+    assert clean == 2
+    conf._RUN_REPORT = None
+
+
+def test_a_note_does_not_cost_a_repo_its_clean_count() -> None:
+    """A skipped LLM pass is not a repo that went unevaluated."""
+    conf._reset_run_tally()
+    conf._report_note("llm_skipped_no_api_key", "deejay-cog")
+
+    assert "deejay-cog" not in conf._RUN_FLAGGED
+    conf._RUN_REPORT = None
+
+
 def test_reset_starts_a_fresh_coverage_report() -> None:
     """A run's coverage must not inherit the previous run's issues."""
     conf._reset_run_tally()
