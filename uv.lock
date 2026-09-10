@@ -903,7 +903,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "miniapppolis-common-utils", specifier = ">=5.2.0,<6" },
+    { name = "miniapppolis-common-utils", specifier = ">=5.6.0,<6" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8.0" },
     { name = "prefect", specifier = ">=3.0,<4.0" },
@@ -1619,7 +1619,7 @@ wheels = [
 
 [[package]]
 name = "miniapppolis-common-utils"
-version = "5.2.0"
+version = "5.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-python-client" },
@@ -1636,9 +1636,9 @@ dependencies = [
     { name = "spotipy" },
     { name = "tenacity" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/4c/282e479d2cb76e0632fad8dd75ba92320e3af8d44f8f5d3c90a3417378dd/miniapppolis_common_utils-5.2.0.tar.gz", hash = "sha256:b576a5d57c3e54e10117fa3dc7c1f8b910ffec9cd0f527a608fda6b268a24049", size = 245133, upload-time = "2026-09-09T19:04:10.37Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/ef/2fc76dccb4e8b6d48744d142ea2c7c877635433aea61abf1c434b987c45c/miniapppolis_common_utils-5.6.0.tar.gz", hash = "sha256:917375c157bb455cbf313bd81eb792bb235162bafafc4bf2597caaf1b0502525", size = 263239, upload-time = "2026-09-10T20:39:10.86Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1c/48/db8b83b383c6bb58c1cc105b04a7f892ed14b11355cda5a09ddf9e973b9a/miniapppolis_common_utils-5.2.0-py3-none-any.whl", hash = "sha256:7d8f559d627fe35cbf6dc213153dcdeaf0d3da9e35089abf1f142ddefcf5c17e", size = 85595, upload-time = "2026-09-09T19:04:09.112Z" },
+    { url = "https://files.pythonhosted.org/packages/04/a0/b2c86f703028cfa7cd2be446a5ad6c4e8be42419ab8b5f3239d97fc9e834/miniapppolis_common_utils-5.6.0-py3-none-any.whl", hash = "sha256:42ca3ebc1b36e91f5431eefecdd558fe113d36b97d54ae87716612d125a1f2b0", size = 100926, upload-time = "2026-09-10T20:39:09.736Z" },
 ]
 
 [[package]]
