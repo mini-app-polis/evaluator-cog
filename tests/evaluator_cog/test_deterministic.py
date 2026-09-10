@@ -18,6 +18,7 @@ from evaluator_cog.engine.deterministic import (
     check_common_python_utils_dep,
     check_dedup_handling_present,
     check_env_example,
+    check_env_example_settings_parity,
     check_eval_003,
     check_eval_007,
     check_evaluation_step,
@@ -47,6 +48,7 @@ from evaluator_cog.engine.deterministic import (
     check_releaserc_assets,
     check_respx_for_http_mocking,
     check_retry_logic,
+    check_settings_field_consistency,
     check_shadcn,
     check_shared_library_used,
     check_split_package_identity,
@@ -2468,3 +2470,95 @@ def test_ver_009_silent_without_the_git_plugin(tmp_path) -> None:
 
 def test_ver_009_leaves_the_absent_config_to_ver_003(tmp_path) -> None:
     assert check_release_commit_message(tmp_path) == []
+
+
+# ─────────────────────────────────────────────
+# CFG-001 / CFG-002 — computed Settings attributes
+# ─────────────────────────────────────────────
+
+
+def _repo_with_settings(tmp_path: Path, config_src: str, usage_src: str) -> Path:
+    pkg = tmp_path / "src" / "svc"
+    pkg.mkdir(parents=True)
+    (pkg / "config.py").write_text(config_src)
+    (pkg / "usage.py").write_text(usage_src)
+    return tmp_path
+
+
+_COMPUTED_SETTINGS = """
+import functools
+
+from pydantic import computed_field
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    GH_TOKEN: str | None = None
+
+    @property
+    def gh_token(self) -> str | None:
+        return self.GH_TOKEN
+
+    @functools.cached_property
+    def cached_token(self) -> str | None:
+        return self.GH_TOKEN
+
+    @computed_field(return_type=str)
+    def computed_token(self) -> str | None:
+        return self.GH_TOKEN
+"""
+
+
+def test_cfg_001_accepts_computed_settings_attributes(tmp_path: Path) -> None:
+    """A @property / @cached_property / @computed_field is a real attribute.
+
+    api-kaianolevine-com resolves GITHUB_DASHBOARD_TOKEN, GH_TOKEN and
+    GITHUB_TOKEN behind one `github_dashboard_token` property; reading it
+    was reported as an undeclared field on every run.
+    """
+    repo = _repo_with_settings(
+        tmp_path,
+        _COMPUTED_SETTINGS,
+        "from .config import settings\n"
+        "a = settings.gh_token\n"
+        "b = settings.cached_token\n"
+        "c = settings.computed_token\n"
+        'd = getattr(settings, "gh_token")\n',
+    )
+    assert check_settings_field_consistency(repo) == []
+
+
+def test_cfg_001_still_flags_an_undeclared_attribute(tmp_path: Path) -> None:
+    repo = _repo_with_settings(
+        tmp_path,
+        _COMPUTED_SETTINGS,
+        "from .config import settings\n\nx = settings.nonexistent_token\n",
+    )
+    findings = check_settings_field_consistency(repo)
+    assert [f["rule_id"] for f in findings] == ["CFG-001"]
+    assert "nonexistent_token" in findings[0]["finding"]
+
+
+def test_cfg_002_does_not_treat_a_property_as_settable(tmp_path: Path) -> None:
+    """CFG-002 asks what the environment can set, which a property cannot.
+
+    ``computed_token`` is a real attribute — CFG-001 accepts reading it —
+    but nothing in the environment can assign it, so an .env.example key
+    of that name is still an undeclared key and must be reported.
+    """
+    repo = _repo_with_settings(tmp_path, _COMPUTED_SETTINGS, "")
+    (repo / ".env.example").write_text("GH_TOKEN=\nCOMPUTED_TOKEN=\n")
+    findings = check_env_example_settings_parity(repo)
+    assert [f["rule_id"] for f in findings] == ["CFG-002"]
+    assert "COMPUTED_TOKEN" in findings[0]["finding"]
+
+
+def test_cfg_002_still_honours_the_external_tooling_marker(tmp_path: Path) -> None:
+    """transcription-cog's KAIANO_API_BASE_URL_DEV shape."""
+    repo = _repo_with_settings(tmp_path, _COMPUTED_SETTINGS, "")
+    (repo / ".env.example").write_text(
+        "# external tooling: read by common-python-utils.\n"
+        "# The second comment line must not cancel the marker.\n"
+        "SOMETHING_ELSE=\n"
+    )
+    assert check_env_example_settings_parity(repo) == []
