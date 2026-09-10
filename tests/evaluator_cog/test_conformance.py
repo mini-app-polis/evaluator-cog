@@ -530,7 +530,7 @@ def test_conformance_monorepo_service_failure_does_not_abort_flow(
         ],
     }
 
-    def fake_download_repo(repo_name, tmp_dir, branch="main"):
+    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
         root = Path(tmp_dir) / repo_name
         (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
         (root / "apps" / "b").mkdir(parents=True, exist_ok=True)
@@ -651,7 +651,7 @@ def test_undownloadable_repo_is_reported_not_silently_skipped(monkeypatch) -> No
         ]
     }
 
-    def fake_download_repo(repo_name, tmp_dir, branch="main"):
+    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
         if repo_name == "gone":
             return None
         root = Path(tmp_dir) / repo_name
@@ -716,7 +716,7 @@ def test_failed_checks_are_reported_not_silently_skipped(monkeypatch) -> None:
         ]
     }
 
-    def fake_download_repo(repo_name, tmp_dir, branch="main"):
+    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
         root = Path(tmp_dir) / repo_name
         root.mkdir(parents=True, exist_ok=True)
         return root
