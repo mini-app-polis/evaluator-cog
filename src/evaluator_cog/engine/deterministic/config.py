@@ -115,22 +115,53 @@ def check_logger_misuse(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_settings_field_consistency(repo_path: Path) -> list[Finding]:
-    """CFG-001: getattr(settings, X) / settings.X keys declared on Settings."""
-    CHECK_ID = "CFG-001"
-    import ast
+# A Settings attribute does not have to be an assignment. Pydantic settings
+# classes routinely expose a derived value as a `@property`,
+# `@functools.cached_property` or pydantic's own `@computed_field` — a name
+# resolved from several env vars, a URL assembled from parts. Read as
+# `settings.x` it is indistinguishable from a field, so CFG-001 has to count
+# it as declared or it reports every such accessor as undeclared.
+#
+# CFG-002 deliberately does NOT share this set: it asks whether an
+# .env.example key can be set on Settings, and a read-only accessor cannot,
+# so counting one there would let a genuinely undeclared env var pass on a
+# name collision.
+_SETTINGS_COMPUTED_DECORATORS = frozenset(
+    {"property", "cached_property", "computed_field"}
+)
 
-    findings: list[Finding] = []
-    src = repo_path / "src"
-    if not src.is_dir():
-        return findings
 
+def _decorator_base_name(node: ast.expr) -> str | None:
+    """The bare name of a decorator, through a call and/or an attribute path.
+
+    ``@property`` → ``property``; ``@functools.cached_property`` →
+    ``cached_property``; ``@computed_field(return_type=str)`` →
+    ``computed_field``.
+    """
+    if isinstance(node, ast.Call):
+        node = node.func
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return None
+
+
+def _settings_declared_fields(
+    src: Path, *, include_computed: bool, include_plain_assign: bool
+) -> set[str]:
+    """Names declared on every Settings class under ``src``.
+
+    ``include_plain_assign`` and ``include_computed`` are the two axes the
+    callers disagree on. CFG-001 asks what can be *read* as
+    ``settings.<name>``, so an unannotated class attribute and a computed
+    accessor both count. CFG-002 asks what can be *set from the
+    environment*, so only annotated pydantic fields do.
+    """
     declared_fields: set[str] = set()
-    # First pass: collect fields on any Settings class
     for py_file in src.rglob("*.py"):
         try:
-            text = py_file.read_text()
-            tree = ast.parse(text)
+            tree = ast.parse(py_file.read_text())
         except Exception:
             continue
         for node in ast.walk(tree):
@@ -143,10 +174,35 @@ def check_settings_field_consistency(repo_path: Path) -> list[Finding]:
                     stmt.target, ast.Name
                 ):
                     declared_fields.add(stmt.target.id)
-                elif isinstance(stmt, ast.Assign):
-                    for t in stmt.targets:
-                        if isinstance(t, ast.Name):
-                            declared_fields.add(t.id)
+                elif include_plain_assign and isinstance(stmt, ast.Assign):
+                    for target in stmt.targets:
+                        if isinstance(target, ast.Name):
+                            declared_fields.add(target.id)
+                elif (
+                    include_computed
+                    and isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and any(
+                        _decorator_base_name(d) in _SETTINGS_COMPUTED_DECORATORS
+                        for d in stmt.decorator_list
+                    )
+                ):
+                    declared_fields.add(stmt.name)
+    return declared_fields
+
+
+def check_settings_field_consistency(repo_path: Path) -> list[Finding]:
+    """CFG-001: getattr(settings, X) / settings.X keys declared on Settings."""
+    CHECK_ID = "CFG-001"
+    import ast
+
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not src.is_dir():
+        return findings
+
+    declared_fields = _settings_declared_fields(
+        src, include_computed=True, include_plain_assign=True
+    )
 
     if not declared_fields:
         return findings  # No Settings class; rule doesn't apply here
@@ -205,7 +261,6 @@ def check_settings_field_consistency(repo_path: Path) -> list[Finding]:
 def check_env_example_settings_parity(repo_path: Path) -> list[Finding]:
     """CFG-002: .env.example keys match Settings declared fields."""
     CHECK_ID = "CFG-002"
-    import ast
 
     findings: list[Finding] = []
     env_example = repo_path / ".env.example"
@@ -215,23 +270,9 @@ def check_env_example_settings_parity(repo_path: Path) -> list[Finding]:
     if not src.is_dir():
         return findings
 
-    declared_fields: set[str] = set()
-    for py_file in src.rglob("*.py"):
-        try:
-            text = py_file.read_text()
-            tree = ast.parse(text)
-        except Exception:
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef):
-                continue
-            if not (node.name == "Settings" or node.name.endswith("Settings")):
-                continue
-            for stmt in node.body:
-                if isinstance(stmt, ast.AnnAssign) and isinstance(
-                    stmt.target, ast.Name
-                ):
-                    declared_fields.add(stmt.target.id)
+    declared_fields = _settings_declared_fields(
+        src, include_computed=False, include_plain_assign=False
+    )
 
     if not declared_fields:
         return findings
