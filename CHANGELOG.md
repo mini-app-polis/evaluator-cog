@@ -1,3 +1,16 @@
+# [3.25.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.24.0...v3.25.0) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deps:** import CI job checks from delivery, not versioning ([99fd2a5](https://github.com/mini-app-polis/evaluator-cog/commit/99fd2a594390a488c6fdeaf2ceb995177784c9ac))
+* **deps:** import CI job checks from delivery, not versioning ([b3d983c](https://github.com/mini-app-polis/evaluator-cog/commit/b3d983c25a3d2e41307bf405284f62bb0f3dc58a))
+
+
+### Features
+
+* resolve registry repos by declared org and add four conformance checks ([a5b5395](https://github.com/mini-app-polis/evaluator-cog/commit/a5b539552d82714a6a70d4bcf8ad3acf21d1df8a))
+
 # [3.24.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.23.3...v3.24.0) (2026-09-09)
 
 
