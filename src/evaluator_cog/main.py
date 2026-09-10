@@ -31,6 +31,7 @@ from pathlib import Path
 
 import sentry_sdk
 from dotenv import load_dotenv
+from mini_app_polis.environment import current_environment
 from mini_app_polis.serve_resilience import serve_with_retry
 from prefect.flows import flow as prefect_flow
 
@@ -38,7 +39,10 @@ from prefect.flows import flow as prefect_flow
 def main() -> None:
     """Register all flows and start the Prefect runner loop."""
     load_dotenv()
-    sentry_sdk.init(dsn=os.getenv("SENTRY_DSN_EVALUATOR"), environment="production")
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN_EVALUATOR"),
+        environment=current_environment().value,
+    )
 
     src_path = os.environ.get(
         "APP_SOURCE_PATH", str(Path(__file__).parent.parent.parent)
