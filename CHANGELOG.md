@@ -1,3 +1,11 @@
+## [3.25.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.0...v3.25.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* moving to common 5.7.1 ([b1895ed](https://github.com/mini-app-polis/evaluator-cog/commit/b1895edf654191bb52823ccbd8e65ec41ae6df43))
+* **observability:** report Sentry errors under the real environment ([423de37](https://github.com/mini-app-polis/evaluator-cog/commit/423de3799bc09c421d52cd7e2871b358a859884d))
+
 # [3.25.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.24.0...v3.25.0) (2026-09-10)
 
 
