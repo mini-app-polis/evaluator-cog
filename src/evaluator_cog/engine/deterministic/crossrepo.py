@@ -733,3 +733,71 @@ def check_xstack_007(
             )
 
     return findings
+
+
+_ZIPBALL_RE = re.compile(
+    r"/repos/(?P<org>[^/]+)/(?P<repo>[^/]+)/zipball/(?P<branch>.+)$"
+)
+
+
+def check_xstack_008(
+    *, unresolved: list[dict[str, str]] | None = None
+) -> list[Finding]:
+    """XSTACK-008: every registered repo resolved where the registry says.
+
+    The other half of XSTACK-006. That rule asks whether a repo which
+    declares itself governed appears in the registry; this one asks
+    whether a repo the registry lists exists where the listing says it
+    does. A registry entry that does not resolve is the worse of the two
+    states: the repo is counted as governed, it carries an
+    ``evaluator.yaml`` saying so, and no rule has ever run against it.
+    The belief is not merely absent — it is false, and the registry is
+    what makes it false.
+
+    Costs nothing. The conformance run already downloads every registered
+    repo, so this reads the downloads that came back 404 rather than
+    asking GitHub a second time whether each repo exists.
+
+    Only a 404 is reported. A download that failed on a 403, 429, 5xx,
+    timeout or connection error means the run could not tell whether the
+    repo is there, and "I could not tell" must never be collapsed into
+    "it is not there" — the caller records those separately and they
+    never reach this list.
+    """
+    CHECK_ID = "XSTACK-008"
+    findings: list[Finding] = []
+    for entry in unresolved or []:
+        url = entry.get("url", "")
+        label = entry.get("label") or "unknown"
+        match = _ZIPBALL_RE.search(url)
+        if match:
+            org, repo, branch = (
+                match.group("org"),
+                match.group("repo"),
+                match.group("branch"),
+            )
+            where = f"{org}/{repo} at branch {branch}"
+            suggestion = (
+                f"Either the repo does not exist under {org}, or the registry "
+                f"entry is stale. Correct `org:`, `repo:` or `branch:` on the "
+                f"{repo} entry in ecosystem.yaml, or remove the entry if the "
+                f"repo is gone."
+            )
+        else:
+            where = label
+            suggestion = (
+                "Correct the org, repo name or branch for this entry in "
+                "ecosystem.yaml, or remove the entry if the repo is gone."
+            )
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                "cross_repo_coherence",
+                f"Registered repo did not resolve: {where} returned 404. It is "
+                f"counted as governed and carries a registry entry, but no rule "
+                f"ran against it this run.",
+                suggestion,
+            )
+        )
+    return findings

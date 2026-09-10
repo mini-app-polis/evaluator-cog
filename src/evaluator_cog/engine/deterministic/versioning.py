@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -264,4 +265,61 @@ def check_breaking_change_footer(repo_path: Path) -> list[Finding]:
                     "`BREAKING CHANGE: <description>` footer.",
                 )
             )
+    return findings
+
+
+def check_release_commit_message(repo_path: Path) -> list[Finding]:
+    """VER-009: the release commit carries [skip ci] and the release notes."""
+    CHECK_ID = "VER-009"
+    findings: list[Finding] = []
+    rc = repo_path / ".releaserc.json"
+    if not rc.exists():
+        # VER-003 owns the absent-config case.
+        return findings
+    try:
+        config = json.loads(rc.read_text())
+    except Exception:
+        return findings
+
+    message = None
+    for plugin in config.get("plugins") or []:
+        if (
+            isinstance(plugin, list)
+            and plugin
+            and plugin[0] == "@semantic-release/git"
+            and len(plugin) > 1
+            and isinstance(plugin[1], dict)
+        ):
+            message = plugin[1].get("message")
+            break
+    if not isinstance(message, str):
+        # No git plugin means no release commit to annotate.
+        return findings
+
+    if "[skip ci]" not in message:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "cd_readiness",
+                "The @semantic-release/git message has no [skip ci], so the "
+                "release commit pushed to main re-triggers the full pipeline, "
+                "which then finds no releasable commits and exits.",
+                "Add `[skip ci]` to the message: "
+                "`chore(release): ${nextRelease.version} [skip ci]`.",
+            )
+        )
+    if "${nextRelease.notes}" not in message:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "cd_readiness",
+                "The @semantic-release/git message omits ${nextRelease.notes}, "
+                "so the release commit body is a bare version number and git "
+                "log on main does not record what shipped.",
+                "Append the notes to the message body: "
+                "`...[skip ci]\\n\\n${nextRelease.notes}`.",
+            )
+        )
     return findings

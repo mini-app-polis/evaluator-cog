@@ -50,6 +50,7 @@ from evaluator_cog.engine.deterministic.containers import (
     check_cd_024,
 )
 from evaluator_cog.engine.deterministic.delivery import (
+    check_canonical_ci_job_names,
     check_ci,
     check_gha_not_trigger_relay,
     check_migration_in_ci,
@@ -58,6 +59,7 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_no_print_statements,
     check_pnpm_lockfile,
     check_pytest_coverage_in_ci,
+    check_release_gated_on_security,
     check_structured_logging,
     check_three_layer_observability,
 )
@@ -152,6 +154,7 @@ from evaluator_cog.engine.deterministic.versioning import (
     check_breaking_change_footer,
     check_conventional_commits,
     check_no_manual_changelog,
+    check_release_commit_message,
     check_releaserc,
     check_releaserc_assets,
 )
@@ -478,6 +481,9 @@ def run_all_checks(
     _run(check_structured_logging, "CD-009")
     _run(check_no_hardcoded_secrets, "CD-011")
     _run(check_no_manual_changelog, "VER-004")
+    _run(check_release_commit_message, "VER-009")
+    _run(check_release_gated_on_security, "CD-025")
+    _run(check_canonical_ci_job_names, "CD-026")
 
     _mark_checked("XSTACK-001")
     if (evaluator_config is None and "XSTACK-001" not in _exceptions) or (

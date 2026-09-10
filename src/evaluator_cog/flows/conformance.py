@@ -64,6 +64,9 @@ _ECOSYSTEM_STANDARDS_INDEX_URL = os.environ.get(
 )
 _VALID_RULE_STATUSES: frozenset[str] = frozenset({"requirement", "convention", "gap"})
 
+#: GitHub org every registry entry resolves under unless it declares its own.
+_DEFAULT_ORG = "mini-app-polis"
+
 # Canonical fallback list used only when index.yaml cannot be fetched.
 # Keep this in sync with ecosystem-standards/index.yaml::files (any entry
 # whose `file` begins with "standards/"). The runtime domain list is
@@ -120,6 +123,13 @@ _RUN_REPORT: RunReport | None = None
 #: that name no service are ignored rather than skewing the total.
 _RUN_FLAGGED: set[str] = set()
 
+#: Registry entries whose download returned 404 this run, as
+#: ``{"label": "<org>/<repo>", "url": <zipball url>}``. Only a 404 lands
+#: here: a 403, 429, 5xx or timeout means the run could not tell whether
+#: the repo exists, which is not the same fact and must not be reported
+#: as one. XSTACK-008 reads this at the end of the run.
+_UNRESOLVED_DOWNLOADS: list[dict[str, str]] = []
+
 
 def _reset_run_tally() -> None:
     """Start a fresh tally and coverage report. Called at the top of each run."""
@@ -127,6 +137,7 @@ def _reset_run_tally() -> None:
     _RUN_TALLY = PostResult()
     _RUN_REPORT = RunReport(flow_name="conformance-check", repo=_REPO)
     _RUN_FLAGGED = set()
+    _UNRESOLVED_DOWNLOADS.clear()
 
 
 def _report_issue(reason: str, repo_id: str, exc: BaseException | None = None) -> None:
@@ -616,6 +627,22 @@ def _declared_branch(record: dict | None) -> str:
     return branch or "main"
 
 
+def _declared_org(record: dict | None) -> str:
+    """The GitHub org a registry entry says it lives in, else the fleet default.
+
+    Mirrors :func:`_declared_branch`. Almost every repo is under
+    ``mini-app-polis`` and omits the field, but not all of them are: with
+    the org hardcoded into the download URL, a repo in a personal org
+    404'd on every single run. It was registered, it carried an
+    evaluator.yaml declaring itself governed, and it had never once been
+    evaluated — the exact state XSTACK-006 exists to make visible.
+    """
+    if not isinstance(record, dict):
+        return _DEFAULT_ORG
+    org = str(record.get("org") or "").strip()
+    return org or _DEFAULT_ORG
+
+
 #: Attempts per repo download, including the first. GitHub's secondary
 #: rate limit clears in seconds, so a small number of tries with backoff
 #: covers it; a larger number would only make a genuinely broken repo
@@ -684,10 +711,11 @@ def _fetch_zipball(
                 response = client.get(url, headers=headers)
                 if response.status_code == 404:
                     log.warning(
-                        "conformance: %s not found (404) — check the repo name "
-                        "and branch in ecosystem.yaml",
+                        "conformance: %s not found (404) — check the repo "
+                        "name, org and branch in ecosystem.yaml",
                         repo_id,
                     )
+                    _UNRESOLVED_DOWNLOADS.append({"label": repo_id, "url": url})
                     return None
                 if response.is_success:
                     return response.content
@@ -721,7 +749,9 @@ def _fetch_zipball(
     return None
 
 
-def _download_repo(repo_id: str, tmp_dir: str, branch: str = "main") -> Path | None:
+def _download_repo(
+    repo_id: str, tmp_dir: str, branch: str = "main", org: str = _DEFAULT_ORG
+) -> Path | None:
     """
     Download a repo from GitHub as a zip archive and extract it.
     Returns the extracted repo path or None on failure.
@@ -749,12 +779,12 @@ def _download_repo(repo_id: str, tmp_dir: str, branch: str = "main") -> Path | N
         # rather than anything that looks like an auth failure.
         _warn_unauthenticated_once()
 
-    url = f"https://api.github.com/repos/mini-app-polis/{repo_id}/zipball/{branch}"
+    url = f"https://api.github.com/repos/{org}/{repo_id}/zipball/{branch}"
     dest = Path(tmp_dir) / repo_id
 
     try:
         timeout = float(os.environ.get("EVALUATOR_CLONE_TIMEOUT_SECONDS", "60"))
-        content = _fetch_zipball(url, headers, timeout, repo_id)
+        content = _fetch_zipball(url, headers, timeout, f"{org}/{repo_id}")
         if content is None:
             return None
 
@@ -1243,6 +1273,7 @@ def _run_applies_to_absent_checks(
         check_mono_003,
         check_xstack_006,
         check_xstack_007,
+        check_xstack_008,
     )
 
     # EVAL-003 — finding quality (runtime data-quality on stored findings)
@@ -1311,6 +1342,28 @@ def _run_applies_to_absent_checks(
                 )
         except Exception as exc:
             prefect_log.warning("%s: check failed: %s", _rule_id, exc)
+
+    # XSTACK-008 — every registered repo resolved where the registry says.
+    #
+    # Reads this run's own download results rather than the registry
+    # alone, and adds no GitHub calls: the downloads already happened.
+    # It runs after every repo has been attempted, so the record is
+    # complete by the time it is read.
+    try:
+        xstack_008_findings = check_xstack_008(unresolved=_UNRESOLVED_DOWNLOADS)
+        if xstack_008_findings:
+            _post_tracked(
+                "XSTACK-008",
+                prefect_log,
+                findings=xstack_008_findings,
+                run_id=run_id,
+                repo="ecosystem-standards",
+                flow_name="xstack-008",
+                source="standards_drift",
+                standards_version=standards_version,
+            )
+    except Exception as exc:
+        prefect_log.warning("XSTACK-008: check failed: %s", exc)
 
     # EVAL-007 — standards/evaluator drift
     try:
@@ -1439,7 +1492,10 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                 prefect_log.info("%s: processing %s", flow_label, repo_id)
 
                 repo_path = _download_repo(
-                    repo_name, tmp_dir, _declared_branch(service)
+                    repo_name,
+                    tmp_dir,
+                    _declared_branch(service),
+                    _declared_org(service),
                 )
                 if repo_path is None:
                     prefect_log.warning(
@@ -1538,7 +1594,9 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                             )
                             continue
                         seen_repo_ids.add(rid)
-                        rp = _download_repo(rname, tmp_dir, _declared_branch(svc))
+                        rp = _download_repo(
+                            rname, tmp_dir, _declared_branch(svc), _declared_org(svc)
+                        )
                         if rp is None:
                             continue
                         try:
@@ -1595,7 +1653,10 @@ def conformance_check_flow(run_llm: bool = False) -> None:
                 repo_name = mono_record.get("repo") or mono_id
                 prefect_log.info("%s: cloning monorepo %s", flow_label, repo_name)
                 monorepo_root = _download_repo(
-                    repo_name, tmp_dir, _declared_branch(mono_record)
+                    repo_name,
+                    tmp_dir,
+                    _declared_branch(mono_record),
+                    _declared_org(mono_record),
                 )
                 if monorepo_root is None:
                     prefect_log.warning(

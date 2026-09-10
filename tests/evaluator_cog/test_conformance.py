@@ -13,6 +13,7 @@ from evaluator_cog.engine.deterministic import CheckResult
 from evaluator_cog.engine.evaluator_config import EvaluatorConfig
 from evaluator_cog.flows.conformance import (
     _declared_branch,
+    _declared_org,
     _fetch_standards_for_service,
     _run_standalone_deterministic,
     conformance_check_flow,
@@ -529,7 +530,7 @@ def test_conformance_monorepo_service_failure_does_not_abort_flow(
         ],
     }
 
-    def fake_download_repo(repo_name, tmp_dir, branch="main"):
+    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
         root = Path(tmp_dir) / repo_name
         (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
         (root / "apps" / "b").mkdir(parents=True, exist_ok=True)
@@ -592,6 +593,26 @@ def test_declared_branch_reads_the_registry() -> None:
     assert _declared_branch({"id": "deejaytools-com", "branch": "dev"}) == "dev"
 
 
+def test_declared_org_defaults_to_the_fleet_org() -> None:
+    """Almost every repo omits the field and resolves under mini-app-polis."""
+    assert _declared_org(None) == "mini-app-polis"
+    assert _declared_org({"id": "watcher-cog"}) == "mini-app-polis"
+    assert _declared_org({"id": "x", "org": ""}) == "mini-app-polis"
+    assert _declared_org({"id": "x", "org": "  "}) == "mini-app-polis"
+
+
+def test_declared_org_reads_the_registry() -> None:
+    """website-astro-wcs lives in a personal org, not the fleet org.
+
+    With the org hardcoded, its download 404'd on every run: registered,
+    carrying an evaluator.yaml, and never once evaluated.
+    """
+    assert (
+        _declared_org({"id": "website-astro-wcs", "org": "kaianolevine"})
+        == "kaianolevine"
+    )
+
+
 def _posted_findings(post_calls: list) -> list[dict]:
     """Flatten every finding handed to post_findings across all calls."""
     out: list[dict] = []
@@ -630,7 +651,7 @@ def test_undownloadable_repo_is_reported_not_silently_skipped(monkeypatch) -> No
         ]
     }
 
-    def fake_download_repo(repo_name, tmp_dir, branch="main"):
+    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
         if repo_name == "gone":
             return None
         root = Path(tmp_dir) / repo_name
@@ -695,7 +716,7 @@ def test_failed_checks_are_reported_not_silently_skipped(monkeypatch) -> None:
         ]
     }
 
-    def fake_download_repo(repo_name, tmp_dir, branch="main"):
+    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
         root = Path(tmp_dir) / repo_name
         root.mkdir(parents=True, exist_ok=True)
         return root
