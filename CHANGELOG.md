@@ -1,3 +1,11 @@
+## [3.25.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.1...v3.25.2) (2026-09-10)
+
+
+### Bug Fixes
+
+* **cfg-001:** count [@property](https://github.com/property) and [@computed](https://github.com/computed)_field as declared Settings fields ([3320087](https://github.com/mini-app-polis/evaluator-cog/commit/3320087d7eb9ed141115f27a42c5fcefa4dcb2b8))
+* test setup ([bf755b6](https://github.com/mini-app-polis/evaluator-cog/commit/bf755b6543068995b6ebcd74fead9f886b246fa0))
+
 ## [3.25.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.0...v3.25.1) (2026-09-10)
 
 
