@@ -150,8 +150,11 @@ from evaluator_cog.engine.deterministic.testing import (
 )
 from evaluator_cog.engine.deterministic.versioning import (
     check_breaking_change_footer,
+    check_canonical_ci_job_names,
     check_conventional_commits,
     check_no_manual_changelog,
+    check_release_commit_message,
+    check_release_gated_on_security,
     check_releaserc,
     check_releaserc_assets,
 )
@@ -478,6 +481,9 @@ def run_all_checks(
     _run(check_structured_logging, "CD-009")
     _run(check_no_hardcoded_secrets, "CD-011")
     _run(check_no_manual_changelog, "VER-004")
+    _run(check_release_commit_message, "VER-009")
+    _run(check_release_gated_on_security, "CD-025")
+    _run(check_canonical_ci_job_names, "CD-026")
 
     _mark_checked("XSTACK-001")
     if (evaluator_config is None and "XSTACK-001" not in _exceptions) or (

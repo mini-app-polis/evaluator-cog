@@ -1,5 +1,6 @@
 """Smoke tests for the deterministic conformance engine."""
 
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -11,6 +12,7 @@ from evaluator_cog.engine.deterministic import (
     _deduplicate_same_repo_findings,
     _type_to_dod,
     check_astro_framework,
+    check_canonical_ci_job_names,
     check_changelog,
     check_ci,
     check_common_python_utils_dep,
@@ -39,6 +41,8 @@ from evaluator_cog.engine.deterministic import (
     check_react_hook_form_zod,
     check_readme,
     check_readme_running_locally,
+    check_release_commit_message,
+    check_release_gated_on_security,
     check_releaserc,
     check_releaserc_assets,
     check_respx_for_http_mocking,
@@ -2349,3 +2353,118 @@ def test_sec_007_is_silent_when_there_is_nothing_to_update(tmp_path) -> None:
     from evaluator_cog.engine.deterministic.security import check_sec_007
 
     assert check_sec_007(_sec007_repo(tmp_path, files={"README.md": "# x"})) == []
+
+
+# ------------------------------------------------- CD-025 / CD-026 / VER-009
+
+
+def _repo_with_ci(tmp_path: Path, ci_yaml: str) -> Path:
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True, exist_ok=True)
+    (wf / "ci.yml").write_text(ci_yaml)
+    return tmp_path
+
+
+_GATED = """
+on:
+  push:
+    branches: [main]
+jobs:
+  security:
+    uses: org/.github/.github/workflows/security.yml@v2
+  test:
+    runs-on: ubuntu-latest
+  release:
+    needs: [test, security]
+    runs-on: ubuntu-latest
+"""
+
+_UNGATED = _GATED.replace("needs: [test, security]", "needs: test")
+
+
+def test_cd_025_passes_when_release_needs_security(tmp_path) -> None:
+    assert check_release_gated_on_security(_repo_with_ci(tmp_path, _GATED)) == []
+
+
+def test_cd_025_flags_a_release_that_ignores_the_security_job(tmp_path) -> None:
+    """website-astro-software shipped like this: security ran, gated nothing."""
+    findings = check_release_gated_on_security(_repo_with_ci(tmp_path, _UNGATED))
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "CD-025"
+    assert findings[0]["severity"] == "ERROR"
+
+
+def test_cd_025_silent_without_both_jobs(tmp_path) -> None:
+    """No security job means nothing to gate on — CD-025 has no opinion."""
+    only_test = "on:\n  push:\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+    assert check_release_gated_on_security(_repo_with_ci(tmp_path, only_test)) == []
+
+
+def test_cd_025_silent_without_a_ci_file(tmp_path) -> None:
+    assert check_release_gated_on_security(tmp_path) == []
+
+
+def test_cd_026_accepts_the_canonical_job_set(tmp_path) -> None:
+    assert check_canonical_ci_job_names(_repo_with_ci(tmp_path, _GATED)) == []
+
+
+def test_cd_026_flags_a_non_canonical_work_job(tmp_path) -> None:
+    findings = check_canonical_ci_job_names(
+        _repo_with_ci(tmp_path, _GATED.replace("  test:", "  build:"))
+    )
+    assert len(findings) == 1
+    assert "build" in findings[0]["finding"]
+    assert findings[0]["dimension"] == "structural_conformance"
+
+
+def test_cd_026_skips_reusable_workflows(tmp_path) -> None:
+    """A workflow_call file names its jobs for its callers, not for us."""
+    reusable = (
+        "on:\n  workflow_call:\njobs:\n  security-python:\n    runs-on: ubuntu-latest\n"
+    )
+    assert check_canonical_ci_job_names(_repo_with_ci(tmp_path, reusable)) == []
+
+
+def _repo_with_releaserc(tmp_path: Path, message: str | None) -> Path:
+    plugins: list = ["@semantic-release/commit-analyzer"]
+    if message is not None:
+        plugins.append(["@semantic-release/git", {"message": message}])
+    (tmp_path / ".releaserc.json").write_text(
+        json.dumps({"branches": ["main"], "plugins": plugins})
+    )
+    return tmp_path
+
+
+def test_ver_009_accepts_the_canonical_message(tmp_path) -> None:
+    msg = "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+    assert check_release_commit_message(_repo_with_releaserc(tmp_path, msg)) == []
+
+
+def test_ver_009_flags_missing_skip_ci(tmp_path) -> None:
+    msg = "chore(release): ${nextRelease.version}\n\n${nextRelease.notes}"
+    findings = check_release_commit_message(_repo_with_releaserc(tmp_path, msg))
+    assert len(findings) == 1
+    assert "[skip ci]" in findings[0]["finding"]
+
+
+def test_ver_009_flags_missing_notes(tmp_path) -> None:
+    msg = "chore(release): ${nextRelease.version} [skip ci]"
+    findings = check_release_commit_message(_repo_with_releaserc(tmp_path, msg))
+    assert len(findings) == 1
+    assert "nextRelease.notes" in findings[0]["finding"]
+
+
+def test_ver_009_flags_both_when_both_are_missing(tmp_path) -> None:
+    findings = check_release_commit_message(
+        _repo_with_releaserc(tmp_path, "chore(release): ${nextRelease.version}")
+    )
+    assert len(findings) == 2
+
+
+def test_ver_009_silent_without_the_git_plugin(tmp_path) -> None:
+    """No commit back means no release commit to annotate."""
+    assert check_release_commit_message(_repo_with_releaserc(tmp_path, None)) == []
+
+
+def test_ver_009_leaves_the_absent_config_to_ver_003(tmp_path) -> None:
+    assert check_release_commit_message(tmp_path) == []

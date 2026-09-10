@@ -54,6 +54,7 @@ from evaluator_cog.engine.deterministic.containers import (
 from evaluator_cog.engine.deterministic.crossrepo import (
     check_xstack_006,
     check_xstack_007,
+    check_xstack_008,
 )
 from evaluator_cog.engine.deterministic.delivery import (
     check_ci,
@@ -166,8 +167,11 @@ from evaluator_cog.engine.deterministic.testing import (
 )
 from evaluator_cog.engine.deterministic.versioning import (
     check_breaking_change_footer,
+    check_canonical_ci_job_names,
     check_conventional_commits,
     check_no_manual_changelog,
+    check_release_commit_message,
+    check_release_gated_on_security,
     check_releaserc,
     check_releaserc_assets,
 )
@@ -192,6 +196,7 @@ __all__ = [
     "check_sec_006",
     "check_sec_007",
     "check_xstack_006",
+    "check_xstack_008",
     "check_xstack_007",
     "CheckResult",
     "Finding",
@@ -249,7 +254,10 @@ __all__ = [
     "check_naming_conventions",
     "check_no_hardcoded_secrets",
     "check_no_hardcoded_urls",
+    "check_canonical_ci_job_names",
     "check_no_manual_changelog",
+    "check_release_commit_message",
+    "check_release_gated_on_security",
     "check_no_print_statements",
     "check_no_retired_trigger_patterns",
     "check_no_setup_py",

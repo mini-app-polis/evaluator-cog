@@ -12,6 +12,101 @@ from evaluator_cog.engine.deterministic._shared import (
     _finding,
 )
 
+_CANONICAL_CI_JOBS = frozenset({"security", "test", "release"})
+
+
+def _ci_workflow(repo_path: Path) -> dict | None:
+    """Parse ``.github/workflows/ci.yml``, or None when it is unusable.
+
+    A file that will not parse is not a finding here. Something is wrong
+    with it, but saying *what* is another rule's job, and a parse error
+    reported as a job-naming violation sends the reader to the wrong
+    place entirely.
+    """
+    import yaml
+
+    ci = repo_path / ".github" / "workflows" / "ci.yml"
+    if not ci.exists():
+        return None
+    try:
+        loaded = yaml.safe_load(ci.read_text())
+    except Exception:
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _declares_workflow_call(workflow: dict) -> bool:
+    """True for a reusable workflow, which names its jobs for its own reasons."""
+    # PyYAML resolves a bare `on:` key to the boolean True, so check both.
+    triggers = workflow.get("on", workflow.get(True))
+    if isinstance(triggers, dict):
+        return "workflow_call" in triggers
+    if isinstance(triggers, list):
+        return "workflow_call" in triggers
+    return triggers == "workflow_call"
+
+
+def check_release_gated_on_security(repo_path: Path) -> list[Finding]:
+    """CD-025: the release job must list the security job in needs."""
+    CHECK_ID = "CD-025"
+    findings: list[Finding] = []
+    workflow = _ci_workflow(repo_path)
+    if workflow is None:
+        return findings
+    jobs = workflow.get("jobs")
+    if not isinstance(jobs, dict):
+        return findings
+    if "security" not in jobs or "release" not in jobs:
+        return findings
+
+    release = jobs.get("release")
+    needs = release.get("needs") if isinstance(release, dict) else None
+    if isinstance(needs, str):
+        needs = [needs]
+    elif not isinstance(needs, list):
+        needs = []
+
+    if "security" not in needs:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                "cd_readiness",
+                f"ci.yml has a security job, but the release job does not depend "
+                f"on it (needs: {needs or 'absent'}). The scan runs and reports "
+                f"while the release proceeds regardless of its result.",
+                "Add `security` to the release job's needs: `needs: [test, security]`.",
+            )
+        )
+    return findings
+
+
+def check_canonical_ci_job_names(repo_path: Path) -> list[Finding]:
+    """CD-026: ci.yml jobs are named security, test and release."""
+    CHECK_ID = "CD-026"
+    findings: list[Finding] = []
+    workflow = _ci_workflow(repo_path)
+    if workflow is None or _declares_workflow_call(workflow):
+        return findings
+    jobs = workflow.get("jobs")
+    if not isinstance(jobs, dict):
+        return findings
+
+    for name in jobs:
+        if name not in _CANONICAL_CI_JOBS:
+            findings.append(
+                _finding(
+                    CHECK_ID,
+                    "WARN",
+                    "structural_conformance",
+                    f"ci.yml job `{name}` is outside the canonical set "
+                    f"(security, test, release).",
+                    f"Rename `{name}` to `test` if it is the work job, and "
+                    f"update any `needs:` that reference it.",
+                )
+            )
+    return findings
+
 
 def check_pytest_coverage_in_ci(repo_path: Path) -> list[Finding]:
     """TEST-006: pytest coverage measured in CI."""

@@ -1,4 +1,4 @@
-"""Tests for the cross-repo coherence checks (XSTACK-006, XSTACK-007).
+"""Tests for the cross-repo coherence checks (XSTACK-006, XSTACK-007, XSTACK-008).
 
 Both checks read GitHub. Every test here mocks the transport with respx
 — no test may make a real HTTP call, both because the suite must be
@@ -18,6 +18,7 @@ import respx
 from evaluator_cog.engine.deterministic.crossrepo import (
     check_xstack_006,
     check_xstack_007,
+    check_xstack_008,
 )
 
 _ORG = "mini-app-polis"
@@ -374,3 +375,54 @@ def test_xstack_007_manifest_failure_yields_checker_not_violations() -> None:
     findings = check_xstack_007(ecosystem=ecosystem, github_token="t")
 
     assert [f["rule_id"] for f in findings] == ["CHECKER"]
+
+
+# ---------------------------------------------------------------- XSTACK-008
+#
+# This check makes no HTTP calls at all — it reads the run's own download
+# record — so unlike its neighbours above it needs no respx mocking.
+
+
+def test_xstack_008_clean_run_reports_nothing() -> None:
+    """Nothing 404'd, so there is nothing to say."""
+    assert check_xstack_008(unresolved=[]) == []
+    assert check_xstack_008(unresolved=None) == []
+    assert check_xstack_008() == []
+
+
+def test_xstack_008_reports_the_org_repo_and_branch_attempted() -> None:
+    """The finding must say where it looked, not just that it failed."""
+    findings = check_xstack_008(
+        unresolved=[
+            {
+                "label": "mini-app-polis/website-astro-wcs",
+                "url": "https://api.github.com/repos/mini-app-polis/website-astro-wcs/zipball/main",
+            }
+        ]
+    )
+    assert len(findings) == 1
+    f = findings[0]
+    assert f["rule_id"] == "XSTACK-008"
+    assert f["severity"] == "ERROR"
+    assert f["dimension"] == "cross_repo_coherence"
+    assert "mini-app-polis/website-astro-wcs" in f["finding"]
+    assert "main" in f["finding"]
+    assert "ecosystem.yaml" in f["suggestion"]
+
+
+def test_xstack_008_one_finding_per_unresolved_entry() -> None:
+    findings = check_xstack_008(
+        unresolved=[
+            {"label": "o/a", "url": "https://api.github.com/repos/o/a/zipball/main"},
+            {"label": "o/b", "url": "https://api.github.com/repos/o/b/zipball/dev"},
+        ]
+    )
+    assert len(findings) == 2
+    assert "dev" in findings[1]["finding"]
+
+
+def test_xstack_008_survives_an_unparseable_url() -> None:
+    """A malformed record still reports — degraded, never dropped."""
+    findings = check_xstack_008(unresolved=[{"label": "o/c", "url": "not-a-url"}])
+    assert len(findings) == 1
+    assert "o/c" in findings[0]["finding"]
