@@ -14,6 +14,7 @@ from evaluator_cog.engine.evaluator_config import EvaluatorConfig
 from evaluator_cog.flows.conformance import (
     _declared_branch,
     _declared_org,
+    _fetch_full_rule_catalog,
     _fetch_standards_for_service,
     _run_standalone_deterministic,
     conformance_check_flow,
@@ -198,110 +199,121 @@ def test_run_conformance_check_posts_with_conformance_llm_source(monkeypatch) ->
     assert all(p["source"] == "conformance_llm" for p in posted)
 
 
-def _fake_fetch_standards(url: str) -> dict:
-    if url.endswith("/pipeline.yaml"):
-        return {
-            "standards": [
-                {
-                    "id": "PIPELINE-RULE",
-                    "status": "requirement",
-                    "checkable": True,
-                    "applies_to": ["pipeline-cog"],
-                    "title": "Pipeline-only",
-                    "severity": "WARN",
-                    "check_notes": "Only for pipeline cogs.",
-                },
-            ]
-        }
-    if url.endswith("/python.yaml"):
-        return {
-            "standards": [
-                {
-                    "id": "LEGACY-COG-RULE",
-                    "status": "convention",
-                    "checkable": True,
-                    "applies_to": ["new_cog"],
-                    "title": "Legacy cog",
-                    "severity": "INFO",
-                    "check_notes": "Matches dod_type.",
-                },
-            ]
-        }
-    return {"standards": []}
+def _catalog(rules: list[dict], **extra) -> dict:
+    """A catalog document in the shape the API serves it.
+
+    Only the fields a test asserts on need setting. The evaluator reads one
+    of these per flow run instead of assembling one from seventeen YAML
+    files, so this is the seam every catalog-shaped test patches.
+    """
+    doc: dict = {"version": "9.9.9-test", "rule_count": len(rules), "rules": rules}
+    doc.update(extra)
+    return doc
+
+
+def _rule(rule_id: str, **overrides) -> dict:
+    """One compiled rule, with the fields the compiler always emits."""
+    rule = {
+        "id": rule_id,
+        "domain": "pipeline",
+        "title": f"{rule_id} title",
+        "status": "requirement",
+        "severity": "ERROR",
+        "checkable": True,
+        "check_mode": "deterministic",
+        "check_notes": "DETERMINISTIC CHECK. Scan something.",
+        "applies_to": ["all"],
+        "modifies": [],
+    }
+    rule.update(overrides)
+    return rule
+
+
+#: The default catalog for tests that need one but do not assert on it.
+_FAKE_CATALOG = _catalog(
+    [
+        _rule("PIPELINE-RULE", applies_to=["pipeline-cog"]),
+        _rule("LEGACY-COG-RULE", applies_to=["new_cog"]),
+        _rule("EVERYWHERE-RULE", applies_to=["all"]),
+    ]
+)
+
+
+def _patch_catalog(catalog: dict):
+    """Patch the one fetch every catalog-derived helper goes through."""
+    return patch("evaluator_cog.flows.conformance._fetch_catalog", return_value=catalog)
 
 
 def test_fetch_standards_matches_new_repo_type() -> None:
-    """Rules whose applies_to includes pipeline-cog are included when repo_type matches."""
+    """A rule whose applies_to names the repo's type is in scope."""
     service = {"id": "x", "dod_type": "new_cog"}
     cfg = EvaluatorConfig(repo_type="pipeline-cog")
-    with patch(
-        "evaluator_cog.flows.conformance._fetch_yaml",
-        side_effect=_fake_fetch_standards,
-    ):
+    with _patch_catalog(_FAKE_CATALOG):
         rules = _fetch_standards_for_service(service, cfg)
-    ids = {r["id"] for r in rules}
-    assert "PIPELINE-RULE" in ids
+    assert "PIPELINE-RULE" in {r["id"] for r in rules}
 
 
 def test_fetch_standards_falls_back_to_dod_type_when_no_evaluator_cfg() -> None:
-    """When evaluator_cfg is None, applies_to matches on legacy dod_type."""
+    """With no evaluator config, applies_to matches on the legacy dod_type."""
     service = {"id": "x", "dod_type": "new_cog"}
-    with patch(
-        "evaluator_cog.flows.conformance._fetch_yaml",
-        side_effect=_fake_fetch_standards,
-    ):
+    with _patch_catalog(_FAKE_CATALOG):
         rules = _fetch_standards_for_service(service, None)
+    assert "LEGACY-COG-RULE" in {r["id"] for r in rules}
+
+
+def test_fetch_standards_includes_all_scoped_rules_regardless_of_type() -> None:
+    """`[all]` is the catalog's default posture and matches every repo."""
+    cfg = EvaluatorConfig(repo_type="static-site")
+    with _patch_catalog(_FAKE_CATALOG):
+        rules = _fetch_standards_for_service({"id": "x"}, cfg)
     ids = {r["id"] for r in rules}
-    assert "LEGACY-COG-RULE" in ids
+    assert "EVERYWHERE-RULE" in ids
+    assert "PIPELINE-RULE" not in ids
+
+
+def test_unchecked_rules_are_filtered_from_every_catalog_view() -> None:
+    """`checkable: false` rules ship in the catalog but are never evaluated.
+
+    They are carried so they stay readable and joinable to the findings of
+    versions that did check them. The evaluator has no check to run and
+    emits nothing for them — see the `gap` status in index.yaml.
+    """
+    catalog = _catalog(
+        [
+            _rule("LIVE-001"),
+            _rule("RETIRED-001", checkable=False, check_mode=None, check_notes=""),
+        ]
+    )
+    with _patch_catalog(catalog):
+        scoped = _fetch_standards_for_service({"id": "x"}, None)
+        full = _fetch_full_rule_catalog()
+
+    assert {r["id"] for r in scoped} == {"LIVE-001"}
+    assert set(full) == {"LIVE-001"}
 
 
 def test_fetch_standards_rejects_invalid_rule_status() -> None:
-    """v4.0.0 catalog allows only requirement / convention / gap.
-    A rule with status 'advisory' or 'idea' must be rejected."""
-
-    def _fake_fetch(url: str) -> dict:
-        if url.endswith("/principles.yaml"):
-            return {
-                "standards": [
-                    {
-                        "id": "PRIN-999",
-                        "status": "advisory",  # invalid in v4.0.0
-                        "checkable": True,
-                        "applies_to": ["all"],
-                        "title": "Legacy advisory rule",
-                        "severity": "INFO",
-                        "check_notes": "DETERMINISTIC CHECK. ...",
-                    },
-                ]
-            }
-        return {"standards": []}
-
-    service = {"id": "x", "dod_type": "new_cog"}
-    cfg = EvaluatorConfig(repo_type="pipeline-cog")
-    with (
-        patch(
-            "evaluator_cog.flows.conformance._fetch_yaml",
-            side_effect=_fake_fetch,
-        ),
-        pytest.raises(ValueError, match="invalid status"),
-    ):
-        _fetch_standards_for_service(service, cfg)
+    """Only requirement / convention / gap are valid statuses."""
+    catalog = _catalog([_rule("BAD-001", status="advisory")])
+    with _patch_catalog(catalog), pytest.raises(ValueError, match="invalid status"):
+        _fetch_standards_for_service(
+            {"id": "x"}, EvaluatorConfig(repo_type="pipeline-cog")
+        )
 
 
 def test_fetch_catalog_schema_parses_v4_shape() -> None:
-    """_fetch_catalog_schema returns traits with structured exempts/downgrades,
-    repo_types set, and statuses set from index.yaml."""
-    fake_index = {
-        "statuses": {
+    """Traits keep their structured exempts and downgrades."""
+    from evaluator_cog.flows.conformance import _fetch_catalog_schema
+
+    catalog = _catalog(
+        [_rule("X-001")],
+        statuses={
             "requirement": {"description": "must comply"},
             "convention": {"description": "should comply"},
             "gap": {"description": "tracked deficiency"},
         },
-        "schema": {
-            "repo_types": {
-                "pipeline-cog": "desc",
-                "api-service": "desc",
-            },
+        schema={
+            "repo_types": {"pipeline-cog": "desc", "api-service": "desc"},
             "traits": {
                 "logger-primitive": {
                     "description": "is the logger",
@@ -315,35 +327,27 @@ def test_fetch_catalog_schema_parses_v4_shape() -> None:
                 },
             },
         },
-    }
-    from evaluator_cog.flows.conformance import _fetch_catalog_schema
-
-    with patch(
-        "evaluator_cog.flows.conformance._fetch_yaml",
-        return_value=fake_index,
-    ):
+    )
+    with _patch_catalog(catalog):
         schema = _fetch_catalog_schema()
 
-    assert schema["statuses"] == {"requirement", "convention", "gap"}
     assert schema["repo_types"] == {"pipeline-cog", "api-service"}
-    assert "logger-primitive" in schema["traits"]
+    assert schema["statuses"] == {"requirement", "convention", "gap"}
     assert schema["traits"]["logger-primitive"]["exempts"] == ["CD-009"]
-    assert schema["traits"]["logger-primitive"]["downgrades"] == []
-    assert schema["traits"]["multi-flow"]["exempts"] == []
     assert schema["traits"]["multi-flow"]["downgrades"] == [
-        {"rule": "CD-015", "to": "INFO", "reason": "scanner limit"},
+        {"rule": "CD-015", "to": "INFO", "reason": "scanner limit"}
     ]
 
 
-def test_fetch_catalog_schema_returns_empty_on_fetch_failure() -> None:
-    """When _fetch_yaml returns {}, _fetch_catalog_schema returns a dict
-    with empty traits/repo_types/statuses rather than raising."""
+def test_fetch_catalog_schema_tolerates_a_catalog_without_schema_blocks() -> None:
+    """Missing blocks yield empty structures rather than raising.
+
+    A catalog that cannot be fetched at all is a different case and raises —
+    see test_conformance_helpers.
+    """
     from evaluator_cog.flows.conformance import _fetch_catalog_schema
 
-    with patch(
-        "evaluator_cog.flows.conformance._fetch_yaml",
-        return_value={},
-    ):
+    with _patch_catalog(_catalog([_rule("X-001")])):
         schema = _fetch_catalog_schema()
 
     assert schema["traits"] == {}
@@ -352,61 +356,31 @@ def test_fetch_catalog_schema_returns_empty_on_fetch_failure() -> None:
 
 
 def test_fetch_full_rule_catalog_captures_applies_to_and_modifies() -> None:
-    """_fetch_full_rule_catalog returns per-rule applies_to, modifies, status.
-    Rules omitting applies_to have it stored as None."""
+    """Dispatch metadata comes through, with applies_to None for non-scans."""
+    catalog = _catalog(
+        [
+            _rule(
+                "MONO-001",
+                applies_to=["api-service", "react-app"],
+                modifies=["XSTACK-001"],
+                dimension="monorepo_coherence",
+            ),
+            # Not a repo-source scan: the compiler collapses both an absent
+            # and an explicitly empty applies_to to None (ADR-004).
+            _rule("MONO-003", applies_to=None, dimension="monorepo_coherence"),
+            _rule("EVAL-005", applies_to=["all"], check_mode="llm"),
+        ]
+    )
+    with _patch_catalog(catalog):
+        full = _fetch_full_rule_catalog()
 
-    def _fake_fetch(url: str) -> dict:
-        if url.endswith("/index.yaml"):
-            return {
-                "files": [
-                    {"file": "standards/monorepo.yaml", "domain": "monorepo"},
-                    {"file": "standards/evaluation.yaml", "domain": "evaluation"},
-                ],
-            }
-        if url.endswith("/monorepo.yaml"):
-            return {
-                "standards": [
-                    {
-                        "id": "MONO-001",
-                        "checkable": True,
-                        "applies_to": ["api-service", "react-app"],
-                        "modifies": ["XSTACK-001"],
-                        "status": "requirement",
-                    },
-                    {
-                        "id": "MONO-003",
-                        "checkable": True,
-                        "status": "requirement",
-                        # no applies_to
-                    },
-                ]
-            }
-        if url.endswith("/evaluation.yaml"):
-            return {
-                "standards": [
-                    {
-                        "id": "EVAL-003",
-                        "checkable": True,
-                        "status": "requirement",
-                        # no applies_to
-                    },
-                ]
-            }
-        return {"standards": []}
-
-    from evaluator_cog.flows.conformance import _fetch_full_rule_catalog
-
-    with patch(
-        "evaluator_cog.flows.conformance._fetch_yaml",
-        side_effect=_fake_fetch,
-    ):
-        catalog = _fetch_full_rule_catalog()
-
-    assert catalog["MONO-001"]["applies_to"] == ["api-service", "react-app"]
-    assert catalog["MONO-001"]["modifies"] == ["XSTACK-001"]
-    assert catalog["MONO-003"]["applies_to"] is None
-    assert catalog["MONO-003"]["modifies"] == []
-    assert catalog["EVAL-003"]["applies_to"] is None
+    assert full["MONO-001"]["applies_to"] == ["api-service", "react-app"]
+    assert full["MONO-001"]["modifies"] == ["XSTACK-001"]
+    assert full["MONO-001"]["dimension"] == "monorepo_coherence"
+    assert full["MONO-003"]["applies_to"] is None
+    # check_mode arrives resolved rather than parsed out of check_notes.
+    assert full["EVAL-005"]["check_mode"] == "llm"
+    assert full["MONO-001"]["check_mode"] == "deterministic"
 
 
 def test_run_standalone_deterministic_calls_load_evaluator_config(
@@ -561,6 +535,7 @@ def test_conformance_monorepo_service_failure_does_not_abort_flow(
     with (
         patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
         patch.object(conf, "_fetch_yaml", return_value=ecosystem),
+        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
         patch.object(conf, "_download_repo", side_effect=fake_download_repo),
         patch.object(conf, "_parse_check_exceptions", side_effect=tracking_parse),
         patch.object(conf, "run_all_checks", side_effect=fake_run_all_checks),
@@ -674,6 +649,7 @@ def test_undownloadable_repo_is_reported_not_silently_skipped(monkeypatch) -> No
     with (
         patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
         patch.object(conf, "_fetch_yaml", return_value=ecosystem),
+        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
         patch.object(conf, "_download_repo", side_effect=fake_download_repo),
         patch.object(conf, "run_all_checks", side_effect=fake_run_all_checks),
         patch.object(conf, "post_findings", side_effect=tracking_post),
@@ -734,6 +710,7 @@ def test_failed_checks_are_reported_not_silently_skipped(monkeypatch) -> None:
     with (
         patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
         patch.object(conf, "_fetch_yaml", return_value=ecosystem),
+        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
         patch.object(conf, "_download_repo", side_effect=fake_download_repo),
         patch.object(conf, "run_all_checks", side_effect=boom),
         patch.object(conf, "post_findings", side_effect=tracking_post),

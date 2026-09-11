@@ -78,3 +78,19 @@ def _production_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.delenv("PREFECT_TRIGGER_ENABLED", raising=False)
     monkeypatch.delenv("HEALTHCHECKS_ENABLED", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def reset_catalog_cache():
+    """Clear the per-run catalog between tests.
+
+    ``conformance._CATALOG`` is module state deliberately — one fetch per
+    flow run, reused by every caller. Without clearing it here the first
+    test to populate it would silently supply the catalog for every test
+    after, and a test asserting on a fetch that never happened would pass.
+    """
+    from evaluator_cog.flows import conformance
+
+    conformance._CATALOG = None
+    yield
+    conformance._CATALOG = None

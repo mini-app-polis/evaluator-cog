@@ -24,6 +24,20 @@ from evaluator_cog.flows.conformance import (
     _read_workspace_package_json,
 )
 
+#: Where the evaluator reads the catalog. Always production — see the
+#: constant's own note in conformance.py.
+_CATALOG_URL = "https://api.kaianolevine.com/v1/standards/catalog"
+
+
+def _catalog_response(catalog: dict) -> httpx.Response:
+    """A catalog envelope, non-empty unless a test says otherwise."""
+    body: dict = {
+        "rules": [{"id": "PY-001", "checkable": True, "check_mode": "deterministic"}]
+    }
+    body.update(catalog)
+    return httpx.Response(200, json={"data": body, "meta": {}})
+
+
 # ---------------------------------------------------------------------------
 # _on_completion — Healthchecks.io ping
 # ---------------------------------------------------------------------------
@@ -106,34 +120,45 @@ def test_fetch_yaml_returns_empty_on_network_error() -> None:
 
 @respx.mock
 def test_get_standards_version_returns_version_string() -> None:
-    """Valid package.json with version field returns the version string."""
-    respx.get(
-        "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json"
-    ).mock(return_value=httpx.Response(200, text='{"version": "3.0.1"}'))
+    """The version comes from the catalog itself, not a separate fetch."""
+    respx.get(_CATALOG_URL).mock(return_value=_catalog_response({"version": "3.0.1"}))
 
-    version = _get_standards_version()
-    assert version == "3.0.1"
+    assert _get_standards_version() == "3.0.1"
 
 
 @respx.mock
 def test_get_standards_version_raises_when_version_absent() -> None:
-    """package.json missing version field raises RuntimeError."""
-    respx.get(
-        "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json"
-    ).mock(return_value=httpx.Response(200, text='{"name": "ecosystem-standards"}'))
+    """A catalog with no version cannot pin a finding to anything."""
+    respx.get(_CATALOG_URL).mock(return_value=_catalog_response({}))
 
-    with pytest.raises(RuntimeError, match="package.json fetch failed"):
+    with pytest.raises(RuntimeError, match="carries no version"):
         _get_standards_version()
 
 
 @respx.mock
 def test_get_standards_version_raises_on_http_failure() -> None:
-    """HTTP failure raises RuntimeError."""
-    respx.get(
-        "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json"
-    ).mock(return_value=httpx.Response(503))
+    """Every transport failure surfaces as one error naming the address."""
+    respx.get(_CATALOG_URL).mock(return_value=httpx.Response(503))
 
-    with pytest.raises(RuntimeError, match="package.json fetch failed"):
+    with pytest.raises(RuntimeError, match="Cannot read the standards catalog"):
+        _get_standards_version()
+
+
+@respx.mock
+def test_empty_catalog_raises_rather_than_evaluating_nothing() -> None:
+    """Zero rules is indistinguishable from a clean fleet. It must fail.
+
+    The functions this replaced returned partial data on a fetch error so a
+    run could limp on. With one source that trade is wrong: no rules means
+    no findings means a green run that graded nothing.
+    """
+    respx.get(_CATALOG_URL).mock(
+        return_value=httpx.Response(
+            200, json={"data": {"version": "9.0.0", "rules": []}}
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="returned no rules"):
         _get_standards_version()
 
 

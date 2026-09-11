@@ -313,12 +313,12 @@ def check_eval_007(
     are correctly handled on the LLM path and do not require a
     deterministic CHECK_ID constant.
 
-    Routing is read from the catalog entry's ``check_mode``, which
-    ``_fetch_full_rule_catalog`` derives from the
-    ``DETERMINISTIC CHECK.`` / ``LLM CHECK.`` marker on each rule's
-    ``check_notes``. The marker is the only routing information the
-    catalog carries — ``check_mode`` is not a field in the standards
-    YAML and never travels from it; it is computed at fetch time.
+    Routing is read from the catalog entry's ``check_mode``. It is a
+    field on the published catalog now: ecosystem-standards' compiler
+    resolves it from the ``DETERMINISTIC CHECK.`` / ``LLM CHECK.``
+    marker at build time, and CI rejects a checkable rule whose
+    ``check_notes`` carries neither. It is still absent from the
+    standards YAML itself, which is the source the compiler reads.
 
     An entry that carries neither ``check_mode`` nor ``check_notes``
     is treated as deterministic, which preserves behaviour for tests
