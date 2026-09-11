@@ -1,3 +1,11 @@
+## [3.27.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.27.0...v3.27.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **cd-019:** scope the compare_digest clause to the Bearer path ([0228942](https://github.com/mini-app-polis/evaluator-cog/commit/0228942a2de5ce03a3e918e03a121b2bf40744af))
+* two checker bugs surfaced by the first live catalog run ([d9bd797](https://github.com/mini-app-polis/evaluator-cog/commit/d9bd7970842fec6d7ced2efb2af411483f514589))
+
 # [3.27.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.26.0...v3.27.0) (2026-09-11)
 
 
