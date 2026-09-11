@@ -1,3 +1,10 @@
+## [3.25.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.2...v3.25.3) (2026-09-11)
+
+
+### Bug Fixes
+
+* stop serving prefect deployments outside production ([d97adf3](https://github.com/mini-app-polis/evaluator-cog/commit/d97adf33d81df8d16a577bed367a24104659a606))
+
 ## [3.25.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.1...v3.25.2) (2026-09-10)
 
 
