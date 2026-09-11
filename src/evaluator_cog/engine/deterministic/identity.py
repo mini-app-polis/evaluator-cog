@@ -2390,6 +2390,85 @@ def _imports_shared_ts_auth(repo_path: Path) -> bool:
     return False
 
 
+#: Names that place a comparison on the Bearer path. CD-019 defines a
+#: credential as exactly two things — a Clerk session JWT or a named
+#: machine key — and both arrive in the ``Authorization`` header.
+#:
+#: ``token``, ``jwt`` and ``credential`` are here because a local
+#: verifier rarely spells out the header: ``verify_token(token, key)``
+#: sitting beside an RS256 decode is the archetypal reimplementation this
+#: clause exists to catch, and it names neither "authorization" nor
+#: "bearer".
+_BEARER_MARKERS = (
+    "authorization",
+    "bearer",
+    "api_key",
+    "apikey",
+    "machine_key",
+    "token",
+    "jwt",
+    "credential",
+)
+
+#: A value computed by HMAC-ing a payload is a signature over that payload,
+#: not a credential a caller presented.
+_SIGNATURE_MARKERS = ("hmac.new(", "digestmod", "hexdigest(")
+
+
+def _enclosing_functions(tree: ast.AST) -> dict[ast.Call, ast.AST]:
+    """Map each call to the innermost function containing it.
+
+    ``ast.walk`` is breadth-first, so an outer function is visited before
+    an inner one and the inner assignment wins — which is the answer we
+    want when a comparison sits in a nested helper.
+    """
+    owners: dict[ast.Call, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call):
+                    owners[child] = node
+    return owners
+
+
+def _compares_a_bearer_credential(node: ast.Call, enclosing: ast.AST | None) -> bool:
+    """Whether a ``compare_digest`` call is comparing a Bearer credential.
+
+    This clause used to fire on the function name alone, which made it the
+    only one of the three in this check with no notion of what it was
+    looking at — a JWKS fetch has to look like an HTTP call to a JWKS URL,
+    and a decode has to name an asymmetric algorithm. Matching every
+    ``compare_digest`` reported two comparisons that CD-019 does not
+    govern: a Prefect webhook shared secret arriving in ``X-Prefect-Token``
+    and a GitHub signature over the raw request body. Neither is a Clerk
+    session JWT or a named machine key, which is what CD-019's own
+    description says a credential is, and the check's suggestion — call
+    ``identity.clerk`` or ``identity.apikey`` instead — has no meaning for
+    either.
+
+    Two signals, read from the call and the function around it:
+
+      - A comparison whose scope computes an HMAC is verifying a signature
+        over a payload. A signature is not a credential presented by a
+        caller, whatever it is compared with.
+      - Otherwise it is in scope only where the Bearer path is visible —
+        an ``Authorization`` header, or a machine-key or Clerk lookup.
+
+    Defaulting to "not in scope" is deliberate. The first half of check (5)
+    already fails any service that imports no verification helper from
+    ``identity`` at all, so a service reimplementing the real thing is
+    caught there; this clause exists to catch a stray primitive alongside
+    a library that is otherwise used, and a false ERROR on a webhook route
+    costs more than a missed one here.
+    """
+    haystack = _unparse(node).lower()
+    if enclosing is not None:
+        haystack = f"{haystack}\n{_unparse(enclosing).lower()}"
+    if any(marker in haystack for marker in _SIGNATURE_MARKERS):
+        return False
+    return any(marker in haystack for marker in _BEARER_MARKERS)
+
+
 def _cd019_clause5(
     check_id: str, files: list[_PyFile], repo_path: Path | None = None
 ) -> list[Finding]:
@@ -2442,6 +2521,7 @@ def _cd019_clause5(
     for f in files:
         if _in_identity_library(f):
             continue
+        owners = _enclosing_functions(f.tree)
         for node in ast.walk(f.tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -2460,7 +2540,9 @@ def _cd019_clause5(
                         algorithms = _unparse(kw.value)
                 if re.search(r"RS\d{3}|ES\d{3}|PS\d{3}", algorithms + text):
                     problem = "performs an asymmetric (RS256-family) token decode"
-            elif name == "compare_digest":
+            elif name == "compare_digest" and _compares_a_bearer_credential(
+                node, owners.get(node)
+            ):
                 problem = "implements its own constant-time credential comparison"
             if not problem:
                 continue

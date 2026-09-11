@@ -1627,3 +1627,91 @@ def test_cd019_clause5_still_flags_local_typescript_verification(
     assert len(clause5) == 1
     assert "common-typescript-utils" in clause5[0]["finding"]
     assert "identity.chain" not in clause5[0]["finding"]
+
+
+# ---------------------------------------------------------------------------
+# CD-019 (5) — compare_digest is scoped to the Bearer path
+# ---------------------------------------------------------------------------
+#
+# The clause used to fire on the function name alone, which made it the only
+# one of the three in check (5) with no notion of what it was looking at. It
+# reported two comparisons CD-019 does not govern — a Prefect webhook secret
+# and a GitHub body signature — and prescribed a fix (call identity.clerk or
+# identity.apikey) that has no meaning for either.
+
+
+def _api_repo(tmp_path: Path, rel: str, body: str) -> Path:
+    """An API service that does use the shared library, plus one module."""
+    _write(
+        tmp_path,
+        "src/pkg/auth.py",
+        "from identity.chain import ChainVerifier\n"
+        "from identity.clerk import ClerkVerifier\n"
+        "from identity.apikey import ApiKeyVerifier\n"
+        "\n"
+        "\n"
+        "def verifier():\n"
+        "    return ChainVerifier(ApiKeyVerifier([]), ClerkVerifier([]))\n",
+    )
+    _write(tmp_path, rel, body)
+    return tmp_path
+
+
+def test_cd019_5_ignores_a_webhook_shared_secret(tmp_path: Path) -> None:
+    """X-Prefect-Token is not a Clerk session or a named machine key."""
+    repo = _api_repo(
+        tmp_path,
+        "src/pkg/routers/webhook.py",
+        "import hmac\n"
+        "\n"
+        "\n"
+        "def verify_secret(*, expected: str, provided: str | None) -> bool:\n"
+        '    """Constant-time comparison of the shared secret."""\n'
+        "    if not provided:\n"
+        "        return False\n"
+        "    return hmac.compare_digest(expected, provided)\n",
+    )
+    assert _clause(check_cd_019(repo, repo_type="api-service"), "CD-019", 5) == []
+
+
+def test_cd019_5_ignores_a_body_signature(tmp_path: Path) -> None:
+    """A digest over the payload is a signature, not a presented credential."""
+    repo = _api_repo(
+        tmp_path,
+        "src/pkg/routers/notifications.py",
+        "import hashlib\n"
+        "import hmac\n"
+        "\n"
+        "\n"
+        "def _verify(secret: str, raw_body: bytes, signature: str | None) -> bool:\n"
+        "    if not signature:\n"
+        "        return False\n"
+        "    expected = 'sha256=' + hmac.new(\n"
+        "        secret.encode('utf-8'), raw_body, hashlib.sha256\n"
+        "    ).hexdigest()\n"
+        "    return hmac.compare_digest(expected, signature)\n",
+    )
+    assert _clause(check_cd_019(repo, repo_type="api-service"), "CD-019", 5) == []
+
+
+def test_cd019_5_still_flags_a_local_bearer_comparison(tmp_path: Path) -> None:
+    """The clause keeps its subject: a machine key compared in-repo."""
+    repo = _api_repo(
+        tmp_path,
+        "src/pkg/routers/local_auth.py",
+        "import hmac\n"
+        "import os\n"
+        "\n"
+        "\n"
+        "def resolve(authorization: str | None) -> str | None:\n"
+        "    if not authorization:\n"
+        "        return None\n"
+        "    presented = authorization.removeprefix('Bearer ')\n"
+        "    for name in ('DEEJAY_COG_API_KEY', 'EVALUATOR_COG_API_KEY'):\n"
+        "        if hmac.compare_digest(os.environ.get(name, ''), presented):\n"
+        "            return name\n"
+        "    return None\n",
+    )
+    findings = _clause(check_cd_019(repo, repo_type="api-service"), "CD-019", 5)
+    assert len(findings) == 1
+    assert "constant-time credential comparison" in findings[0]["finding"]
