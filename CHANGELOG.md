@@ -1,3 +1,10 @@
+# [3.26.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.3...v3.26.0) (2026-09-11)
+
+
+### Features
+
+* verb status and duration added ([596769c](https://github.com/mini-app-polis/evaluator-cog/commit/596769cb0a3373eccf79f2b57305bd7db897aec4))
+
 ## [3.25.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.2...v3.25.3) (2026-09-11)
 
 
