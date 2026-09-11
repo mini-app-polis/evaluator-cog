@@ -363,7 +363,11 @@ def test_reset_starts_a_fresh_coverage_report() -> None:
     conf._reset_run_tally()
     assert conf._RUN_REPORT is not None
     assert conf._RUN_REPORT.severity == "SUCCESS"
-    assert conf._RUN_REPORT.text() == "Run complete — nothing to do."
+    # The headline now carries how long the run took, so this asserts the
+    # shape rather than the exact string — the duration is real elapsed
+    # time and cannot be pinned here.
+    assert conf._RUN_REPORT.text().endswith("— nothing to do.")
+    assert conf._RUN_REPORT.text().startswith("Run complete in ")
     conf._RUN_REPORT = None
 
 
