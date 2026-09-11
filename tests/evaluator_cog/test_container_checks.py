@@ -525,3 +525,37 @@ def test_cd024_remediation_strings_are_concrete(tmp_path: Path) -> None:
     findings = check_cd_024(tmp_path) + check_cd_024(tmp_path)
     for f in findings:
         assert len(f["suggestion"]) >= 40
+
+
+# ---------------------------------------------------------------------------
+# _rel — display paths must be stable across runs
+# ---------------------------------------------------------------------------
+
+
+def test_rel_never_renders_the_runs_temp_directory(tmp_path: Path) -> None:
+    """A descriptor outside repo_path must not surface an absolute path.
+
+    The monorepo case: the descriptor sits at the monorepo root while the
+    service is evaluated at apps/<name>, so relative_to raises. Returning
+    the absolute path put the run's temp download directory into the
+    finding text — a different string every run, which means the finding
+    can never be recognised as a repeat of itself.
+    """
+    from evaluator_cog.engine.deterministic.containers import _rel
+
+    monorepo_root = tmp_path / "tmpx3jsz49m" / "deejaytools-com"
+    service_root = monorepo_root / "apps" / "api"
+    descriptor = monorepo_root / "railway.toml"
+
+    rendered = _rel(descriptor, service_root)
+
+    assert rendered == "deejaytools-com/railway.toml"
+    assert str(tmp_path) not in rendered
+    assert "tmp" not in rendered
+
+
+def test_rel_is_repo_relative_when_the_path_is_inside(tmp_path: Path) -> None:
+    """The ordinary case is unchanged."""
+    from evaluator_cog.engine.deterministic.containers import _rel
+
+    assert _rel(tmp_path / "railway.json", tmp_path) == "railway.json"

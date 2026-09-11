@@ -1405,3 +1405,90 @@ def test_test_011_still_flags_bare_unittest_patch_without_assertion(
     )
     findings = check_mock_assertions(tmp_path)
     assert len(findings) == 1
+
+
+# ---------------------------------------------------------------------------
+# TEST-008 — a client fixture is a client
+# ---------------------------------------------------------------------------
+
+
+def _route_test_repo(tmp_path: Path, *, conftest: str, test_body: str) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "tests" / "conftest.py").write_text(conftest)
+    (repo / "tests" / "test_routes.py").write_text(test_body)
+    return repo
+
+
+_CONFTEST_WITH_CLIENT = """
+import httpx
+import pytest
+
+
+@pytest.fixture
+async def client():
+    async with httpx.AsyncClient() as c:
+        yield c
+"""
+
+
+def test_test_008_accepts_a_test_taking_a_client_fixture(tmp_path: Path) -> None:
+    """Moving client construction into conftest is the better arrangement.
+
+    Reading only the test file made it look like the violation — which is
+    how a route test that goes through AsyncClient got reported for not
+    using one.
+    """
+    from evaluator_cog.engine.deterministic.testing import (
+        check_testclient_for_v1_routes,
+    )
+
+    repo = _route_test_repo(
+        tmp_path,
+        conftest=_CONFTEST_WITH_CLIENT,
+        test_body=(
+            "async def test_publish(client):\n"
+            "    r = await client.post('/v1/standards/catalog', json={})\n"
+            "    assert r.status_code == 200\n"
+        ),
+    )
+
+    assert check_testclient_for_v1_routes(repo) == []
+
+
+def test_test_008_still_flags_a_route_test_with_no_client(tmp_path: Path) -> None:
+    """The rule keeps its subject: a /v1/ test reaching past HTTP entirely."""
+    from evaluator_cog.engine.deterministic.testing import (
+        check_testclient_for_v1_routes,
+    )
+
+    repo = _route_test_repo(
+        tmp_path,
+        conftest=_CONFTEST_WITH_CLIENT,
+        test_body=(
+            "def test_builds_a_path():\n"
+            "    assert build_path() == '/v1/standards/catalog'\n"
+        ),
+    )
+
+    findings = check_testclient_for_v1_routes(repo)
+    assert len(findings) == 1
+    assert "test_builds_a_path" in findings[0]["finding"]
+
+
+def test_test_008_ignores_a_fixture_that_is_not_a_client(tmp_path: Path) -> None:
+    """Only fixtures that actually build a client count."""
+    from evaluator_cog.engine.deterministic.testing import (
+        check_testclient_for_v1_routes,
+    )
+
+    repo = _route_test_repo(
+        tmp_path,
+        conftest="import pytest\n\n\n@pytest.fixture\ndef db():\n    return object()\n",
+        test_body=(
+            "def test_publish(db):\n"
+            "    assert call_route(db, '/v1/standards/catalog')\n"
+        ),
+    )
+
+    assert len(check_testclient_for_v1_routes(repo)) == 1

@@ -13,6 +13,34 @@ from evaluator_cog.engine.deterministic._shared import (
 )
 
 
+def _client_fixture_names(tests_dir: Path) -> set[str]:
+    """Fixture names that hand a test a real HTTP client.
+
+    A route test that takes a ``client`` fixture is going through
+    ``AsyncClient`` just as surely as one that constructs it inline — the
+    construction has simply been moved to ``conftest.py``, which is where
+    a shared fixture belongs. Reading only the test file makes the better
+    arrangement look like the violation.
+    """
+    import ast
+
+    names: set[str] = set()
+    for conftest in tests_dir.rglob("conftest.py"):
+        try:
+            tree = ast.parse(conftest.read_text())
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            if not any("fixture" in ast.unparse(d) for d in node.decorator_list):
+                continue
+            source = ast.unparse(node)
+            if "TestClient" in source or "AsyncClient" in source:
+                names.add(node.name)
+    return names
+
+
 def check_testclient_for_v1_routes(repo_path: Path) -> list[Finding]:
     """TEST-008: /v1/ route tests use TestClient or AsyncClient."""
     CHECK_ID = "TEST-008"
@@ -23,6 +51,8 @@ def check_testclient_for_v1_routes(repo_path: Path) -> list[Finding]:
     if not tests_dir.is_dir():
         return findings
 
+    client_fixtures = _client_fixture_names(tests_dir)
+
     for test_file in tests_dir.rglob("test_*.py"):
         try:
             text = test_file.read_text()
@@ -32,19 +62,30 @@ def check_testclient_for_v1_routes(repo_path: Path) -> list[Finding]:
         if "TestClient" in text or "AsyncClient" in text:
             continue
         # Look for test functions referencing /v1/
-        for m in re.finditer(r"def (test_\w+)\([^)]*\):([\s\S]*?)(?=\ndef |\Z)", text):
-            fn_name, body = m.group(1), m.group(2)
-            if "/v1/" in body:
-                rel = test_file.relative_to(repo_path)
-                findings.append(
-                    _finding(
-                        "TEST-008",
-                        "WARN",
-                        "testing_coverage",
-                        f"{rel}::{fn_name}: references /v1/ without TestClient/AsyncClient.",
-                        "Use fastapi.testclient.TestClient or httpx.AsyncClient for route tests.",
-                    )
+        for m in re.finditer(
+            r"def (test_\w+)\(([^)]*)\):([\s\S]*?)(?=\ndef |\Z)", text
+        ):
+            fn_name, params, body = m.group(1), m.group(2), m.group(3)
+            if "/v1/" not in body:
+                continue
+            # A parameter naming a client fixture is the client.
+            taken = {
+                p.split(":")[0].split("=")[0].strip()
+                for p in params.split(",")
+                if p.strip()
+            }
+            if taken & client_fixtures:
+                continue
+            rel = test_file.relative_to(repo_path)
+            findings.append(
+                _finding(
+                    "TEST-008",
+                    "WARN",
+                    "testing_coverage",
+                    f"{rel}::{fn_name}: references /v1/ without TestClient/AsyncClient.",
+                    "Use fastapi.testclient.TestClient or httpx.AsyncClient for route tests.",
                 )
+            )
     return findings
 
 
