@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import datetime
 import io
-import json
 import os
 import shutil
 import tempfile
@@ -48,46 +47,38 @@ from evaluator_cog.engine.llm import (
     _parse_findings_from_claude,
     build_conformance_prompt,
 )
-from evaluator_cog.engine.routing import classify_check_mode
 
 log = logger_mod.get_logger()
 
 _ECOSYSTEM_YAML_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/ecosystem.yaml"
-_STANDARDS_VERSION_URL = os.environ.get(
-    "ECOSYSTEM_STANDARDS_VERSION_URL",
-    "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/package.json",
+
+#: Where the compiled standards catalog is served.
+#:
+#: Always production, and deliberately NOT resolved through
+#: ``KAIANO_API_BASE_URL`` / ``KAIANO_API_BASE_URL_DEV``. Catalogs are
+#: published only from ecosystem-standards' release job on ``main``, so the
+#: development API's store is empty — a dev evaluation pointed there would
+#: get ``no_catalog_published`` and read it as the catalog being broken.
+#: Rule text is not environment-specific; there is nothing to separate.
+#:
+#: Overridable by environment for a local API or a pinned version, which is
+#: the only reason this is not a bare constant.
+_STANDARDS_CATALOG_URL = os.environ.get(
+    "ECOSYSTEM_STANDARDS_CATALOG_URL",
+    "https://api.kaianolevine.com/v1/standards/catalog",
 )
-_STANDARDS_BASE_URL = "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/standards"
-_ECOSYSTEM_STANDARDS_INDEX_URL = os.environ.get(
-    "ECOSYSTEM_STANDARDS_INDEX_URL",
-    "https://raw.githubusercontent.com/mini-app-polis/ecosystem-standards/main/index.yaml",
+
+#: Identifies this client to the API's edge. Cloudflare's browser integrity
+#: check rejects unidentified automation, and the path that fetches every
+#: rule must not be where that is discovered.
+_USER_AGENT = (
+    "evaluator-cog/conformance (+https://github.com/mini-app-polis/evaluator-cog)"
 )
+
 _VALID_RULE_STATUSES: frozenset[str] = frozenset({"requirement", "convention", "gap"})
 
 #: GitHub org every registry entry resolves under unless it declares its own.
 _DEFAULT_ORG = "mini-app-polis"
-
-# Canonical fallback list used only when index.yaml cannot be fetched.
-# Keep this in sync with ecosystem-standards/index.yaml::files (any entry
-# whose `file` begins with "standards/"). The runtime domain list is
-# derived from index.yaml on every call; this list is the safety net.
-_FALLBACK_STANDARDS_DOMAINS: tuple[str, ...] = (
-    "api",
-    "auth",
-    "config",
-    "cross-stack",
-    "delivery",
-    "documentation",
-    "evaluation",
-    "frontend",
-    "meta",
-    "monorepo",
-    "pipeline",
-    "principles",
-    "python",
-    "testing",
-    "versioning",
-)
 
 
 # Accumulates every post_findings outcome in one flow invocation.
@@ -101,6 +92,11 @@ _FALLBACK_STANDARDS_DOMAINS: tuple[str, ...] = (
 # line reported the length of the list handed over rather than what the
 # API accepted.
 _RUN_TALLY = PostResult()
+
+#: The catalog for this flow run. One fetch, reused by every caller, reset
+#: at the start of each run so a long-lived worker picks up a new release
+#: rather than grading against whatever was current when it booted.
+_CATALOG: dict | None = None
 
 #: Coverage, as opposed to delivery. _RUN_TALLY answers "did the findings
 #: reach the API"; this answers "was every declared repo actually looked
@@ -133,6 +129,8 @@ _UNRESOLVED_DOWNLOADS: list[dict[str, str]] = []
 
 def _reset_run_tally() -> None:
     """Start a fresh tally and coverage report. Called at the top of each run."""
+    global _CATALOG
+    _CATALOG = None
     global _RUN_TALLY, _RUN_REPORT, _RUN_FLAGGED
     _RUN_TALLY = PostResult()
     _RUN_REPORT = RunReport(flow_name="conformance-check", repo=_REPO)
@@ -249,24 +247,66 @@ def _fetch_yaml(url: str) -> dict:
         return {}
 
 
-def _get_standards_version() -> str:
-    """Fetch current standards version from live package.json. Raises on failure."""
+def _fetch_catalog() -> dict:
+    """Fetch the compiled standards catalog. Cached for the flow run.
+
+    One request replaces the index, every domain file and package.json —
+    and replaces deriving at runtime the structure the compiler already
+    resolved.
+
+    **Raises on failure, deliberately.** The functions this replaced each
+    returned partial data on a fetch error so a run could limp on. With a
+    single source that is the wrong trade: an empty catalog means zero
+    rules, which means zero findings, which is indistinguishable from a
+    clean fleet. A run that could not read the rules has evaluated nothing
+    and must fail rather than report success.
+    """
+    global _CATALOG
+    if _CATALOG is not None:
+        return _CATALOG
+    timeout = float(os.environ.get("EVALUATOR_HTTP_TIMEOUT_SECONDS", "20"))
     try:
-        timeout = float(os.environ.get("EVALUATOR_HTTP_TIMEOUT_SECONDS", "20"))
-        r = httpx.get(_STANDARDS_VERSION_URL, timeout=timeout)
-        r.raise_for_status()
-        data = json.loads(r.text) or {}
-        version = data.get("version")
-        if not version:
-            raise ValueError("version field absent from package.json")
-        return str(version)
-    except Exception as exc:
-        log.error(
-            "conformance: failed to fetch standards version from package.json: %s", exc
+        response = httpx.get(
+            _STANDARDS_CATALOG_URL,
+            timeout=timeout,
+            headers={"User-Agent": _USER_AGENT},
         )
+        response.raise_for_status()
+        body = response.json()
+    except Exception as exc:
+        # One failure type for every way this can go wrong, naming the
+        # address. A transport error, a 5xx and an HTML challenge page are
+        # different problems with the same consequence — no rules — and the
+        # caller needs the address to tell them apart.
         raise RuntimeError(
-            f"Cannot determine standards version — package.json fetch failed: {exc}"
+            f"Cannot read the standards catalog at {_STANDARDS_CATALOG_URL}: {exc}"
         ) from exc
+    catalog = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(catalog, dict) or not catalog.get("rules"):
+        raise RuntimeError(
+            f"Standards catalog at {_STANDARDS_CATALOG_URL} returned no rules"
+        )
+    _CATALOG = catalog
+    return catalog
+
+
+def _catalog_rules() -> list[dict]:
+    """Every rule the evaluator will consider.
+
+    ``checkable: false`` rules are filtered here. The catalog carries them
+    so they stay readable and joinable to the findings of versions that did
+    check them, but there is no check to run and nothing is emitted for
+    them — see the ``gap`` status in index.yaml.
+    """
+    return [rule for rule in _fetch_catalog()["rules"] if rule.get("checkable")]
+
+
+def _get_standards_version() -> str:
+    """The version of the catalog under evaluation. Raises on failure."""
+    version = str(_fetch_catalog().get("version") or "")
+    if not version:
+        raise RuntimeError("Standards catalog carries no version")
+    return version
 
 
 def _get_active_repos(ecosystem: dict) -> list[dict]:
@@ -297,86 +337,13 @@ def _read_workspace_package_json(monorepo_root: Path) -> str:
     return ""
 
 
-def _resolve_standards_domains() -> list[str]:
-    """
-    Return the list of standards domain names to fetch, sourced from
-    ecosystem-standards/index.yaml. Falls back to a hardcoded canonical
-    list if the index cannot be fetched or parsed.
-
-    Only entries whose `file` begins with `standards/` are included —
-    `ecosystem.yaml` and `definitions-of-done.yaml` are not rule catalogs
-    and are fetched separately where needed.
-
-    Never raises. Emits a single warning per process if any domain in the
-    fallback list is missing from the live index (drift), and a single
-    warning if any domain in the live index is missing from the fallback
-    (evaluator is out of date vs the standards repo).
-    """
-    index = _fetch_yaml(_ECOSYSTEM_STANDARDS_INDEX_URL)
-    raw_files = index.get("files") if isinstance(index, dict) else None
-    if not isinstance(raw_files, list) or not raw_files:
-        log.warning(
-            "conformance: index.yaml fetch returned no files — "
-            "using hardcoded fallback domain list"
-        )
-        return list(_FALLBACK_STANDARDS_DOMAINS)
-
-    live_domains: list[str] = []
-    for entry in raw_files:
-        if not isinstance(entry, dict):
-            continue
-        file_path = str(entry.get("file") or "")
-        if not file_path.startswith("standards/"):
-            continue
-        domain = str(entry.get("domain") or "").strip()
-        if domain:
-            live_domains.append(domain)
-
-    if not live_domains:
-        log.warning(
-            "conformance: index.yaml had no standards/ entries — "
-            "using hardcoded fallback domain list"
-        )
-        return list(_FALLBACK_STANDARDS_DOMAINS)
-
-    live_set = set(live_domains)
-    fallback_set = set(_FALLBACK_STANDARDS_DOMAINS)
-    missing_from_live = fallback_set - live_set
-    missing_from_fallback = live_set - fallback_set
-    if missing_from_live:
-        log.warning(
-            "conformance: domains in fallback list are absent from live "
-            "index.yaml — standards repo may have removed: %s",
-            sorted(missing_from_live),
-        )
-    if missing_from_fallback:
-        log.warning(
-            "conformance: live index.yaml has domains not in evaluator "
-            "fallback — evaluator fallback is stale, add these: %s",
-            sorted(missing_from_fallback),
-        )
-
-    return live_domains
-
-
 def _fetch_catalog_schema() -> dict:
-    """Fetch structured schema data from index.yaml.
+    """Traits, repo types and statuses, in the shapes the dispatcher expects.
 
-    Returns a dict with three keys:
-      - traits: {trait_name: {"exempts": [...], "downgrades": [...],
-                 "description": "..."}}
-                Sourced from index.yaml schema.traits.
-      - repo_types: set of valid repo type names.
-                    Sourced from index.yaml schema.repo_types (keys).
-      - statuses: set of valid rule status values.
-                  Sourced from index.yaml statuses (keys).
-
-    Never raises. Returns partial data on fetch or parse failure — the
-    caller must handle missing keys. _fetch_yaml already logs a warning
-    on transport failure.
+    The catalog carries these already resolved; this only reshapes them.
     """
-    index = _fetch_yaml(_ECOSYSTEM_STANDARDS_INDEX_URL)
-    schema = (index.get("schema") or {}) if isinstance(index, dict) else {}
+    catalog = _fetch_catalog()
+    schema = catalog.get("schema") or {}
 
     raw_traits = schema.get("traits") or {}
     traits: dict[str, dict] = {}
@@ -401,141 +368,79 @@ def _fetch_catalog_schema() -> dict:
             }
 
     raw_repo_types = schema.get("repo_types") or {}
-    repo_types: set[str] = set()
-    if isinstance(raw_repo_types, dict):
-        repo_types = {str(k) for k in raw_repo_types}
+    repo_types: set[str] = (
+        {str(k) for k in raw_repo_types} if isinstance(raw_repo_types, dict) else set()
+    )
 
-    raw_statuses = index.get("statuses") or {} if isinstance(index, dict) else {}
-    statuses: set[str] = set()
-    if isinstance(raw_statuses, dict):
-        statuses = {str(k) for k in raw_statuses}
+    raw_statuses = catalog.get("statuses") or {}
+    statuses: set[str] = (
+        {str(k) for k in raw_statuses} if isinstance(raw_statuses, dict) else set()
+    )
 
-    return {
-        "traits": traits,
-        "repo_types": repo_types,
-        "statuses": statuses,
-    }
+    return {"traits": traits, "repo_types": repo_types, "statuses": statuses}
 
 
 def _fetch_full_rule_catalog() -> dict[str, dict]:
-    """Fetch every checkable rule's metadata from every standards file.
+    """Every checkable rule's dispatch metadata, keyed by rule id.
 
-    Returns {rule_id: {"applies_to": list[str] | None, "modifies": list[str],
-                       "status": str, "dimension": str,
-                       "check_mode": "deterministic" | "llm"}}
-    covering the entire catalog.
-
-    `applies_to` is None when the rule omits the field entirely (v4.0.0
-    semantics: the rule is not a repo-source scan — see ADR-004). An
-    explicit empty list `[]` is also treated as None for dispatch
-    purposes, though the catalog does not currently contain any such
-    rules.
-
-    `check_mode` is derived from the DETERMINISTIC CHECK. / LLM CHECK.
-    marker on each rule's check_notes. Used by EVAL-007 to avoid
-    flagging LLM-routed rules as "unimplemented" just because they
-    have no deterministic CHECK_ID constant.
-
-    Used by PR 3's dispatch to derive type-based scope from the live
-    catalog rather than a hardcoded table. Used by PR 4 for modifier
-    resolution.
-
-    Never raises. Returns {} on full-catalog fetch failure.
+    ``applies_to`` is None when the rule is not a repo-source scan
+    (ADR-004); the compiler collapses an explicit empty list to None for
+    the same reason. ``check_mode`` arrives resolved rather than being
+    parsed out of ``check_notes`` on every run.
     """
-    domains = _resolve_standards_domains()
-    catalog: dict[str, dict] = {}
-    for domain in domains:
-        url = f"{_STANDARDS_BASE_URL}/{domain}.yaml"
-        data = _fetch_yaml(url)
-        for rule in data.get("standards", []) or []:
-            if not rule.get("checkable"):
-                continue
-            rule_id = str(rule.get("id") or "").strip()
-            if not rule_id:
-                continue
-            raw_applies = rule.get("applies_to")
-            applies_to: list[str] | None
-            if raw_applies is None:
-                applies_to = None  # ADR-004: non-repo-scan rule
-            elif isinstance(raw_applies, list):
-                applies_to = [str(x) for x in raw_applies]
-            else:
-                applies_to = None
-            if applies_to == []:
-                applies_to = None
-            raw_modifies = rule.get("modifies") or []
-            modifies = (
-                [str(x) for x in raw_modifies if isinstance(x, str)]
-                if isinstance(raw_modifies, list)
-                else []
-            )
-            check_notes = str(rule.get("check_notes") or "").strip()
-            catalog[rule_id] = {
-                "applies_to": applies_to,
-                "modifies": modifies,
-                "status": str(rule.get("status") or "").strip(),
-                "dimension": str(rule.get("dimension") or "").strip(),
-                "check_mode": classify_check_mode(rule_id, check_notes),
-            }
-    return catalog
+    return {
+        str(rule["id"]): {
+            "applies_to": rule.get("applies_to"),
+            "modifies": [str(x) for x in (rule.get("modifies") or [])],
+            "status": str(rule.get("status") or "").strip(),
+            "dimension": str(rule.get("dimension") or "").strip(),
+            "check_mode": rule.get("check_mode"),
+        }
+        for rule in _catalog_rules()
+        if rule.get("id")
+    }
 
 
 def _fetch_standards_for_service(
     service: dict, evaluator_cfg: EvaluatorConfig | None = None
 ) -> list[dict]:
-    """
-    Fetch checkable rules from all standards domains, filtered by
-    the service's repo type using the applies_to field on each rule.
-    Returns a list of rule dicts with id, title, severity, check_notes,
-    check_mode. `check_mode` is one of "deterministic" or "llm", derived
-    from the DETERMINISTIC CHECK / LLM CHECK marker on the rule's
-    check_notes; rules missing the marker default to "deterministic".
-    Never raises — returns [] on failure.
-    """
-    # Prefer new type from evaluator_config, fall back to dod_type for migration period
-    repo_type = evaluator_cfg.repo_type if evaluator_cfg is not None else None
+    """Checkable rules in scope for one service, for the LLM prompt.
 
+    Scope is the rule's ``applies_to`` against the repo's type. ``[all]``
+    matches everything, which is the catalog's default posture — a rule
+    narrowed to a type list is one whose check cannot tell "no subject
+    here" apart from "violated".
+    """
+    repo_type = evaluator_cfg.repo_type if evaluator_cfg is not None else None
     dod_type = service.get("dod_type")
-    all_rules = []
-    domains = _resolve_standards_domains()
 
     def _to_rule_dict(rule: dict) -> dict:
-        check_notes = (rule.get("check_notes") or "").strip()
         rule_id = str(rule.get("id") or "")
         status = str(rule.get("status") or "").strip()
         if status not in _VALID_RULE_STATUSES:
             raise ValueError(
                 f"Rule {rule_id}: invalid status '{status}'. "
-                f"Must be one of {sorted(_VALID_RULE_STATUSES)}. "
-                f"The catalog is v4.0.0 — 'advisory' and 'idea' are "
-                f"no longer valid values."
+                f"Must be one of {sorted(_VALID_RULE_STATUSES)}."
             )
         return {
             "id": rule_id,
             "title": rule.get("title", ""),
             "status": status,
             "severity": rule.get("severity", "INFO"),
-            "check_notes": check_notes,
-            "check_mode": classify_check_mode(rule_id, check_notes),
+            "check_notes": (rule.get("check_notes") or "").strip(),
+            "check_mode": rule.get("check_mode"),
         }
 
-    for domain in domains:
-        url = f"{_STANDARDS_BASE_URL}/{domain}.yaml"
-        data = _fetch_yaml(url)
-        for rule in data.get("standards", []):
-            if not rule.get("checkable"):
-                continue
-            applies_to = rule.get("applies_to", [])
-            # "all" applies to every type
-            if "all" in applies_to:
-                all_rules.append(_to_rule_dict(rule))
-                continue
-            # Match on new repo type (v3.0.0) or legacy dod_type (migration period)
-            if (repo_type and repo_type in applies_to) or (
-                dod_type and dod_type in applies_to
-            ):
-                all_rules.append(_to_rule_dict(rule))
-    return all_rules
+    rules: list[dict] = []
+    for rule in _catalog_rules():
+        applies_to = rule.get("applies_to") or []
+        if (
+            "all" in applies_to
+            or (repo_type and repo_type in applies_to)
+            or (dod_type and dod_type in applies_to)
+        ):
+            rules.append(_to_rule_dict(rule))
+    return rules
 
 
 def _parse_check_exceptions(raw: list) -> tuple[list[str], dict[str, str]]:
