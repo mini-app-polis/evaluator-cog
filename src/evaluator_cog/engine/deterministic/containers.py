@@ -46,17 +46,27 @@ _CPU_KEY_TOKENS = ("cpu", "vcpu")
 
 
 def _rel(path: Path, repo_path: Path) -> str:
-    """Best-effort repo-relative display path.
+    """Repo-relative display path that is stable across runs.
 
-    Monorepo service roots are not always below ``repo_path``, so
-    ``relative_to`` can legitimately raise. Findings are prose read by
-    humans, not machine paths, so falling back to the full string is
-    fine and never worth an exception.
+    Monorepo service roots are not always below ``repo_path`` — the
+    descriptor can sit at the monorepo root while the service is
+    evaluated at ``apps/<name>`` — so ``relative_to`` legitimately
+    raises.
+
+    The fallback used to be the absolute path, which begins with the
+    run's temporary download directory. That is not merely ugly: the
+    directory is different on every run, so a finding carrying one can
+    never be recognised as a repeat of itself. It defeats duplicate
+    suppression on the way in and would write a fresh row on every run
+    behind a server-side idempotency guard. The last two components say
+    everything a reader needs and say the same thing every time.
     """
     try:
         return str(path.relative_to(repo_path))
     except ValueError:
-        return str(path)
+        pass
+    parent = path.parent.name
+    return f"{parent}/{path.name}" if parent else path.name
 
 
 def _load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
