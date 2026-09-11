@@ -1,3 +1,10 @@
+# [3.27.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.26.0...v3.27.0) (2026-09-11)
+
+
+### Features
+
+* read the standards catalog from the API ([9953d2d](https://github.com/mini-app-polis/evaluator-cog/commit/9953d2d384da83809ccf6adce5bf1d6f5c84dac8))
+
 # [3.26.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.3...v3.26.0) (2026-09-11)
 
 
