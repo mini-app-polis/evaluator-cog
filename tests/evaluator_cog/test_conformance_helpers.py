@@ -1,7 +1,7 @@
 """Tests for pure helper functions in flows/conformance.py.
 
-These helpers are independently testable without mocking the full
-conformance_check_flow (which requires GitHub API, Prefect runtime, etc.).
+These helpers are independently testable without mocking a whole sweep
+(which requires the GitHub API, the standards catalog, and the registry).
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ from evaluator_cog.flows.conformance import (
     _get_active_repos,
     _get_monorepos,
     _get_standards_version,
-    _on_completion,
     _parse_check_exceptions,
+    _ping_healthcheck,
     _read_workspace_package_json,
 )
 
@@ -39,44 +39,44 @@ def _catalog_response(catalog: dict) -> httpx.Response:
 
 
 # ---------------------------------------------------------------------------
-# _on_completion — Healthchecks.io ping
+# _ping_healthcheck — Healthchecks.io ping
 # ---------------------------------------------------------------------------
 
 
-def test_on_completion_pings_healthchecks_when_url_set(monkeypatch) -> None:
+def test_ping_healthcheck_pings_healthchecks_when_url_set(monkeypatch) -> None:
     """When HEALTHCHECKS_URL_EVALUATOR is set, urlopen is called once."""
     monkeypatch.setenv("HEALTHCHECKS_URL_EVALUATOR", "https://hc-ping.com/test-uuid")
 
     with patch("urllib.request.urlopen") as mock_urlopen:
-        _on_completion(None, None, None)
+        _ping_healthcheck()
 
     mock_urlopen.assert_called_once()
     args = mock_urlopen.call_args[0]
     assert "hc-ping.com" in str(args[0])
 
 
-def test_on_completion_skips_when_url_unset(monkeypatch) -> None:
+def test_ping_healthcheck_skips_when_url_unset(monkeypatch) -> None:
     """When HEALTHCHECKS_URL_EVALUATOR is absent, urlopen is never called."""
     monkeypatch.delenv("HEALTHCHECKS_URL_EVALUATOR", raising=False)
 
     with patch("urllib.request.urlopen") as mock_urlopen:
-        _on_completion(None, None, None)
+        _ping_healthcheck()
 
     mock_urlopen.assert_not_called()
 
 
-def test_on_completion_swallows_urlopen_exception(monkeypatch) -> None:
-    """Exceptions from urlopen are suppressed — _on_completion never raises."""
+def test_ping_healthcheck_swallows_urlopen_exception(monkeypatch) -> None:
+    """Exceptions from urlopen are suppressed — _ping_healthcheck never raises."""
     monkeypatch.setenv("HEALTHCHECKS_URL_EVALUATOR", "https://hc-ping.com/test-uuid")
 
     with patch(
         "urllib.request.urlopen", side_effect=OSError("timeout")
     ) as mock_urlopen:
-        # Must not raise — _on_completion uses suppress(Exception) internally
-        _on_completion(None, None, None)
+        # Must not raise — _ping_healthcheck uses suppress(Exception) internally
+        _ping_healthcheck()
 
     # Confirm urlopen was actually attempted (and thus its exception was swallowed,
-    # rather than _on_completion early-returning for some other reason).
+    # rather than _ping_healthcheck early-returning for some other reason).
     mock_urlopen.assert_called_once()
 
 

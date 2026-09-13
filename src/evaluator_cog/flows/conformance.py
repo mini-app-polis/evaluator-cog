@@ -1,32 +1,44 @@
-"""Conformance checking flow for evaluator-cog.
+"""Conformance checking, and the two shapes it is asked for.
 
-A single parameterized flow (conformance_check_flow) handles both modes:
+``handler(event)`` is the unit of work: one repository, everything needed
+to evaluate it passed in, nothing looked up. It is what a release triggers
+through the API and what the sweep calls in a loop, and it does not know
+which of those it is serving.
 
-run_llm=False (default, daily schedule):
-  Runs deterministic rule checks only. No LLM calls. No token cost.
+``run_fleet_sweep()`` is the whole fleet, for the occasions that invalidate
+every repository's last result at once — a new standards catalog, a new
+evaluator. It reads the registry, builds one event per repository, and then
+runs the checks that scope to no repository at all.
+
+Two modes, in both shapes:
+
+mode='deterministic' (the default, and the release path):
+  Rule checks only. No LLM calls, no token cost.
   Posts findings with source='conformance_deterministic'.
   run_id prefix: 'deterministic-{version}-{uuid}'
 
-run_llm=True (triggered manually or via Prefect automation, weekly):
-  Runs deterministic pass first to get checked_rule_ids, then calls
-  the LLM for soft-rule assessment. Posts LLM findings only.
+mode='llm':
+  Deterministic pass first to get checked_rule_ids, then the LLM for
+  soft-rule assessment. Posts LLM findings only.
   Posts findings with source='conformance_llm'.
   run_id prefix: 'conformance-{version}-{uuid}'
 
-Both modes additionally run applies_to-absent checks once per invocation:
+The sweep additionally runs the applies_to-absent checks once per pass:
   EVAL-003 and MONO-003 post with source='data_quality' (runtime
   data-quality on stored findings and on the ecosystem inventory).
   EVAL-007 posts with source='standards_drift' (catalog vs evaluator).
+These have no repository to attach to, so a per-repository invoke is not
+a place they could run.
 """
 
 from __future__ import annotations
 
-import datetime
 import io
 import os
 import shutil
 import tempfile
 import time
+import uuid
 import zipfile
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -36,9 +48,7 @@ from typing import Any
 import httpx
 import yaml
 from mini_app_polis import logger as logger_mod
-from mini_app_polis.pipeline_status import RunReport, make_failure_hook
-from prefect import flow, get_run_logger
-from prefect.concurrency.sync import concurrency
+from mini_app_polis.pipeline_status import RunReport
 
 from evaluator_cog.engine.api_client import PostResult, post_findings
 from evaluator_cog.engine.deterministic import run_all_checks
@@ -80,6 +90,10 @@ _VALID_RULE_STATUSES: frozenset[str] = frozenset({"requirement", "convention", "
 
 #: GitHub org every registry entry resolves under unless it declares its own.
 _DEFAULT_ORG = "mini-app-polis"
+
+#: This cog, as the notification channel and the version stamp know it.
+#: Must match [project] name in pyproject.toml.
+_REPO = "evaluator-cog"
 
 
 # Accumulates every post_findings outcome in one flow invocation.
@@ -206,13 +220,13 @@ class FindingDeliveryError(RuntimeError):
 
 
 def _assert_findings_were_delivered(prefect_log: Any) -> None:
-    """Fail the flow when nothing reached the API.
+    """Fail the run when nothing reached the API.
 
-    Raising is the point. Prefect marks the run Failed, the flow's
-    failure hooks fire, and ``_on_completion`` does not run — so
-    Healthchecks.io is not pinged green for a run that delivered
-    nothing. A partial failure has already been warned about per
-    emitter and does not fail the run.
+    Raising is the point. The caller stops before pinging Healthchecks.io,
+    and the adapter reports an ERROR to the notification channel — so a run
+    that delivered nothing cannot read as a healthy one from outside. A
+    partial failure has already been warned about per emitter and does not
+    fail the run.
     """
     if not _RUN_TALLY.total_failure:
         return
@@ -224,8 +238,14 @@ def _assert_findings_were_delivered(prefect_log: Any) -> None:
     )
 
 
-def _on_completion(flow, flow_run, state) -> None:
-    """Ping Healthchecks.io after successful conformance run. Never raises."""
+def _ping_healthcheck() -> None:
+    """Tell Healthchecks.io a sweep finished clean. Never raises.
+
+    Called at the tail of :func:`run_fleet_sweep` and nowhere else. It used
+    to be a Prefect ``on_completion`` hook, which is why it is a ping and
+    not a check: the fact being reported is that the sweep reached its end,
+    and a per-repository invoke is not that fact.
+    """
     import urllib.request
 
     url = os.getenv("HEALTHCHECKS_URL_EVALUATOR", "").strip()
@@ -747,12 +767,10 @@ def run_conformance_check(
     Run deterministic + LLM conformance checks against a cloned repo.
     Posts findings to api-kaianolevine-com when post=True. Never raises.
     """
-    try:
-        prefect_log = get_run_logger()
-    except Exception:
-        import logging
-
-        prefect_log = logging.getLogger(__name__)
+    # Named for the run logger it used to resolve. There is no Prefect
+    # runtime to resolve one from any more, and the shared logger is what
+    # reaches the service's stdout either way.
+    prefect_log = log
 
     # Deterministic checks
     try:
@@ -988,19 +1006,21 @@ def _run_standalone_conformance(
         _report_issue("repo_check_failed", repo_id, exc)
 
 
+def _run_suffix() -> str:
+    """A suffix no two runs share.
+
+    Was the Prefect flow run id, falling back to a UTC timestamp. Both
+    ends of that are gone: there is no flow run to ask, and a timestamp
+    resolved to the second is not unique between two releases that land
+    together — which is exactly what the release trigger makes ordinary.
+    Two runs sharing a run_id merge their findings into one.
+    """
+    return uuid.uuid4().hex[:12]
+
+
 def _build_conformance_run_id(standards_version: str) -> str:
     """Build a per-execution run_id for conformance findings."""
-    flow_run_id = ""
-    try:
-        from prefect.runtime import flow_run
-
-        flow_run_id = str(flow_run.id or "").strip()
-    except Exception:
-        flow_run_id = ""
-
-    unique_suffix = flow_run_id or datetime.datetime.now(datetime.UTC).strftime(
-        "%Y%m%dT%H%M%S"
-    )
+    unique_suffix = _run_suffix()
     return f"conformance-{standards_version}-{unique_suffix}"
 
 
@@ -1059,17 +1079,7 @@ def _post_not_evaluated(
 
 def _build_deterministic_run_id(standards_version: str) -> str:
     """Build a per-execution run_id for deterministic conformance findings."""
-    flow_run_id = ""
-    try:
-        from prefect.runtime import flow_run
-
-        flow_run_id = str(flow_run.id or "").strip()
-    except Exception:
-        flow_run_id = ""
-
-    unique_suffix = flow_run_id or datetime.datetime.now(datetime.UTC).strftime(
-        "%Y%m%dT%H%M%S"
-    )
+    unique_suffix = _run_suffix()
     return f"deterministic-{standards_version}-{unique_suffix}"
 
 
@@ -1717,99 +1727,102 @@ def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
     return result
 
 
-_REPO = "evaluator-cog"
-_report_failure = make_failure_hook("conformance-check", repo=_REPO)
+@dataclass
+class SweepResult:
+    """What one fleet sweep did. Counts, not findings — those went to the API."""
+
+    repos: int = 0
+    evaluated: list[str] = field(default_factory=list)
+    not_evaluated: list[str] = field(default_factory=list)
 
 
-@flow(
-    name="conformance-check",
-    log_prints=True,
-    on_completion=[_on_completion],
-    on_failure=[_report_failure],
-    on_crashed=[_report_failure],
-)
-def conformance_check_flow(run_llm: bool = False) -> None:
+def run_fleet_sweep(
+    *,
+    mode: str = "deterministic",
+    run_id: str | None = None,
+    log: Any,
+) -> SweepResult:
+    """Evaluate every active repository, then the checks that scope to none.
+
+    The occasional whole-fleet pass, not the primary path. A repository's
+    own release is what normally evaluates it; this exists for the two
+    events that invalidate every repository's last result at once — a new
+    standards catalog and a new evaluator — where asking each repository to
+    re-run itself would be the same work reached by a worse trigger.
+
+    It is also the only place the applies_to-absent checks can run. EVAL-003,
+    MONO-003 and EVAL-007 are scoped to no repository at all (ADR-004), so
+    there is no per-repo invocation they belong to: they grade the inventory,
+    the stored findings and the catalog itself, once per pass.
+
+    A repository-level problem does not raise — that is a finding, and the
+    run report carries it. :class:`FindingDeliveryError` does raise, because
+    a run that computed findings and delivered none of them is a fault of
+    this process rather than of anything it looked at, and the Healthchecks
+    ping below must not happen after one.
     """
-    Clone each active repo and run conformance checks.
-
-    When run_llm=False (default): deterministic checks only, no LLM calls.
-    Posts findings with source='conformance_deterministic'. Runs daily.
-
-    When run_llm=True: deterministic pass first (for checked_rule_ids),
-    then LLM soft-rule assessment. Posts LLM findings only with
-    source='conformance_llm'. Triggered manually or via Prefect automation.
-
-    In both modes, applies_to-absent introspection checks also run once
-    per invocation:
-      EVAL-003, MONO-003 → source='data_quality'
-      EVAL-007           → source='standards_drift'
-    """
-    try:
-        prefect_log = get_run_logger()
-    except Exception:
-        import logging
-
-        prefect_log = logging.getLogger(__name__)
     _reset_run_tally()
-    flow_label = "conformance" if run_llm else "deterministic"
 
     standards_version = _get_standards_version()
-    prefect_log.info("%s: standards version %s", flow_label, standards_version)
+    log.info("sweep: standards version %s", standards_version)
     catalog_schema = _fetch_catalog_schema()
     rule_catalog = _fetch_full_rule_catalog()
-    prefect_log.info(
-        "%s: loaded %d traits, %d repo types, %d rules from catalog",
-        flow_label,
+    log.info(
+        "sweep: loaded %d traits, %d repo types, %d rules from catalog",
         len(catalog_schema.get("traits", {})),
         len(catalog_schema.get("repo_types", set())),
         len(rule_catalog),
     )
 
     # rule_applies_to is derived inside the handler now, from the same
-    # cached catalog. The flow keeps rule_catalog only for the log line
+    # cached catalog. The sweep keeps rule_catalog only for the log line
     # above and for the applies_to-absent checks below.
     if not rule_catalog:
-        prefect_log.warning(
-            "%s: full rule catalog empty — type-based auto-exceptions "
-            "disabled for this run",
-            flow_label,
+        log.warning(
+            "sweep: full rule catalog empty — type-based auto-exceptions "
+            "disabled for this run"
         )
 
     ecosystem = _fetch_yaml(_ECOSYSTEM_YAML_URL)
     active_repos = _get_active_repos(ecosystem)
+    result = SweepResult(repos=len(active_repos))
 
     if not active_repos:
-        prefect_log.warning("%s: no active repos found in ecosystem.yaml", flow_label)
-        return
+        log.warning("sweep: no active repos found in ecosystem.yaml")
+        return result
 
-    prefect_log.info("%s: checking %d active repos", flow_label, len(active_repos))
-    run_id = (
+    log.info("sweep: checking %d active repos", len(active_repos))
+    run_id = run_id or (
         _build_conformance_run_id(standards_version)
-        if run_llm
+        if mode == "llm"
         else _build_deterministic_run_id(standards_version)
     )
 
-    event_mode = "llm" if run_llm else "deterministic"
+    # No concurrency primitive here. The writes used to be wrapped in
+    # prefect.concurrency('evaluator-cog-writes', occupy=1), which bought
+    # mutual exclusion across processes from Prefect Cloud. Nothing calls
+    # this outside the adapter now, and the adapter holds a process-level
+    # lock across the whole call for the harder reason: the tally, the
+    # catalog and the run report above are module state, so two overlapping
+    # sweeps would corrupt each other's accounting long before they raced
+    # on a write.
+    for event in _fleet_events(ecosystem, run_id=run_id, mode=mode, log=log):
+        one = handler(event, log=log)
+        result.evaluated.extend(one.evaluated)
+        result.not_evaluated.extend(one.not_evaluated)
 
-    with concurrency("evaluator-cog-writes", occupy=1):
-        for event in _fleet_events(
-            ecosystem, run_id=run_id, mode=event_mode, log=prefect_log
-        ):
-            handler(event, log=prefect_log)
+    # ── Non-repo-scan rules (ADR-004: applies_to absent) ─────────────────
+    _run_applies_to_absent_checks(
+        ecosystem=ecosystem,
+        rule_catalog=rule_catalog,
+        standards_version=standards_version,
+        evaluator_standards_version=standards_version,
+        run_id=run_id,
+        prefect_log=log,
+    )
 
-        # ── Non-repo-scan rules (ADR-004: applies_to absent) ─────────────
-        _run_applies_to_absent_checks(
-            ecosystem=ecosystem,
-            rule_catalog=rule_catalog,
-            standards_version=standards_version,
-            evaluator_standards_version=standards_version,
-            run_id=run_id,
-            prefect_log=prefect_log,
-        )
-
-    prefect_log.info(
-        "%s: complete — %d findings offered, %d posted, %d duplicate, %d failed",
-        flow_label,
+    log.info(
+        "sweep: complete — %d findings offered, %d posted, %d duplicate, %d failed",
         _RUN_TALLY.attempted,
         _RUN_TALLY.posted,
         _RUN_TALLY.duplicates,
@@ -1817,11 +1830,11 @@ def conformance_check_flow(run_llm: bool = False) -> None:
     )
 
     # The run's own outcome, as a notification. Not a finding: what this
-    # flow computed about other repos is graded and stays in the
-    # evaluations table; whether the flow itself worked is not.
+    # sweep computed about other repos is graded and stays in the
+    # evaluations table; whether the sweep itself worked is not.
     #
     # Skipped when nothing was delivered at all, because the assertion
-    # below is about to fail the run and the failure hook will report it.
+    # below is about to fail the run and the adapter will report it.
     # Two messages for one event is how a channel earns being ignored.
     if not _RUN_TALLY.total_failure and _RUN_REPORT is not None:
         # The repos that came through whole. Counted against the declared
@@ -1841,7 +1854,7 @@ def conformance_check_flow(run_llm: bool = False) -> None:
         # that skipped a repo is.
         if _RUN_TALLY.failed:
             _RUN_REPORT.issue("delivery_failed", f"{_RUN_TALLY.failed} finding(s)")
-        _RUN_REPORT.count("flow", flow_label)
+        _RUN_REPORT.count("flow", mode)
         _RUN_REPORT.count("offered", _RUN_TALLY.attempted)
         _RUN_REPORT.count("posted", _RUN_TALLY.posted)
         _RUN_REPORT.count("duplicate", _RUN_TALLY.duplicates)
@@ -1850,9 +1863,12 @@ def conformance_check_flow(run_llm: bool = False) -> None:
         # and "162 offered, 162 posted" must not look alike from outside,
         # which is the whole lesson of September 3rd.
         _RUN_REPORT.send(notable=_RUN_TALLY.attempted > 0)
-    # Last statement in the flow, deliberately: everything above has
-    # already run and reported, and this only decides whether the run is
-    # allowed to be called a success. Raising here marks the run Failed,
-    # fires the failure hooks, and stops _on_completion from pinging
-    # Healthchecks green for a run that delivered nothing.
-    _assert_findings_were_delivered(prefect_log)
+
+    # Before the ping, deliberately: everything above has already run and
+    # reported, and this only decides whether the sweep is allowed to be
+    # called a success. Raising here skips the Healthchecks ping for a run
+    # that delivered nothing, which is what the flow's on_completion hook
+    # used to do by not firing.
+    _assert_findings_were_delivered(log)
+    _ping_healthcheck()
+    return result
