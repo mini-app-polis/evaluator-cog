@@ -1,3 +1,10 @@
+# [3.29.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.28.0...v3.29.0) (2026-09-13)
+
+
+### Features
+
+* **cd-026:** evaluate is a canonical ci job ([d9f3f10](https://github.com/mini-app-polis/evaluator-cog/commit/d9f3f101d5016637dfdd82e308490667a9edaddd))
+
 # [3.28.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.27.1...v3.28.0) (2026-09-13)
 
 
