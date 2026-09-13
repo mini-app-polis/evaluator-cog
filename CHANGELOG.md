@@ -1,3 +1,17 @@
+# [3.28.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.27.1...v3.28.0) (2026-09-13)
+
+
+### Bug Fixes
+
+* drop the Prefect harness that isolates nothing ([c1994af](https://github.com/mini-app-polis/evaluator-cog/commit/c1994affb9e9fed88f073203ebfb0ca96297f15d))
+
+
+### Features
+
+* a shared workflow for asking that a repo be evaluated ([20562a6](https://github.com/mini-app-polis/evaluator-cog/commit/20562a6440bcfe2d888afd5bd38c09d90aed2476))
+* an HTTP adapter over the handler ([b1b49ad](https://github.com/mini-app-polis/evaluator-cog/commit/b1b49adc1a5053eac35ca3c99fc28bfb8e11ddd2))
+* evaluate on demand, with no Prefect runtime ([66daa01](https://github.com/mini-app-polis/evaluator-cog/commit/66daa01ba9eb07d7f4442840da7dcb8cbb05c230))
+
 ## [3.27.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.27.0...v3.27.1) (2026-09-11)
 
 
