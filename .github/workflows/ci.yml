@@ -75,3 +75,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx semantic-release
+
+  # A fleet sweep, not a single repository. A new evaluator can reach a
+  # different verdict on every repo in the fleet, so all of them are stale
+  # at once — and the three checks that scope to no repository (EVAL-003,
+  # MONO-003, EVAL-007) have nowhere else to run.
+  #
+  # wait-seconds is not caution. This release redeploys the evaluator that
+  # is about to be asked; Railway takes longer to swap the container than
+  # curl's retries cover, so asking immediately reaches the process that is
+  # going away. The sweep must run on the evaluator this release built,
+  # which is the entire reason for the trigger.
+  evaluate:
+    needs: release
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    uses: mini-app-polis/.github/.github/workflows/evaluate.yml@v2
+    with:
+      scope: fleet
+      wait-seconds: 120
+    secrets:
+      api-key: ${{ secrets.CI_VALIDATOR_API_KEY }}
