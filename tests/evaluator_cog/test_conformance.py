@@ -818,3 +818,141 @@ def test_retry_delay_honours_retry_after(monkeypatch) -> None:
     # No header: exponential backoff.
     assert conf._retry_delay(None, 0) == conf._DOWNLOAD_BACKOFF_SECONDS
     assert conf._retry_delay(None, 1) == conf._DOWNLOAD_BACKOFF_SECONDS * 2
+
+
+# ---------------------------------------------------------------------------
+# One evaluation path for both shapes
+# ---------------------------------------------------------------------------
+#
+# The monorepo branch used to carry its own copy of the per-service
+# evaluation — roughly 254 lines calling run_all_checks directly — and it had
+# drifted from the standalone path it duplicated. Two of these tests cover
+# skips that copy had and the standalone path did not.
+
+
+def _mono_ecosystem(*, path_a: str = "apps/a") -> dict:
+    return {
+        "services": [
+            {
+                "id": "app-a",
+                "repo": "mono",
+                "status": "active",
+                "type": "api-service",
+                "language": "typescript",
+                "monorepo": "mono-1",
+                "monorepo_path": path_a,
+            },
+        ],
+        "monorepos": [
+            {
+                "id": "mono-1",
+                "repo": "mono",
+                "apps": [{"service_id": "app-a", "path": path_a}],
+            }
+        ],
+    }
+
+
+def _run_mono_flow(monkeypatch, ecosystem: dict, *, run_all):
+    """Run the flow over a one-app monorepo and return what was posted."""
+    import evaluator_cog.flows.conformance as conf
+
+    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
+        root = Path(tmp_dir) / repo_name
+        (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
+        return root
+
+    posted: list[dict] = []
+
+    def capture(**kwargs):
+        posted.append(kwargs)
+        return conf.PostResult(attempted=1, posted=1)
+
+    monkeypatch.setenv("STANDARDS_VERSION", "9.9.9-test")
+    with (
+        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
+        patch.object(conf, "_fetch_yaml", return_value=ecosystem),
+        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
+        patch.object(conf, "_download_repo", side_effect=fake_download_repo),
+        patch.object(conf, "run_all_checks", side_effect=run_all),
+        patch.object(conf, "post_findings", side_effect=capture),
+        patch.object(conf, "_fetch_standards_for_service", return_value=[]),
+    ):
+        conformance_check_flow(run_llm=False)
+    return posted
+
+
+def test_monorepo_app_with_a_missing_path_is_reported(monkeypatch) -> None:
+    """A declared monorepo_path that is not in the tree used to vanish.
+
+    The old branch logged and continued, so the service was simply absent
+    from the report with nothing saying why — the invisible absence the
+    standalone path had already been fixed for.
+    """
+
+    def unreachable(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("checks ran against a path that does not exist")
+
+    posted = _run_mono_flow(
+        monkeypatch, _mono_ecosystem(path_a="apps/nope"), run_all=unreachable
+    )
+
+    texts = "\n".join(str(f) for call in posted for f in call.get("findings", []))
+    assert "apps/nope" in texts
+    assert "does not exist" in texts
+
+
+def test_monorepo_app_whose_checks_raise_is_reported(monkeypatch) -> None:
+    """A raising check used to be a log line and nothing else."""
+
+    def raising(*args, **kwargs):
+        raise RuntimeError("checker exploded")
+
+    posted = _run_mono_flow(monkeypatch, _mono_ecosystem(), run_all=raising)
+
+    texts = "\n".join(str(f) for call in posted for f in call.get("findings", []))
+    assert "RuntimeError" in texts
+    assert "checker exploded" in texts
+
+
+def test_monorepo_deterministic_findings_carry_the_deterministic_flow_name(
+    monkeypatch,
+) -> None:
+    """Both shapes now name the flow the same way.
+
+    The monorepo copy posted deterministic findings under flow_name
+    "conformance-check" — the LLM flow's name — while every standalone repo
+    used "deterministic-conformance" for the same source.
+    """
+
+    def clean(*args, **kwargs):
+        result = MagicMock()
+        result.findings = []
+        result.checked_rule_ids = set()
+        return result
+
+    posted = _run_mono_flow(monkeypatch, _mono_ecosystem(), run_all=clean)
+
+    service_posts = [c for c in posted if c.get("repo") == "app-a"]
+    assert service_posts, "the app was never posted"
+    assert all(c["flow_name"] == "deterministic-conformance" for c in service_posts)
+
+
+def test_post_service_findings_substitutes_the_success_row() -> None:
+    """Evaluated-and-clean must not look like never-evaluated."""
+    import evaluator_cog.flows.conformance as conf
+
+    with patch.object(conf, "_post_tracked") as post:
+        conf._post_service_findings(
+            "some-repo",
+            [],
+            standards_version="9.9.9",
+            run_id="r",
+            flow_name="deterministic-conformance",
+            prefect_log=MagicMock(),
+        )
+
+    findings = post.call_args.kwargs["findings"]
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "SUCCESS"
+    assert "some-repo" in findings[0]["finding"]
