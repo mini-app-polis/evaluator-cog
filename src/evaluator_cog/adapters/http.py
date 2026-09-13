@@ -1,9 +1,18 @@
-"""HTTP adapter: one repository per request.
+"""HTTP adapter: the evaluator's front door.
 
-Translates a POST into an ``EvaluationEvent`` and calls ``handler``. It
-holds no evaluation logic of its own — the point of the split is that the
-same function serves this, the scheduled sweep, and whatever runtime comes
-after, without any of them knowing about the others.
+Two routes, two shapes of the same work. ``/invoke`` translates a POST
+into an ``EvaluationEvent`` and calls ``handler`` — one repository, which
+is what a release triggers. ``/sweep`` calls ``run_fleet_sweep``, which
+loops that same handler over the registry and then runs the checks that
+scope to no repository at all. Neither holds evaluation logic of its own;
+the point of the split is that the same functions serve this and whatever
+runtime comes after, without either knowing about the other.
+
+**The sweep is the occasional path, and it has no schedule.** It exists
+for the two releases that invalidate every repository's last result at
+once — a new standards catalog, and a new evaluator — and those releases
+call it. There is no cron here, and there is nowhere for one to live: this
+process is a web server.
 
 **The request is accepted, not awaited.** An evaluation downloads a
 repository and runs a hundred-odd checks; holding the caller's connection
@@ -14,9 +23,12 @@ the fire-and-forget contract honest rather than merely fast.
 
 **One evaluation at a time.** ``conformance`` keeps the catalog, the
 delivery tally and the run report in module state, so two overlapping
-evaluations in one process would share and corrupt all three. A lock is
-the correct answer while that state is module-level; a queue in front of
-several single-evaluation workers is the answer after.
+evaluations in one process would share and corrupt all three. The lock
+covers a sweep for the whole of its run, which can be minutes — a release
+that arrives mid-sweep waits rather than interleaving, and that is the
+intended behaviour, not a cost of it. A lock is the correct answer while
+that state is module-level; a queue in front of several single-evaluation
+workers is the answer after.
 
 **No registry lookup.** The event is built from what the caller knows —
 repository, ref, org — and the repo's own ``evaluator.yaml`` supplies its
@@ -29,13 +41,16 @@ from __future__ import annotations
 import hmac
 import os
 import threading
+from contextlib import suppress
 from typing import Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from mini_app_polis import logger as logger_mod
+from mini_app_polis.pipeline_status import post_run_finding
 from pydantic import BaseModel, Field
 
 from evaluator_cog.flows.conformance import (
+    _REPO,
     EvaluationEvent,
     _assert_findings_were_delivered,
     _build_conformance_run_id,
@@ -43,6 +58,7 @@ from evaluator_cog.flows.conformance import (
     _get_standards_version,
     _reset_run_tally,
     handler,
+    run_fleet_sweep,
 )
 
 log = logger_mod.get_logger()
@@ -92,6 +108,30 @@ class InvokeRequest(BaseModel):
     )
 
 
+class SweepRequest(BaseModel):
+    """A whole-fleet pass. Nothing to name — the registry says who."""
+
+    mode: Literal["deterministic", "llm"] = Field(
+        "deterministic",
+        description=(
+            "Which engine to run against every repository. Fleet-wide llm "
+            "is the expensive one and is never a release default."
+        ),
+    )
+    run_id: str | None = Field(
+        None,
+        description="Group these findings with an existing run. Usually omitted.",
+    )
+
+
+class SweepAccepted(BaseModel):
+    """What the caller gets back. Not a result — the sweep has not run yet."""
+
+    accepted: bool = True
+    run_id: str
+    mode: str
+
+
 class InvokeAccepted(BaseModel):
     """What the caller gets back. Not a result — the work has not run yet."""
 
@@ -134,6 +174,25 @@ def require_invoke_secret(
         )
 
 
+def _report_failure(what: str, exc: BaseException) -> None:
+    """Say a background job died, in the one place someone is watching.
+
+    What ``make_failure_hook`` did while these ran as Prefect flows. Prefect
+    reported a failed run because it owned the run; nothing owns this one,
+    so the report has to be made here or not at all — and a background task
+    that dies silently is the exact shape of the September outage this
+    module's assertions exist to prevent.
+    """
+    with suppress(Exception):  # the notification is not the job
+        post_run_finding(
+            "conformance-check",
+            "ERROR",
+            f"{what} failed: {type(exc).__name__}: {exc}",
+            repo=_REPO,
+            source="http_adapter",
+        )
+
+
 def _evaluate(event: EvaluationEvent) -> None:
     """Run one evaluation to completion. Never raises into the server.
 
@@ -153,11 +212,28 @@ def _evaluate(event: EvaluationEvent) -> None:
                 result.not_evaluated,
             )
             _assert_findings_were_delivered(log)
-        except Exception:
+        except Exception as exc:
             # The caller is long gone — 202 was returned before this
-            # started — so there is nobody to raise to. Sentry and the
-            # log are the report.
+            # started — so there is nobody to raise to. Sentry, the log
+            # and the notification channel are the report.
             log.exception("invoke: evaluation of %s@%s failed", event.repo, event.ref)
+            _report_failure(f"evaluation of {event.repo}@{event.ref}", exc)
+
+
+def _sweep(*, mode: str, run_id: str) -> None:
+    """Run one fleet sweep to completion. Never raises into the server."""
+    with _EVALUATION_LOCK:
+        try:
+            result = run_fleet_sweep(mode=mode, run_id=run_id, log=log)
+            log.info(
+                "sweep: %d repos, evaluated=%d not_evaluated=%d",
+                result.repos,
+                len(result.evaluated),
+                len(result.not_evaluated),
+            )
+        except Exception as exc:
+            log.exception("sweep: %s failed", run_id)
+            _report_failure(f"sweep {run_id}", exc)
 
 
 @app.post(
@@ -200,6 +276,36 @@ def invoke(payload: InvokeRequest, background: BackgroundTasks) -> InvokeAccepte
     )
     background.add_task(_evaluate, event)
     return InvokeAccepted(run_id=run_id, repo=event.repo, mode=event.mode)
+
+
+@app.post(
+    "/sweep",
+    status_code=202,
+    response_model=SweepAccepted,
+    summary="Evaluate every repository in the registry",
+    dependencies=[Depends(require_invoke_secret)],
+)
+def sweep(payload: SweepRequest, background: BackgroundTasks) -> SweepAccepted:
+    """Accept a whole-fleet pass.
+
+    Minting the run id costs a catalog fetch, and the sweep will fetch the
+    catalog again when it starts. That is deliberate rather than wasteful:
+    a sweep accepted while a catalog release is in flight should grade
+    against the version it actually runs under, not the one that happened
+    to be current when the request arrived.
+    """
+    _reset_run_tally()
+
+    standards_version = _get_standards_version()
+    run_id = payload.run_id or (
+        _build_conformance_run_id(standards_version)
+        if payload.mode == "llm"
+        else _build_deterministic_run_id(standards_version)
+    )
+
+    log.info("sweep: accepted (%s) as %s", payload.mode, run_id)
+    background.add_task(_sweep, mode=payload.mode, run_id=run_id)
+    return SweepAccepted(run_id=run_id, mode=payload.mode)
 
 
 @app.get("/health", summary="Liveness")

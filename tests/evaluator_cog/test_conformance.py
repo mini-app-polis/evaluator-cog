@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import evaluator_cog.flows.conformance as conf_mod
 from evaluator_cog.engine.deterministic import CheckResult
 from evaluator_cog.engine.evaluator_config import EvaluatorConfig
 from evaluator_cog.flows.conformance import (
@@ -17,9 +19,13 @@ from evaluator_cog.flows.conformance import (
     _fetch_full_rule_catalog,
     _fetch_standards_for_service,
     _run_standalone_deterministic,
-    conformance_check_flow,
     run_conformance_check,
+    run_fleet_sweep,
 )
+
+#: The sweep takes its logger rather than resolving one. Tests that drive it
+#: only need the calls not to fail.
+_LOG = logging.getLogger("test-sweep")
 
 
 def _minimal_repo() -> Path:
@@ -57,9 +63,7 @@ def test_post_llm_only_posts_only_llm_findings(monkeypatch) -> None:
             return_value='{"findings":[{"rule_id":"DOC-006","dimension":"documentation_coverage","severity":"WARN","finding":"Public functions lack docstrings.","suggestion":"Add docstrings."}]}',
         ),
         patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client,
-        patch(
-            "evaluator_cog.flows.conformance.get_run_logger", return_value=MagicMock()
-        ),
+        patch.object(conf_mod, "log", MagicMock()),
     ):
         mock_client.from_env.return_value = api
         result = run_conformance_check(
@@ -100,9 +104,7 @@ def test_post_llm_only_false_posts_all_findings(monkeypatch) -> None:
             return_value='{"findings":[{"rule_id":"DOC-006","dimension":"documentation_coverage","severity":"WARN","finding":"LLM finding.","suggestion":""}]}',
         ),
         patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client,
-        patch(
-            "evaluator_cog.flows.conformance.get_run_logger", return_value=MagicMock()
-        ),
+        patch.object(conf_mod, "log", MagicMock()),
     ):
         mock_client.from_env.return_value = api
         run_conformance_check(
@@ -140,9 +142,7 @@ def test_post_llm_only_empty_llm_posts_status(monkeypatch) -> None:
             return_value='{"findings":[]}',
         ),
         patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client,
-        patch(
-            "evaluator_cog.flows.conformance.get_run_logger", return_value=MagicMock()
-        ),
+        patch.object(conf_mod, "log", MagicMock()),
     ):
         mock_client.from_env.return_value = api
         run_conformance_check(
@@ -163,8 +163,8 @@ def test_post_llm_only_empty_llm_posts_status(monkeypatch) -> None:
 def test_run_conformance_check_posts_with_conformance_llm_source(monkeypatch) -> None:
     """run_conformance_check() posts all findings with source='conformance_llm'.
 
-    Note: this helper is used by the LLM path of conformance_check_flow
-    (run_llm=True). The deterministic-only path goes through
+    Note: this helper is used by the LLM path (mode='llm'). The
+    deterministic-only path goes through
     _run_standalone_deterministic instead, which posts with
     source='conformance_deterministic'.
     """
@@ -182,9 +182,7 @@ def test_run_conformance_check_posts_with_conformance_llm_source(monkeypatch) ->
 
     with (
         patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client,
-        patch(
-            "evaluator_cog.flows.conformance.get_run_logger", return_value=MagicMock()
-        ),
+        patch.object(conf_mod, "log", MagicMock()),
     ):
         mock_client.from_env.return_value = api
         run_conformance_check(
@@ -546,7 +544,7 @@ def test_conformance_monorepo_service_failure_does_not_abort_flow(
         patch.object(conf, "post_findings", return_value=conf.PostResult()),
         patch.object(conf, "_fetch_standards_for_service", return_value=[]),
     ):
-        conformance_check_flow(run_llm=False)
+        run_fleet_sweep(mode="deterministic", log=_LOG)
 
     assert len(run_all_calls) == 1
 
@@ -655,7 +653,7 @@ def test_undownloadable_repo_is_reported_not_silently_skipped(monkeypatch) -> No
         patch.object(conf, "post_findings", side_effect=tracking_post),
         patch.object(conf, "_fetch_standards_for_service", return_value=[]),
     ):
-        conformance_check_flow(run_llm=False)
+        run_fleet_sweep(mode="deterministic", log=_LOG)
 
     findings = _posted_findings(post_calls)
     gone = [f for f in findings if "gone" in f.get("finding", "")]
@@ -716,7 +714,7 @@ def test_failed_checks_are_reported_not_silently_skipped(monkeypatch) -> None:
         patch.object(conf, "post_findings", side_effect=tracking_post),
         patch.object(conf, "_fetch_standards_for_service", return_value=[]),
     ):
-        conformance_check_flow(run_llm=False)
+        run_fleet_sweep(mode="deterministic", log=_LOG)
 
     findings = _posted_findings(post_calls)
     assert findings, "a raising check posted nothing at all"
@@ -878,7 +876,7 @@ def _run_mono_flow(monkeypatch, ecosystem: dict, *, run_all):
         patch.object(conf, "post_findings", side_effect=capture),
         patch.object(conf, "_fetch_standards_for_service", return_value=[]),
     ):
-        conformance_check_flow(run_llm=False)
+        run_fleet_sweep(mode="deterministic", log=_LOG)
     return posted
 
 

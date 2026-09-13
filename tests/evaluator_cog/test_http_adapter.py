@@ -152,3 +152,88 @@ def test_health_does_not_reach_its_dependencies() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# /sweep — the whole fleet, on the two releases that invalidate everything
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_accepts_and_returns_a_run_id(client) -> None:
+    """202 with the run id, before any repository has been looked at."""
+    with patch.object(adapter, "run_fleet_sweep") as sweep:
+        response = client.post("/sweep", json={}, headers=_headers())
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["accepted"] is True
+    assert body["mode"] == "deterministic"
+    assert body["run_id"].startswith("deterministic-9.9.9-test-")
+    # TestClient runs background tasks after the response is returned.
+    assert sweep.call_count == 1
+    assert sweep.call_args.kwargs["run_id"] == body["run_id"]
+
+
+def test_sweep_carries_the_mode_and_the_run_id_through(client) -> None:
+    """Both are the caller's to set, and both reach the sweep unchanged."""
+    with patch.object(adapter, "run_fleet_sweep") as sweep:
+        response = client.post(
+            "/sweep",
+            json={"mode": "llm", "run_id": "conformance-6.16.0-abc"},
+            headers=_headers(),
+        )
+
+    assert response.json()["run_id"] == "conformance-6.16.0-abc"
+    assert sweep.call_args.kwargs == {
+        "mode": "llm",
+        "run_id": "conformance-6.16.0-abc",
+        "log": adapter.log,
+    }
+
+
+def test_sweep_rejects_a_bad_token(client) -> None:
+    """Same door, same guard — a sweep is the expensive thing behind it."""
+    with patch.object(adapter, "run_fleet_sweep") as sweep:
+        response = client.post("/sweep", json={}, headers=_headers("wrong"))
+
+    assert response.status_code == 401
+    assert sweep.call_count == 0
+
+
+def test_sweep_refuses_when_no_secret_is_configured(monkeypatch) -> None:
+    """Fails closed, for the reason require_invoke_secret documents."""
+    monkeypatch.delenv("EVALUATOR_INVOKE_SECRET", raising=False)
+    with patch.object(adapter, "run_fleet_sweep") as sweep:
+        response = TestClient(adapter.app).post("/sweep", json={}, headers=_headers())
+
+    assert response.status_code == 503
+    assert sweep.call_count == 0
+
+
+def test_sweep_failure_does_not_escape_the_background_task() -> None:
+    """Nothing owns this run, so a raise here would be a silent death."""
+    with (
+        patch.object(adapter, "run_fleet_sweep", side_effect=RuntimeError("boom")),
+        patch.object(adapter, "_report_failure") as report,
+    ):
+        adapter._sweep(mode="deterministic", run_id="deterministic-1-x")
+
+    assert report.call_count == 1
+
+
+def test_sweep_holds_the_lock_for_the_whole_run() -> None:
+    """An invoke arriving mid-sweep waits. That is the intended behaviour."""
+    held: list[bool] = []
+
+    def _observe(**kwargs):
+        held.append(_EVALUATION_LOCK_IS_HELD())
+        return MagicMock(repos=0, evaluated=[], not_evaluated=[])
+
+    def _EVALUATION_LOCK_IS_HELD() -> bool:
+        return adapter._EVALUATION_LOCK.locked()
+
+    with patch.object(adapter, "run_fleet_sweep", side_effect=_observe):
+        adapter._sweep(mode="deterministic", run_id="deterministic-1-x")
+
+    assert held == [True]
+    assert not adapter._EVALUATION_LOCK.locked()

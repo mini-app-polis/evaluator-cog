@@ -37,10 +37,15 @@ evaluator-cog/
 | Flow | Source value | Trigger | What it evaluates |
 | --- | --- | --- | --- |
 | `pipeline_eval` | `flow_inline` / `flow_hook` / `prefect_webhook` | Called in-process by other cogs; Prefect Cloud automation webhook | Behavioral — did the run behave correctly? |
-| `conformance` (deterministic) | `conformance_deterministic` | Daily cron via Prefect (`run_llm=False`) | Structural — file/AST/YAML rule checks |
-| `conformance` (LLM) | `conformance_llm` | Manual trigger or Prefect automation (`run_llm=True`) | Structural — soft rule assessment by Claude |
-| introspection (EVAL-007) | `standards_drift` | Runs inside every conformance invocation | Catalog vs evaluator drift |
-| introspection (EVAL-003, MONO-003) | `data_quality` | Runs inside every conformance invocation | Quality of stored findings; ecosystem.yaml inventory integrity |
+| `conformance` (deterministic) | `conformance_deterministic` | `POST /invoke` on a repository's release, or `POST /sweep` (`mode='deterministic'`) | Structural — file/AST/YAML rule checks |
+| `conformance` (LLM) | `conformance_llm` | `POST /invoke` or `POST /sweep` with `mode='llm'` | Structural — soft rule assessment by Claude |
+| introspection (EVAL-007) | `standards_drift` | Runs once per **sweep** | Catalog vs evaluator drift |
+| introspection (EVAL-003, MONO-003) | `data_quality` | Runs once per **sweep** | Quality of stored findings; ecosystem.yaml inventory integrity |
+
+The three introspection checks scope to no repository (ADR-004 in
+ecosystem-standards), so a per-repository `/invoke` is not a place they could run.
+They go with the sweep, which is what a standards-catalog or evaluator release
+triggers.
 
 ## Findings destination
 

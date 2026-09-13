@@ -26,6 +26,17 @@ Owner ID sent with API requests.
 
 KAIANO_API_OWNER_ID=your-owner-id
 
+## EVALUATOR_INVOKE_SECRET
+
+Shared secret that api-kaianolevine-com presents on the `X-Evaluator-Token`
+header when it forwards an evaluation or a sweep. Required: the adapter
+refuses every request with 503 when this is unset, because an unconfigured
+secret on a service that clones repositories and writes findings is a
+misconfiguration rather than an invitation. Must match the value set on
+api-kaianolevine-com.
+
+EVALUATOR_INVOKE_SECRET=your-shared-invoke-secret
+
 ## SENTRY_DSN_EVALUATOR
 
 Sentry DSN for error tracking.

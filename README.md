@@ -6,16 +6,29 @@ findings to api-kaianolevine-com.
 
 ## Overview
 
-Two flows, two engine modules:
+A web service, two engine modules:
+- `evaluator_cog.adapters.http` — the entry point. `POST /invoke` evaluates one
+  repository; `POST /sweep` evaluates the whole registry. Both are secret-guarded,
+  both answer 202 and do the work in the background. Railway starts this
+  (`railway.json`), not a Prefect runner — see
+  [ADR-0004](docs/decisions/ADR-0004-evaluation-on-demand.md)
+- `evaluator_cog.flows.conformance` — `handler(event)` is the unit of work: one
+  repository, downloaded as a **zipball** from GitHub and run through the
+  deterministic and/or LLM checks. `run_fleet_sweep()` loops it over the registry
+  and then runs the checks that scope to no repository at all
 - `evaluator_cog.flows.pipeline_eval` — post-run behavioral evaluation; calls
-  Claude, posts findings; handles Prefect webhook state events
-- `evaluator_cog.flows.conformance` — scheduled structural conformance checker;
-  downloads each active repo as a **zipball** from GitHub, runs deterministic + LLM checks.
-  Runs on a daily cron (`0 9 * * *`, set via `prefect.serve()` in `main.py`) by design —
-  this is a scheduled audit, not an event-driven pipeline, so the watcher-cog trigger
-  pattern does not apply (see PIPE-015 exemption in `evaluator.yaml`)
+  Claude, posts findings; handles Prefect webhook state events. A library module
+  called in-process by other cogs, not a served deployment
 - `evaluator_cog.engine.deterministic` — file/AST/YAML rule checks (100+ rules)
 - `evaluator_cog.engine.llm` — soft rule assessment, prompt builders, response parsing
+
+Nothing here is scheduled. A repository is evaluated when it releases: its CI posts
+to `POST /v1/evaluations/runs` on api-kaianolevine-com, which forwards to `/invoke`.
+A standards-catalog or evaluator release posts to `POST /v1/evaluations/sweeps`
+instead, because those two are what invalidate every repository's last result at once.
+
+Rules arrive as a compiled catalog from `GET /v1/standards/catalog`. This repo does
+not check out ecosystem-standards.
 
 Findings are written to the `pipeline_evaluations` table via
 `api-kaianolevine-com` with `source=flow_inline` (normal runs) or

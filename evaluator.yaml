@@ -8,28 +8,54 @@ traits:
   # This repo IS evaluator-cog — PIPE-011 (AI evaluation step) cannot
   # apply to the evaluator itself.
 
-# Note: multi-flow trait was removed. evaluator-cog serves exactly one
-# Prefect deployment (conformance-check); pipeline_eval.py is a library
-# module called in-process by other cogs, not a served deployment.
-# CD-015's source scanner handles the single-serve structure correctly.
+# Note: evaluator-cog no longer serves Prefect deployments at all. It is a
+# web service: api-kaianolevine-com posts one repository to /invoke when
+# that repository releases, and posts /sweep when the standards catalog or
+# the evaluator itself releases. pipeline_eval.py remains a library module
+# called in-process by other cogs, not a served deployment.
+#
+# The type is still pipeline-cog because what this repo *is* has not
+# changed — it consumes a source of truth, evaluates, and files findings.
+# What changed is how a run starts. Several rules under this type assume
+# Prefect is the only answer to that, and they are exempted individually
+# below rather than by relabelling the repo; the right fix is in the
+# standards, and this repo is the proof of concept that motivates it.
 
 exemptions:
+  - rule: CD-015
+    reason: >
+      CD-015 asserts a prefect.serve() registration exists and has no
+      applicability gate, so it WARNs on any cog that does not register
+      flows. evaluator-cog registers none: src/evaluator_cog/main.py was
+      deleted when the conformance flow became handler() behind an HTTP
+      adapter, and railway.json starts uvicorn rather than a Prefect
+      runner. CD-016 already models this correctly — it gates on whether
+      the repo serves anything at all before checking how — and CD-015
+      needs the same gate.
   - rule: PIPE-015
     reason: >
-      conformance_check_flow is a scheduled audit, not an event-driven
-      pipeline. It scans every active repo on a daily cron ('0 9 * * *',
-      set via prefect.serve() in main.py) rather than reacting to a
-      source-of-truth change — there is no input artifact for watcher-cog
-      to watch. The cron-scheduled deployment is the intended trigger
-      architecture for this cog, not an oversight.
+      The canonical pattern PIPE-015 describes is a Drive event picked up
+      by watcher-cog and turned into a Prefect flow run. There is no input
+      artifact here to watch: the event that should evaluate a repository
+      is that repository cutting a release, and CI posts it to
+      api-kaianolevine-com, which hands it to /invoke. That is event-driven
+      — more so than the daily cron this exemption used to describe — but
+      it is not the shape PIPE-015 checks for.
   - rule: PIPE-008
     reason: "The deterministic checker source contains retired trigger pattern strings (e.g. repository_dispatch) as string literals being checked against, not as active trigger usage. PIPE-008 does not apply."
   - rule: CD-009
     reason: "evaluator_config.py uses stdlib logging intentionally — it is a pure utility module loaded during unit tests where the mini_app_polis shared logger is unavailable. CD-009 does not apply to test-safe utility modules."
   - rule: CD-010
-    reason: "sentry_sdk.init() is present in main.py with SENTRY_DSN_EVALUATOR. The LLM conformance pass cannot read source content directly and incorrectly flags this as absent."
+    reason: "sentry_sdk.init() is present with SENTRY_DSN_EVALUATOR in the entry point, src/evaluator_cog/adapters/http.py. The LLM conformance pass cannot read source content directly and incorrectly flags this as absent."
   - rule: PIPE-004
-    reason: "Concurrency guard implemented via prefect.concurrency.sync concurrency('evaluator-cog-writes', occupy=1) wrapping the full write path in conformance_check_flow."
+    reason: >
+      The concurrency guard is threading.Lock in adapters/http.py, held
+      across every evaluation and every sweep. It replaced
+      prefect.concurrency('evaluator-cog-writes', occupy=1), which is
+      unavailable outside a Prefect runtime — and which guarded less than
+      the lock does: the catalog, the delivery tally and the run report are
+      module state, so overlapping runs corrupt each other's accounting
+      before they ever race on a write.
 
 deferrals:
   # CD-012 was retired in ecosystem-standards (ADR-008) and replaced by
@@ -38,10 +64,11 @@ deferrals:
   # tracked as work on the check registry, not as a deferral here.
   - rule: PIPE-006
     reason: >
-      pipeline_eval.py is not a @flow-decorated function — it is a library module called
-      in-process by other cogs. The dual get_run_logger()/stdlib fallback pattern applies
-      to @flow entry points only. The module uses the shared mini_app_polis logger directly,
-      which is correct for library code.
+      The dual get_run_logger()/stdlib fallback pattern applies to @flow entry
+      points, and this repo no longer has one — conformance.py imports nothing
+      from prefect, and pipeline_eval.py is a library module called in-process
+      by other cogs. Both use the shared mini_app_polis logger directly, which
+      is correct for code with no Prefect run context to resolve.
     until: null
   - rule: PIPE-002
     reason: >
