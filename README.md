@@ -37,12 +37,23 @@ Findings are written to the `pipeline_evaluations` table via
 
 ## Standards coverage
 
-`ecosystem-standards` currently declares **108 deterministic rules**, of which
-**102 have a check registered** in this engine (94%). Recount rather than trust
-this line — it is hand-maintained and was stale by ten rules before the
-2026-09 identity work. Checks are wired in `run_all_checks` in
-`src/evaluator_cog/engine/deterministic.py` and dispatched per repo type via
-the `applies_to` list in each rule's catalog entry.
+Rules arrive as a compiled catalog from
+`GET https://api.kaianolevine.com/v1/standards/catalog`. That endpoint is also
+the answer to "how many rules are there" — it reports `rule_count`, and how
+many are checkable, deterministic and LLM-assessed. This section used to carry
+those numbers by hand and was stale by ten rules before anyone noticed, so it
+no longer states them.
+
+Coverage is not tracked by hand either. **EVAL-007 compares the rule ids this
+engine registers against the ids in the published catalog on every sweep**, and
+files a `standards_drift` finding for anything on either side without a
+counterpart. A rule added to the catalog with no check here, or a check here
+for a rule the catalog has retired, shows up as a finding rather than as a
+number in a README that someone has to remember to update.
+
+Checks are wired in `run_all_checks` in
+`src/evaluator_cog/engine/deterministic/runner.py` and dispatched per repo type
+via the `applies_to` list in each rule's catalog entry.
 
 **Checks grouped by subsystem:**
 - **File/YAML scans** (majority): pyproject.toml, package.json, .github/workflows/*.yml,
@@ -91,12 +102,72 @@ deterministic engine implementation is expected.
   entry in that repo's `evaluator.yaml` `exemptions:` section, not by relaxing
   the check globally.
 
+## Triggering an evaluation
+
+Nothing here is scheduled, and nothing calls this service directly. The front
+door is api-kaianolevine-com; the evaluator is behind it.
+
+```
+repo release → its CI → POST /v1/evaluations/runs   → POST /invoke → handler()
+                                    (api)                 (here)
+
+standards or evaluator release
+             → its CI → POST /v1/evaluations/sweeps → POST /sweep  → run_fleet_sweep()
+```
+
+### From a repository's CI
+
+Add the `evaluate` job to `ci.yml`, after `release`:
+
+```yaml
+  evaluate:
+    needs: release
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    uses: mini-app-polis/.github/.github/workflows/evaluate.yml@v3
+    secrets:
+      api-key: ${{ secrets.CI_VALIDATOR_API_KEY }}
+```
+
+`scope: fleet` asks for a whole-fleet sweep instead, and belongs to
+**ecosystem-standards** and **evaluator-cog** alone — a new rule catalog or a
+new evaluator invalidates every repository's last result at once, where every
+other release invalidates one. evaluator-cog also passes `wait-seconds: 120`,
+because its own release redeploys the evaluator the sweep is about to ask.
+
+The contract is fire-and-forget. CI posts, reads a 202, and exits; the
+evaluation runs after the runner is gone. What CI reports is whether the
+request landed, never what was found.
+
+### By hand
+
+```bash
+curl -X POST https://api.kaianolevine.com/v1/evaluations/runs \
+  -H "Authorization: Bearer $CI_VALIDATOR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"repo": "watcher-cog", "ref": "main"}'
+```
+
+`mode` defaults to `deterministic`, which costs no tokens. `mode: "llm"` runs
+the deterministic pass first (for `checked_rule_ids`) and then the soft-rule
+assessment.
+
+### What a monorepo can't do yet
+
+`/invoke` builds an event carrying exactly one service, so a monorepo with two
+apps cannot be evaluated through it — and sibling deduplication (ADR-0002)
+needs every app in the workspace to arrive in the same event, so splitting it
+into two requests would be worse than not asking. deejaytools-com is therefore
+**not** wired to evaluate itself on release; the sweep builds its event
+correctly and covers it.
+
 ## Inputs and outputs
 
-**Inputs:** Pipeline run metrics (sets imported, failed, skipped, track counts)
-passed directly from calling cogs via `evaluate_pipeline_run()`. Prefect flow
-state events received as JSON via stdin or webhook payload. Repo source code
-downloaded from GitHub (zipball) for structural conformance checks.
+**Inputs:** A conformance request over HTTP — `POST /invoke` for one
+repository, `POST /sweep` for the registry — from which the repo source is
+downloaded from GitHub as a zipball. Pipeline run metrics (sets imported,
+failed, skipped, track counts) passed directly from calling cogs via
+`evaluate_pipeline_run()`. Prefect flow state events received as JSON via
+stdin or webhook payload.
 
 **Outputs:** Structured findings written to the `pipeline_evaluations` table
 via `POST /v1/evaluations` on api-kaianolevine-com. Each finding includes
@@ -116,6 +187,11 @@ uv run pytest
 Copy `.env.example` to `.env` and fill in values before running.
 
 ## Wiring into a Prefect flow
+
+For **other** cogs. evaluator-cog itself no longer runs under Prefect
+(ADR-0004); this is how a Prefect-managed cog reports its own run to
+`pipeline_eval`, which is unchanged.
+
 ```python
 from evaluator_cog.flows.pipeline_eval import evaluate_pipeline_run
 

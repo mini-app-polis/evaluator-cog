@@ -12,7 +12,15 @@ from evaluator_cog.engine.deterministic._shared import (
     _finding,
 )
 
-_CANONICAL_CI_JOBS = frozenset({"security", "test", "release"})
+#: CD-026's canonical job names.
+#:
+#: ``evaluate`` joined the set when conformance became something a repo asks
+#: for on its own release rather than something a cron did to it. It is a
+#: stage, not a variation on ``test``: it runs after ``release``, it asks
+#: about the repository rather than about the change, and nothing waits for
+#: the answer. Fifteen repos would otherwise carry the same exemption, which
+#: is the shape of a rule that has fallen behind its architecture.
+_CANONICAL_CI_JOBS = frozenset({"security", "test", "release", "evaluate"})
 
 
 def _ci_workflow(repo_path: Path) -> dict | None:
@@ -100,7 +108,7 @@ def check_canonical_ci_job_names(repo_path: Path) -> list[Finding]:
                     "WARN",
                     "structural_conformance",
                     f"ci.yml job `{name}` is outside the canonical set "
-                    f"(security, test, release).",
+                    f"(security, test, release, evaluate).",
                     f"Rename `{name}` to `test` if it is the work job, and "
                     f"update any `needs:` that reference it.",
                 )

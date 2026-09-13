@@ -6,11 +6,13 @@
 evaluator-cog/
   src/
     evaluator_cog/
+      adapters/
+        http.py           # the entry point: POST /invoke, POST /sweep, GET /health
       flows/
         pipeline_eval.py    # post-run behavioral evaluation; webhook handler
-        conformance.py      # scheduled structural conformance checker
+        conformance.py      # handler() + run_fleet_sweep(): structural conformance
       engine/
-        deterministic/      # file / AST / YAML rule checks (~40 rules), split by domain
+        deterministic/      # file / AST / YAML rule checks, split by domain
           __init__.py           # re-exports the public surface (run_all_checks + all check_*)
           _shared.py            # Finding, CheckResult, _finding helper
           runner.py             # run_all_checks dispatcher + dedup
