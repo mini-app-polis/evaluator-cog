@@ -89,7 +89,7 @@ jobs:
   evaluate:
     needs: release
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    uses: mini-app-polis/.github/.github/workflows/evaluate.yml@v2
+    uses: mini-app-polis/.github/.github/workflows/evaluate.yml@v3
     with:
       scope: fleet
       wait-seconds: 120
