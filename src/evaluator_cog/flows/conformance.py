@@ -29,6 +29,7 @@ import tempfile
 import time
 import zipfile
 from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -908,8 +909,17 @@ def _run_standalone_conformance(
     rule_applies_to: dict[str, list[str]] | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
+    monorepo_root: Path | None = None,
+    workspace_package_json_text: str | None = None,
+    monorepo_context: dict | None = None,
 ) -> None:
-    """Run full conformance for a single cloned service (posts immediately)."""
+    """Run full conformance for a single cloned service (posts immediately).
+
+    The monorepo parameters are pass-through. They exist so one function
+    serves both shapes — the monorepo branch of the flow used to call
+    ``run_conformance_check`` directly with them, which is how the two
+    paths drifted apart.
+    """
     repo_id = service.get("id", "")
     if not repo_id:
         return
@@ -921,15 +931,27 @@ def _run_standalone_conformance(
     raw_exc = service.get("check_exceptions") or []
     check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
 
-    # Load evaluator.yaml from cloned repo (preferred), fall back to ecosystem.yaml
+    # evaluator.yaml from the cloned repo, falling back to the ecosystem
+    # record. A monorepo app prefers the workspace root and falls back to
+    # its own path.
+    check_root = monorepo_root or repo_path
     evaluator_cfg = load_evaluator_config(
-        repo_path,
+        check_root,
         fallback_type=service.get("type") or dod_type,
         fallback_exceptions=check_exceptions,
         fallback_exception_reasons=exception_reasons,
         rule_catalog=rule_catalog,
         catalog_schema=catalog_schema,
     )
+    if monorepo_root and not (check_root / "evaluator.yaml").exists():
+        evaluator_cfg = load_evaluator_config(
+            repo_path,
+            fallback_type=service.get("type") or dod_type,
+            fallback_exceptions=check_exceptions,
+            fallback_exception_reasons=exception_reasons,
+            rule_catalog=rule_catalog,
+            catalog_schema=catalog_schema,
+        )
 
     standards_rules = _fetch_standards_for_service(service, evaluator_cfg)
     try:
@@ -945,6 +967,9 @@ def _run_standalone_conformance(
             exception_reasons=exception_reasons,
             standards_rules=standards_rules,
             run_id=run_id,
+            monorepo_root=monorepo_root,
+            workspace_package_json_text=workspace_package_json_text,
+            monorepo_context=monorepo_context,
             post=True,
             post_llm_only=True,
             evaluator_config=evaluator_cfg,
@@ -1048,7 +1073,47 @@ def _build_deterministic_run_id(standards_version: str) -> str:
     return f"deterministic-{standards_version}-{unique_suffix}"
 
 
-def _run_standalone_deterministic(
+def _post_service_findings(
+    repo_id: str,
+    findings: list[dict],
+    *,
+    standards_version: str,
+    run_id: str,
+    flow_name: str,
+    prefect_log: Any,
+) -> None:
+    """Deliver one service's deterministic findings.
+
+    A service with nothing to report gets the SUCCESS row rather than
+    silence: "evaluated and clean" and "not evaluated" must not look alike
+    from the outside.
+    """
+    if not findings:
+        findings = [
+            {
+                "rule_id": "STATUS",
+                "dimension": "structural_conformance",
+                "severity": "SUCCESS",
+                "finding": (
+                    f"{repo_id} passed all deterministic checks for "
+                    f"standards v{standards_version}."
+                ),
+                "suggestion": "",
+            }
+        ]
+    _post_tracked(
+        repo_id,
+        prefect_log,
+        findings=findings,
+        run_id=run_id,
+        repo=repo_id,
+        flow_name=flow_name,
+        source="conformance_deterministic",
+        standards_version=standards_version,
+    )
+
+
+def _evaluate_service_deterministic(
     service: dict,
     repo_path: Path,
     standards_version: str,
@@ -1056,14 +1121,25 @@ def _run_standalone_deterministic(
     prefect_log: Any,
     monorepo_root: Path | None = None,
     workspace_package_json_text: str | None = None,
-    rule_applies_to: dict[str, list[str]] | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
-) -> None:
-    """Run deterministic-only checks for a single service and post immediately."""
+) -> list[dict] | None:
+    """Compute one service's deterministic findings. Does not deliver them.
+
+    Returns the findings, or ``None`` when the service could not be
+    evaluated — in which case a not-evaluated row has already been posted,
+    so the caller has nothing left to report.
+
+    Computing and delivering are separate because a monorepo cannot post as
+    it goes: sibling deduplication needs every service's findings before
+    any of them are sent. Splitting here is what lets one implementation
+    serve both shapes, rather than the monorepo path carrying its own copy
+    of this logic — which is where it lived, and where it had drifted into
+    swallowing a raising check.
+    """
     repo_id = service.get("id", "")
     if not repo_id:
-        return
+        return None
 
     service_type = service.get("type", "worker")
     _raw_language = str(service.get("language") or "python")
@@ -1073,7 +1149,9 @@ def _run_standalone_deterministic(
     raw_exc = service.get("check_exceptions") or []
     check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
 
-    # Load evaluator.yaml from cloned repo (preferred), fall back to ecosystem.yaml
+    # evaluator.yaml from the cloned repo, falling back to the ecosystem
+    # record. For a monorepo app the root is preferred and the app path is
+    # the fallback, since a workspace usually governs its apps.
     check_root = monorepo_root or repo_path
     evaluator_cfg = load_evaluator_config(
         check_root,
@@ -1083,7 +1161,6 @@ def _run_standalone_deterministic(
         rule_catalog=rule_catalog,
         catalog_schema=catalog_schema,
     )
-    # For monorepo apps the evaluator.yaml may live at the app path
     if monorepo_root and not (check_root / "evaluator.yaml").exists():
         evaluator_cfg = load_evaluator_config(
             repo_path,
@@ -1117,13 +1194,6 @@ def _run_standalone_deterministic(
                 "deterministic: %s: %s", repo_id, note
             ),
         )
-        findings = result.findings
-        prefect_log.info(
-            "deterministic: %d findings for %s (%.1fs)",
-            len(findings),
-            repo_id,
-            time.monotonic() - _repo_started,
-        )
     except Exception as exc:
         prefect_log.warning(
             "deterministic: run_all_checks failed for %s: %s", repo_id, exc
@@ -1137,28 +1207,57 @@ def _run_standalone_deterministic(
             standards_version=standards_version,
             prefect_log=prefect_log,
         )
-        return
+        return None
 
-    if not findings:
-        findings = [
-            {
-                "rule_id": "STATUS",
-                "dimension": "structural_conformance",
-                "severity": "SUCCESS",
-                "finding": f"{repo_id} passed all deterministic checks for standards v{standards_version}.",
-                "suggestion": "",
-            }
-        ]
-
-    _post_tracked(
+    prefect_log.info(
+        "deterministic: %d findings for %s (%.1fs)",
+        len(result.findings),
         repo_id,
+        time.monotonic() - _repo_started,
+    )
+    return result.findings
+
+
+def _run_standalone_deterministic(
+    service: dict,
+    repo_path: Path,
+    standards_version: str,
+    run_id: str,
+    prefect_log: Any,
+    monorepo_root: Path | None = None,
+    workspace_package_json_text: str | None = None,
+    rule_applies_to: dict[str, list[str]] | None = None,
+    rule_catalog: dict[str, dict] | None = None,
+    catalog_schema: dict | None = None,
+) -> None:
+    """Evaluate one service and post immediately.
+
+    The standalone shape: nothing to deduplicate against, so compute and
+    deliver in one step.
+    """
+    repo_id = service.get("id", "")
+    if not repo_id:
+        return
+    findings = _evaluate_service_deterministic(
+        service,
+        repo_path,
+        standards_version,
+        run_id,
         prefect_log,
-        findings=findings,
-        run_id=run_id,
-        repo=repo_id,
-        flow_name="deterministic-conformance",
-        source="conformance_deterministic",
+        monorepo_root=monorepo_root,
+        workspace_package_json_text=workspace_package_json_text,
+        rule_catalog=rule_catalog,
+        catalog_schema=catalog_schema,
+    )
+    if findings is None:
+        return
+    _post_service_findings(
+        repo_id,
+        findings,
         standards_version=standards_version,
+        run_id=run_id,
+        flow_name="deterministic-conformance",
+        prefect_log=prefect_log,
     )
 
 
@@ -1292,6 +1391,332 @@ def _run_applies_to_absent_checks(
         prefect_log.warning("EVAL-007: check failed: %s", exc)
 
 
+def _fleet_events(
+    ecosystem: dict,
+    *,
+    run_id: str,
+    mode: str,
+    log: Any,
+) -> list[EvaluationEvent]:
+    """Turn the registry into one event per repository.
+
+    This is the sweep's job and only the sweep's job. A release-triggered
+    invoke builds its event from what CI already knows — repository, ref,
+    commit — and never reads a registry at all, which is why the
+    translation lives out here rather than inside the handler.
+
+    A service id appears at most once: duplicate registry rows are a
+    data-quality problem, and evaluating one twice would post two sets of
+    findings for the same repository in the same run.
+    """
+    monorepos = _get_monorepos(ecosystem)
+    seen: set[str] = set()
+    events: list[EvaluationEvent] = []
+    grouped: dict[str, list[dict]] = {}
+
+    for service in _get_active_repos(ecosystem):
+        service_id = str(service.get("id") or "")
+        if not service_id:
+            continue
+        if service_id in seen:
+            log.warning("skipping duplicate service %s", service_id)
+            continue
+        seen.add(service_id)
+
+        monorepo_id = str(service.get("monorepo") or "")
+        if monorepo_id:
+            grouped.setdefault(monorepo_id, []).append(service)
+            continue
+
+        events.append(
+            EvaluationEvent(
+                org=_declared_org(service),
+                repo=str(service.get("repo") or service_id),
+                ref=_declared_branch(service),
+                services=(service,),
+                run_id=run_id,
+                mode=mode,
+            )
+        )
+
+    for monorepo_id, services in grouped.items():
+        record = monorepos.get(monorepo_id)
+        if record is None:
+            # Declared membership of a monorepo the registry does not
+            # describe. Each app is still a repository of its own as far
+            # as the registry is concerned, so evaluate them that way
+            # rather than dropping them.
+            log.warning(
+                "monorepo %s is not in the registry — evaluating its apps individually",
+                monorepo_id,
+            )
+            for service in services:
+                events.append(
+                    EvaluationEvent(
+                        org=_declared_org(service),
+                        repo=str(service.get("repo") or service.get("id")),
+                        ref=_declared_branch(service),
+                        services=(service,),
+                        run_id=run_id,
+                        mode=mode,
+                    )
+                )
+            continue
+
+        events.append(
+            EvaluationEvent(
+                org=_declared_org(record),
+                repo=str(record.get("repo") or monorepo_id),
+                ref=_declared_branch(record),
+                services=tuple(services),
+                run_id=run_id,
+                mode=mode,
+                monorepo=record,
+            )
+        )
+
+    return events
+
+
+@dataclass(frozen=True)
+class EvaluationEvent:
+    """One repository to evaluate, and everything needed to do it.
+
+    The whole input. No flow state, no registry lookup, no ambient
+    configuration — which is what lets the same function serve a
+    scheduled sweep and an HTTP invoke without knowing which it is.
+
+    A repository, not a service: ``services`` is every service the
+    repository carries, so a monorepo is one event covering all of its
+    apps. That is not a convenience. Sibling deduplication treats an
+    identical finding on two apps as one issue, and it cannot know that
+    until every app in the workspace has been evaluated — so they have to
+    arrive together or not at all. A standalone repo is the same shape
+    with one service in it.
+    """
+
+    org: str
+    repo: str
+    ref: str
+    services: tuple[dict, ...]
+    run_id: str
+    mode: str = "deterministic"
+    #: The monorepo registry record, when this repository is one.
+    monorepo: dict | None = None
+
+
+@dataclass
+class EvaluationResult:
+    """What one invocation did. Counts, not findings — those went to the API."""
+
+    repo: str
+    evaluated: list[str] = field(default_factory=list)
+    not_evaluated: list[str] = field(default_factory=list)
+
+
+def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
+    """Evaluate one repository. The unit of work, and the whole of it.
+
+    Downloads the ref into its own temporary directory, evaluates every
+    service the repository carries, delivers the findings, and cleans up.
+    Everything it needs comes from the event and the published catalog.
+
+    Deliberately self-sufficient rather than handed its context: the
+    catalog fetch is cached for the run, so re-deriving the schema and
+    rule catalog here costs a dictionary rebuild and buys a function that
+    can be called by an HTTP adapter with nothing else in scope. That is
+    the point of the shape — the later move to a function runtime is a new
+    caller, not a rewrite.
+
+    Never raises. A repository that could not be downloaded, a service
+    whose declared path is absent, and a check that blew up are all
+    reported as not-evaluated rows rather than exceptions, because the
+    caller cannot do anything with them that the report does not already
+    say — and because a run that skipped a repository silently is the
+    failure this evaluator has been bitten by most.
+    """
+    standards_version = _get_standards_version()
+    catalog_schema = _fetch_catalog_schema()
+    rule_catalog = _fetch_full_rule_catalog()
+    rule_applies_to = {
+        rule_id: meta["applies_to"]
+        for rule_id, meta in rule_catalog.items()
+        if isinstance(meta, dict) and isinstance(meta.get("applies_to"), list)
+    }
+
+    run_llm = event.mode == "llm"
+    flow_name = "conformance-check" if run_llm else "deterministic-conformance"
+    source = "conformance_check" if run_llm else "conformance_deterministic"
+
+    result = EvaluationResult(repo=event.repo)
+    service_ids = [
+        str(service.get("id") or "") for service in event.services if service.get("id")
+    ]
+    if not service_ids:
+        return result
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = _download_repo(event.repo, tmp_dir, event.ref, event.org)
+        if root is None:
+            # One failed download hides every service inside it. The row
+            # goes against each of them rather than against the repository,
+            # which for a monorepo is not something the report has a column
+            # for.
+            for service_id in service_ids:
+                log.warning(
+                    "%s: skipping %s — could not download %s@%s",
+                    event.mode,
+                    service_id,
+                    event.repo,
+                    event.ref,
+                )
+                _report_issue("repo_download_failed", service_id)
+                _post_not_evaluated(
+                    service_id,
+                    f"the repository could not be downloaded "
+                    f"({event.repo}@{event.ref})",
+                    run_id=event.run_id,
+                    flow_name=flow_name,
+                    source=source,
+                    standards_version=standards_version,
+                    prefect_log=log,
+                )
+                result.not_evaluated.append(service_id)
+            return result
+
+        monorepo_root = root if event.monorepo else None
+        workspace_package_json_text = (
+            _read_workspace_package_json(root) if event.monorepo else None
+        )
+        monorepo_context = (
+            {
+                "monorepo_id": event.monorepo.get("id"),
+                "package_manager": event.monorepo.get("package_manager", "pnpm"),
+                "workspace_deps": event.monorepo.get("workspace_deps", []),
+                "sibling_apps": [
+                    {
+                        "service_id": app.get("service_id") or app.get("id"),
+                        "path": app.get("path"),
+                    }
+                    for app in event.monorepo.get("apps", [])
+                ],
+            }
+            if event.monorepo
+            else None
+        )
+
+        findings_by_service: dict[str, list[dict[str, Any]]] = {}
+
+        for service in event.services:
+            service_id = str(service.get("id") or "")
+            if not service_id:
+                continue
+
+            service_path = str(service.get("monorepo_path") or "")
+            repo_path = root / service_path if service_path else root
+
+            if not repo_path.is_dir():
+                log.warning(
+                    "%s: declared path '%s' not found in %s for %s",
+                    event.mode,
+                    service_path,
+                    event.repo,
+                    service_id,
+                )
+                _report_issue("declared_path_missing", service_id)
+                _post_not_evaluated(
+                    service_id,
+                    f"its declared path '{service_path}' does not exist in "
+                    f"{event.repo}",
+                    run_id=event.run_id,
+                    flow_name=flow_name,
+                    source=source,
+                    standards_version=standards_version,
+                    prefect_log=log,
+                )
+                result.not_evaluated.append(service_id)
+                continue
+
+            log.info("%s: processing %s", event.mode, service_id)
+
+            try:
+                if run_llm:
+                    _run_standalone_conformance(
+                        service,
+                        repo_path,
+                        standards_version,
+                        event.run_id,
+                        log,
+                        rule_applies_to=rule_applies_to,
+                        rule_catalog=rule_catalog,
+                        catalog_schema=catalog_schema,
+                        monorepo_root=monorepo_root,
+                        workspace_package_json_text=workspace_package_json_text,
+                        monorepo_context=monorepo_context,
+                    )
+                    result.evaluated.append(service_id)
+                else:
+                    computed = _evaluate_service_deterministic(
+                        service,
+                        repo_path,
+                        standards_version,
+                        event.run_id,
+                        log,
+                        monorepo_root=monorepo_root,
+                        workspace_package_json_text=workspace_package_json_text,
+                        rule_catalog=rule_catalog,
+                        catalog_schema=catalog_schema,
+                    )
+                    if computed is None:
+                        # It reported its own failure; nothing left to say.
+                        result.not_evaluated.append(service_id)
+                    else:
+                        findings_by_service[service_id] = computed
+            except Exception as exc:
+                # Anything around the checks rather than inside them —
+                # loading evaluator.yaml, parsing check_exceptions. This
+                # used to log and post nothing, which is the same
+                # invisible absence by a different route.
+                log.error(
+                    "%s: unhandled error processing %s — skipping: %s",
+                    event.mode,
+                    service_id,
+                    exc,
+                    exc_info=True,
+                )
+                _post_not_evaluated(
+                    service_id,
+                    f"processing raised before findings could be computed "
+                    f"({type(exc).__name__}: {exc})",
+                    run_id=event.run_id,
+                    flow_name=flow_name,
+                    source=source,
+                    standards_version=standards_version,
+                    prefect_log=log,
+                )
+                result.not_evaluated.append(service_id)
+
+        if not run_llm:
+            # Deduplicate before delivering: an identical finding on two
+            # siblings is one issue, and that is only knowable once every
+            # sibling has run. A single-service repository falls straight
+            # through.
+            if len(findings_by_service) > 1:
+                findings_by_service = _deduplicate_sibling_findings(findings_by_service)
+            for service_id, service_findings in findings_by_service.items():
+                _post_service_findings(
+                    service_id,
+                    service_findings,
+                    standards_version=standards_version,
+                    run_id=event.run_id,
+                    flow_name=flow_name,
+                    prefect_log=log,
+                )
+                result.evaluated.append(service_id)
+
+    return result
+
+
 _REPO = "evaluator-cog"
 _report_failure = make_failure_hook("conformance-check", repo=_REPO)
 
@@ -1340,11 +1765,9 @@ def conformance_check_flow(run_llm: bool = False) -> None:
         len(rule_catalog),
     )
 
-    rule_applies_to = {
-        rule_id: meta["applies_to"]
-        for rule_id, meta in rule_catalog.items()
-        if isinstance(meta, dict) and isinstance(meta.get("applies_to"), list)
-    }
+    # rule_applies_to is derived inside the handler now, from the same
+    # cached catalog. The flow keeps rule_catalog only for the log line
+    # above and for the applies_to-absent checks below.
     if not rule_catalog:
         prefect_log.warning(
             "%s: full rule catalog empty — type-based auto-exceptions "
@@ -1366,464 +1789,23 @@ def conformance_check_flow(run_llm: bool = False) -> None:
         else _build_deterministic_run_id(standards_version)
     )
 
+    event_mode = "llm" if run_llm else "deterministic"
+
     with concurrency("evaluator-cog-writes", occupy=1):
-        monorepos_registry = _get_monorepos(ecosystem)
+        for event in _fleet_events(
+            ecosystem, run_id=run_id, mode=event_mode, log=prefect_log
+        ):
+            handler(event, log=prefect_log)
 
-        standalone_services = [s for s in active_repos if not s.get("monorepo")]
-        monorepo_service_groups: dict[str, list[dict]] = {}
-        for s in active_repos:
-            mono_id = s.get("monorepo")
-            if mono_id:
-                monorepo_service_groups.setdefault(str(mono_id), []).append(s)
-
-        # One service id must run at most once per flow (duplicate ecosystem rows, etc.).
-        seen_repo_ids: set[str] = set()
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            for service in standalone_services:
-                repo_id = service.get("id", "")
-                repo_name = service.get("repo") or repo_id
-                if not repo_id:
-                    continue
-                if repo_id in seen_repo_ids:
-                    prefect_log.warning(
-                        "%s: skipping duplicate service %s",
-                        flow_label,
-                        repo_id,
-                    )
-                    continue
-                seen_repo_ids.add(repo_id)
-
-                prefect_log.info("%s: processing %s", flow_label, repo_id)
-
-                repo_path = _download_repo(
-                    repo_name,
-                    tmp_dir,
-                    _declared_branch(service),
-                    _declared_org(service),
-                )
-                if repo_path is None:
-                    prefect_log.warning(
-                        "%s: skipping %s — could not clone", flow_label, repo_id
-                    )
-                    _post_not_evaluated(
-                        repo_id,
-                        f"the repository could not be downloaded "
-                        f"({repo_name}@{_declared_branch(service)})",
-                        run_id=run_id,
-                        flow_name=(
-                            "conformance-check"
-                            if run_llm
-                            else "deterministic-conformance"
-                        ),
-                        source=(
-                            "conformance_check"
-                            if run_llm
-                            else "conformance_deterministic"
-                        ),
-                        standards_version=standards_version,
-                        prefect_log=prefect_log,
-                    )
-                    continue
-
-                try:
-                    if run_llm:
-                        _run_standalone_conformance(
-                            service,
-                            repo_path,
-                            standards_version,
-                            run_id,
-                            prefect_log,
-                            rule_applies_to=rule_applies_to,
-                            rule_catalog=rule_catalog,
-                            catalog_schema=catalog_schema,
-                        )
-                    else:
-                        _run_standalone_deterministic(
-                            service,
-                            repo_path,
-                            standards_version,
-                            run_id,
-                            prefect_log,
-                            rule_applies_to=rule_applies_to,
-                            rule_catalog=rule_catalog,
-                            catalog_schema=catalog_schema,
-                        )
-                except Exception as exc:
-                    prefect_log.error(
-                        "%s: unhandled error processing %s — skipping: %s",
-                        flow_label,
-                        repo_id,
-                        exc,
-                        exc_info=True,
-                    )
-                    # The third silent-skip path. The two inside
-                    # _run_standalone_deterministic cover a failed
-                    # download and a raising check; anything that goes
-                    # wrong around them — loading evaluator.yaml, parsing
-                    # check_exceptions — lands here instead, and used to
-                    # log and post nothing, which is the same invisible
-                    # absence by a different route.
-                    _post_not_evaluated(
-                        repo_id,
-                        f"processing raised before findings could be "
-                        f"computed ({type(exc).__name__}: {exc})",
-                        run_id=run_id,
-                        flow_name=(
-                            "conformance-check"
-                            if run_llm
-                            else "deterministic-conformance"
-                        ),
-                        source=(
-                            "conformance_check"
-                            if run_llm
-                            else "conformance_deterministic"
-                        ),
-                        standards_version=standards_version,
-                        prefect_log=prefect_log,
-                    )
-
-            for mono_id, services in monorepo_service_groups.items():
-                mono_record = monorepos_registry.get(mono_id)
-                if not mono_record:
-                    for svc in services:
-                        rid = svc.get("id", "")
-                        rname = svc.get("repo") or rid
-                        if not rid:
-                            continue
-                        if rid in seen_repo_ids:
-                            prefect_log.warning(
-                                "%s: skipping duplicate service %s",
-                                flow_label,
-                                rid,
-                            )
-                            continue
-                        seen_repo_ids.add(rid)
-                        rp = _download_repo(
-                            rname, tmp_dir, _declared_branch(svc), _declared_org(svc)
-                        )
-                        if rp is None:
-                            continue
-                        try:
-                            if run_llm:
-                                _run_standalone_conformance(
-                                    svc,
-                                    rp,
-                                    standards_version,
-                                    run_id,
-                                    prefect_log,
-                                    rule_applies_to=rule_applies_to,
-                                    rule_catalog=rule_catalog,
-                                    catalog_schema=catalog_schema,
-                                )
-                            else:
-                                _run_standalone_deterministic(
-                                    svc,
-                                    rp,
-                                    standards_version,
-                                    run_id,
-                                    prefect_log,
-                                    rule_applies_to=rule_applies_to,
-                                    rule_catalog=rule_catalog,
-                                    catalog_schema=catalog_schema,
-                                )
-                        except Exception as exc:
-                            prefect_log.error(
-                                "%s: unhandled error processing %s — skipping: %s",
-                                flow_label,
-                                rid,
-                                exc,
-                                exc_info=True,
-                            )
-                            _post_not_evaluated(
-                                rid,
-                                f"processing raised before findings could be "
-                                f"computed ({type(exc).__name__}: {exc})",
-                                run_id=run_id,
-                                flow_name=(
-                                    "conformance-check"
-                                    if run_llm
-                                    else "deterministic-conformance"
-                                ),
-                                source=(
-                                    "conformance_check"
-                                    if run_llm
-                                    else "conformance_deterministic"
-                                ),
-                                standards_version=standards_version,
-                                prefect_log=prefect_log,
-                            )
-                    continue
-
-                repo_name = mono_record.get("repo") or mono_id
-                prefect_log.info("%s: cloning monorepo %s", flow_label, repo_name)
-                monorepo_root = _download_repo(
-                    repo_name,
-                    tmp_dir,
-                    _declared_branch(mono_record),
-                    _declared_org(mono_record),
-                )
-                if monorepo_root is None:
-                    prefect_log.warning(
-                        "%s: skipping monorepo %s — could not clone",
-                        flow_label,
-                        mono_id,
-                    )
-                    # One failed clone hides every app inside it, so the
-                    # row goes against each declared service rather than
-                    # against the monorepo, which is not a repo the
-                    # report has a column for.
-                    for _svc in monorepo_service_groups.get(str(mono_id), []):
-                        _svc_id = _svc.get("id", "")
-                        if not _svc_id:
-                            continue
-                        # Against each service for the same reason the
-                        # finding is: _download_repo flagged the monorepo,
-                        # which is not a repo the report has a column for,
-                        # and the services it hid are what went unevaluated.
-                        _report_issue("repo_download_failed", _svc_id)
-                        _post_not_evaluated(
-                            _svc_id,
-                            f"its monorepo could not be downloaded "
-                            f"({repo_name}@{_declared_branch(mono_record)})",
-                            run_id=run_id,
-                            flow_name=(
-                                "conformance-check"
-                                if run_llm
-                                else "deterministic-conformance"
-                            ),
-                            source=(
-                                "conformance_check"
-                                if run_llm
-                                else "conformance_deterministic"
-                            ),
-                            standards_version=standards_version,
-                            prefect_log=prefect_log,
-                        )
-                    continue
-
-                workspace_package_json_text = _read_workspace_package_json(
-                    monorepo_root
-                )
-
-                monorepo_context = {
-                    "monorepo_id": mono_id,
-                    "package_manager": mono_record.get("package_manager", "pnpm"),
-                    "workspace_deps": mono_record.get("workspace_deps", []),
-                    "sibling_apps": [
-                        {
-                            "service_id": app.get("service_id") or app.get("id"),
-                            "path": app.get("path"),
-                        }
-                        for app in mono_record.get("apps", [])
-                    ],
-                }
-
-                findings_by_service: dict[str, list[dict[str, Any]]] = {}
-
-                for service in services:
-                    repo_id = service.get("id", "")
-                    if not repo_id:
-                        continue
-                    if repo_id in seen_repo_ids:
-                        prefect_log.warning(
-                            "%s: skipping duplicate service %s",
-                            flow_label,
-                            repo_id,
-                        )
-                        continue
-                    seen_repo_ids.add(repo_id)
-
-                    try:
-                        monorepo_path = str(service.get("monorepo_path") or "")
-                        repo_path = (
-                            monorepo_root / monorepo_path
-                            if monorepo_path
-                            else monorepo_root
-                        )
-
-                        if not repo_path.is_dir():
-                            prefect_log.warning(
-                                "%s: monorepo_path '%s' not found in %s for %s",
-                                flow_label,
-                                monorepo_path,
-                                mono_id,
-                                repo_id,
-                            )
-                            continue
-
-                        prefect_log.info(
-                            "%s: processing monorepo app %s at %s",
-                            flow_label,
-                            repo_id,
-                            monorepo_path,
-                        )
-
-                        service_type = service.get("type", "worker")
-                        _raw_language = str(service.get("language") or "typescript")
-                        language = (
-                            "typescript" if _raw_language == "astro" else _raw_language
-                        )
-                        cog_subtype = (
-                            str(service.get("cog_subtype") or "").strip() or None
-                        )
-                        dod_type = service.get("dod_type")
-                        raw_exc = service.get("check_exceptions") or []
-                        check_exceptions, exception_reasons = _parse_check_exceptions(
-                            raw_exc
-                        )
-                        standards_rules = (
-                            _fetch_standards_for_service(service) if run_llm else []
-                        )
-
-                        if run_llm:
-                            try:
-                                _check_root = monorepo_root
-                                _evaluator_cfg = load_evaluator_config(
-                                    _check_root,
-                                    fallback_type=service.get("type") or dod_type,
-                                    fallback_exceptions=check_exceptions,
-                                    fallback_exception_reasons=exception_reasons,
-                                    rule_catalog=rule_catalog,
-                                    catalog_schema=catalog_schema,
-                                )
-                                if (
-                                    monorepo_root
-                                    and not (_check_root / "evaluator.yaml").exists()
-                                ):
-                                    _evaluator_cfg = load_evaluator_config(
-                                        repo_path,
-                                        fallback_type=service.get("type") or dod_type,
-                                        fallback_exceptions=check_exceptions,
-                                        fallback_exception_reasons=exception_reasons,
-                                        rule_catalog=rule_catalog,
-                                        catalog_schema=catalog_schema,
-                                    )
-                                run_conformance_check(
-                                    repo_id=repo_id,
-                                    repo_path=repo_path,
-                                    standards_version=standards_version,
-                                    service_type=service_type,
-                                    dod_type=dod_type,
-                                    language=language,
-                                    cog_subtype=cog_subtype,
-                                    check_exceptions=check_exceptions,
-                                    exception_reasons=exception_reasons,
-                                    standards_rules=standards_rules,
-                                    run_id=run_id,
-                                    monorepo_root=monorepo_root,
-                                    workspace_package_json_text=workspace_package_json_text,
-                                    monorepo_context=monorepo_context,
-                                    post=True,
-                                    post_llm_only=True,
-                                    evaluator_config=_evaluator_cfg,
-                                    rule_applies_to=rule_applies_to,
-                                    rule_catalog=rule_catalog,
-                                    catalog_schema=catalog_schema,
-                                )
-                                prefect_log.info(
-                                    "conformance: posted LLM findings for monorepo app %s",
-                                    repo_id,
-                                )
-                            except Exception as exc:
-                                prefect_log.warning(
-                                    "conformance: check failed for monorepo app %s: %s",
-                                    repo_id,
-                                    exc,
-                                )
-                        else:
-                            try:
-                                check_root = monorepo_root
-                                evaluator_cfg = load_evaluator_config(
-                                    check_root,
-                                    fallback_type=service.get("type") or dod_type,
-                                    fallback_exceptions=check_exceptions,
-                                    fallback_exception_reasons=exception_reasons,
-                                    rule_catalog=rule_catalog,
-                                    catalog_schema=catalog_schema,
-                                )
-                                if (
-                                    monorepo_root
-                                    and not (check_root / "evaluator.yaml").exists()
-                                ):
-                                    evaluator_cfg = load_evaluator_config(
-                                        repo_path,
-                                        fallback_type=service.get("type") or dod_type,
-                                        fallback_exceptions=check_exceptions,
-                                        fallback_exception_reasons=exception_reasons,
-                                        rule_catalog=rule_catalog,
-                                        catalog_schema=catalog_schema,
-                                    )
-                                result = run_all_checks(
-                                    repo_path,
-                                    language=language,
-                                    service_type=service_type,
-                                    dod_type=dod_type,
-                                    cog_subtype=cog_subtype,
-                                    check_exceptions=check_exceptions,
-                                    exception_reasons=exception_reasons,
-                                    monorepo_root=monorepo_root,
-                                    workspace_package_json_text=workspace_package_json_text,
-                                    evaluator_config=evaluator_cfg,
-                                    rule_catalog=rule_catalog,
-                                    catalog_schema=catalog_schema,
-                                )
-                                findings_by_service[repo_id] = result.findings
-                            except Exception as exc:
-                                prefect_log.warning(
-                                    "deterministic: check failed for monorepo app %s: %s",
-                                    repo_id,
-                                    exc,
-                                )
-                    except Exception as exc:
-                        prefect_log.error(
-                            "%s: unhandled error processing monorepo app %s — skipping: %s",
-                            flow_label,
-                            repo_id,
-                            exc,
-                            exc_info=True,
-                        )
-
-                if not run_llm:
-                    if len(findings_by_service) > 1:
-                        findings_by_service = _deduplicate_sibling_findings(
-                            findings_by_service
-                        )
-
-                    for service_id, findings in findings_by_service.items():
-                        if not findings:
-                            findings = [
-                                {
-                                    "rule_id": "STATUS",
-                                    "dimension": "structural_conformance",
-                                    "severity": "SUCCESS",
-                                    "finding": (
-                                        f"{service_id} passed all deterministic checks for "
-                                        f"standards v{standards_version}."
-                                    ),
-                                    "suggestion": "",
-                                }
-                            ]
-                        _post_tracked(
-                            service_id,
-                            prefect_log,
-                            findings=findings,
-                            run_id=run_id,
-                            repo=service_id,
-                            flow_name="conformance-check",
-                            source="conformance_deterministic",
-                            standards_version=standards_version,
-                        )
-
-            # ── Non-repo-scan rules (ADR-004: applies_to absent) ─────────────
-            _run_applies_to_absent_checks(
-                ecosystem=ecosystem,
-                rule_catalog=rule_catalog,
-                standards_version=standards_version,
-                evaluator_standards_version=standards_version,
-                run_id=run_id,
-                prefect_log=prefect_log,
-            )
+        # ── Non-repo-scan rules (ADR-004: applies_to absent) ─────────────
+        _run_applies_to_absent_checks(
+            ecosystem=ecosystem,
+            rule_catalog=rule_catalog,
+            standards_version=standards_version,
+            evaluator_standards_version=standards_version,
+            run_id=run_id,
+            prefect_log=prefect_log,
+        )
 
     prefect_log.info(
         "%s: complete — %d findings offered, %d posted, %d duplicate, %d failed",
