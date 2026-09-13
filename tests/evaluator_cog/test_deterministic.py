@@ -2410,6 +2410,22 @@ def test_cd_026_accepts_the_canonical_job_set(tmp_path) -> None:
     assert check_canonical_ci_job_names(_repo_with_ci(tmp_path, _GATED)) == []
 
 
+def test_cd_026_accepts_an_evaluate_job(tmp_path) -> None:
+    """`evaluate` is a stage, not a non-canonical name.
+
+    Every repo asks for its own conformance evaluation on release, by
+    calling the shared workflow. Before this was in the set, fifteen repos
+    carried the same WARN for the same reason — which is a rule that has
+    fallen behind its architecture rather than fifteen mistakes.
+    """
+    with_evaluate = _GATED + (
+        "  evaluate:\n"
+        "    needs: release\n"
+        "    uses: org/.github/.github/workflows/evaluate.yml@v3\n"
+    )
+    assert check_canonical_ci_job_names(_repo_with_ci(tmp_path, with_evaluate)) == []
+
+
 def test_cd_026_flags_a_non_canonical_work_job(tmp_path) -> None:
     findings = check_canonical_ci_job_names(
         _repo_with_ci(tmp_path, _GATED.replace("  test:", "  build:"))
