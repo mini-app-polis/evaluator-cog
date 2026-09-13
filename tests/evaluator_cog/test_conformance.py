@@ -956,3 +956,183 @@ def test_post_service_findings_substitutes_the_success_row() -> None:
     assert len(findings) == 1
     assert findings[0]["severity"] == "SUCCESS"
     assert "some-repo" in findings[0]["finding"]
+
+
+# ---------------------------------------------------------------------------
+# handler — the unit of work
+# ---------------------------------------------------------------------------
+
+
+def _svc(service_id: str, **extra) -> dict:
+    service = {
+        "id": service_id,
+        "repo": service_id,
+        "status": "active",
+        "type": "api-service",
+        "language": "python",
+    }
+    service.update(extra)
+    return service
+
+
+def _findings(*texts: str):
+    def _run(*args, **kwargs):
+        result = MagicMock()
+        result.findings = [
+            {
+                "rule_id": "X-001",
+                "dimension": "structural_conformance",
+                "severity": "WARN",
+                "finding": text,
+                "suggestion": "",
+            }
+            for text in texts
+        ]
+        result.checked_rule_ids = set()
+        return result
+
+    return _run
+
+
+def test_handler_evaluates_a_standalone_repo(tmp_path) -> None:
+    """One repository, one service, findings delivered."""
+    import evaluator_cog.flows.conformance as conf
+
+    def download(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
+        root = Path(tmp_dir) / repo_name
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    posted: list[dict] = []
+
+    def capture(**kwargs):
+        posted.append(kwargs)
+        return conf.PostResult(attempted=1, posted=1)
+
+    event = conf.EvaluationEvent(
+        org="mini-app-polis",
+        repo="watcher-cog",
+        ref="main",
+        services=(_svc("watcher-cog"),),
+        run_id="r-1",
+    )
+
+    with (
+        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
+        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
+        patch.object(conf, "_download_repo", side_effect=download),
+        patch.object(conf, "run_all_checks", side_effect=_findings("something")),
+        patch.object(conf, "post_findings", side_effect=capture),
+    ):
+        result = conf.handler(event, log=MagicMock())
+
+    assert result.evaluated == ["watcher-cog"]
+    assert result.not_evaluated == []
+    assert [c["repo"] for c in posted] == ["watcher-cog"]
+    assert posted[0]["flow_name"] == "deterministic-conformance"
+
+
+def test_handler_reports_every_service_when_the_download_fails() -> None:
+    """A failed download hides each service, so each gets its own row.
+
+    The repository is not something the report has a column for — for a
+    monorepo especially, the apps it hid are what went unevaluated.
+    """
+    import evaluator_cog.flows.conformance as conf
+
+    posted: list[dict] = []
+
+    def capture(**kwargs):
+        posted.append(kwargs)
+        return conf.PostResult(attempted=1, posted=1)
+
+    event = conf.EvaluationEvent(
+        org="mini-app-polis",
+        repo="mono",
+        ref="main",
+        services=(_svc("app-a"), _svc("app-b")),
+        run_id="r-2",
+        monorepo={"id": "mono-1", "repo": "mono"},
+    )
+
+    with (
+        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
+        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
+        patch.object(conf, "_download_repo", return_value=None),
+        patch.object(conf, "post_findings", side_effect=capture),
+    ):
+        result = conf.handler(event, log=MagicMock())
+
+    assert result.not_evaluated == ["app-a", "app-b"]
+    assert result.evaluated == []
+    assert {c["repo"] for c in posted} == {"app-a", "app-b"}
+
+
+def test_handler_deduplicates_identical_sibling_findings() -> None:
+    """Why a monorepo is one event: dedup needs every app's findings first."""
+    import evaluator_cog.flows.conformance as conf
+
+    def download(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
+        root = Path(tmp_dir) / repo_name
+        (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
+        (root / "apps" / "b").mkdir(parents=True, exist_ok=True)
+        return root
+
+    posted: list[dict] = []
+
+    def capture(**kwargs):
+        posted.append(kwargs)
+        return conf.PostResult(attempted=1, posted=1)
+
+    event = conf.EvaluationEvent(
+        org="mini-app-polis",
+        repo="mono",
+        ref="main",
+        services=(
+            _svc("app-a", monorepo_path="apps/a"),
+            _svc("app-b", monorepo_path="apps/b"),
+        ),
+        run_id="r-3",
+        monorepo={"id": "mono-1", "repo": "mono", "apps": []},
+    )
+
+    with (
+        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
+        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
+        patch.object(conf, "_download_repo", side_effect=download),
+        patch.object(conf, "run_all_checks", side_effect=_findings("the same issue")),
+        patch.object(conf, "post_findings", side_effect=capture),
+    ):
+        conf.handler(event, log=MagicMock())
+
+    by_repo = {c["repo"]: c["findings"] for c in posted}
+    assert "also affects app-b" in by_repo["app-a"][0]["finding"]
+    # The sibling's duplicate is not posted again; it gets the SUCCESS row.
+    assert by_repo["app-b"][0]["severity"] == "SUCCESS"
+
+
+def test_fleet_events_groups_a_monorepo_into_one_event() -> None:
+    """The registry-to-events translation is the sweep's job, not the handler's."""
+    import evaluator_cog.flows.conformance as conf
+
+    ecosystem = {
+        "services": [
+            _svc("watcher-cog"),
+            _svc("app-a", repo="mono", monorepo="mono-1", monorepo_path="apps/a"),
+            _svc("app-b", repo="mono", monorepo="mono-1", monorepo_path="apps/b"),
+            _svc("watcher-cog"),  # duplicate row
+        ],
+        "monorepos": [{"id": "mono-1", "repo": "mono"}],
+    }
+
+    events = conf._fleet_events(
+        ecosystem, run_id="r-4", mode="deterministic", log=MagicMock()
+    )
+
+    by_repo = {e.repo: e for e in events}
+    assert set(by_repo) == {"watcher-cog", "mono"}
+    assert len(by_repo["mono"].services) == 2
+    assert by_repo["mono"].monorepo is not None
+    assert by_repo["watcher-cog"].monorepo is None
+    # The duplicate row produced no second event.
+    assert len(events) == 2
