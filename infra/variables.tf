@@ -150,3 +150,24 @@ variable "stub_fail" {
   type        = bool
   default     = false
 }
+
+variable "worker_consumes_queue" {
+  description = <<-DESC
+    Whether the Lambda is attached to the queue as a consumer.
+
+    False until step 5, and this is not a stylistic default. SQS delivers a
+    message to exactly one consumer. While the worker is still the stub —
+    which logs its event, probes the API and returns success — an enabled
+    event source mapping makes it a competing consumer against the Railway
+    container that does the real evaluation, and it wins nearly every race
+    because Lambda's pollers are more aggressive than one container's long
+    poll. The symptom is an empty queue, an empty dead-letter queue, and no
+    evaluation: the job was consumed and discarded, which looks identical to
+    a job that was never enqueued.
+
+    Flip this to true in step 5, in the same change that stops the Railway
+    consumer. Never have both running.
+  DESC
+  type        = bool
+  default     = false
+}

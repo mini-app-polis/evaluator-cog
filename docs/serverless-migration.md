@@ -203,6 +203,13 @@ The AWS account, queue, IAM and deploy pipeline are built —
 Lambda behind an SQS event source mapping. `handler()` does not change; this is
 packaging and deployment.
 
+- **Flip `worker_consumes_queue` to true and stop the Railway consumer in the
+  same change.** The mapping has been disabled since the foundation work for
+  the reason this step removes: one queue delivers each message to one
+  consumer, so a Lambda and a container both attached to it split the traffic
+  arbitrarily. Two consumers is never a valid intermediate state — it is a
+  cutover, not an overlap.
+
 - **A zip, not a container image.** Measured after dropping `prefect`: 25.8 MB
   zipped against a 50 MB limit, 136 MB unzipped against 250 MB. An earlier draft
   of this document asserted the tree was past the zip limit; it is not. Skipping

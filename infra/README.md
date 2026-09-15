@@ -77,8 +77,15 @@ terraform plan
    root again.
 2. **Queue and DLQ.** `terraform apply -target=aws_sqs_queue.dlq -target=aws_sqs_queue.jobs`
    if you want them alone first, or just apply the lot.
-3. **Stub plus event source mapping.** After `terraform apply`, send a
-   message by hand and watch it arrive:
+3. **Stub plus event source mapping.** The mapping is disabled by default
+   (`worker_consumes_queue`), because SQS gives a message to exactly one
+   consumer and the Railway container is the one that evaluates. To exercise
+   the stub, apply with `-var worker_consumes_queue=true`, run the probe
+   below, and turn it back off. Leaving it on is what makes an evaluation
+   vanish: the stub eats the job and returns success, so the queue, the DLQ
+   and the results are all empty at once.
+
+   With it on, send a message by hand and watch it arrive:
 
    ```bash
    aws sqs send-message \
