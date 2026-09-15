@@ -21,14 +21,15 @@ the evaluator's runtime on the caller's critical path. The route returns
 202 with a run id and does the work in the background, which is what makes
 the fire-and-forget contract honest rather than merely fast.
 
-**One evaluation at a time.** ``conformance`` keeps the catalog, the
-delivery tally and the run report in module state, so two overlapping
-evaluations in one process would share and corrupt all three. The lock
-covers a sweep for the whole of its run, which can be minutes — a release
-that arrives mid-sweep waits rather than interleaving, and that is the
-intended behaviour, not a cost of it. A lock is the correct answer while
-that state is module-level; a queue in front of several single-evaluation
-workers is the answer after.
+**One run context per accepted request.** The catalog, the delivery
+tally and the run report used to be module state in ``conformance``,
+serialised by a process-wide lock. The lock covered the work and not the
+state: this route reset those globals from the request thread, so a
+second release arriving while the first was still evaluating wiped the
+first one's accounting without ever contending for the lock. Each
+request now builds its own :class:`RunContext` and hands it to the
+background task, so overlapping evaluations share nothing and no lock is
+needed to keep them apart.
 
 **No registry lookup.** The event is built from what the caller knows —
 repository, ref, org — and the repo's own ``evaluator.yaml`` supplies its
@@ -40,7 +41,6 @@ from __future__ import annotations
 
 import hmac
 import os
-import threading
 from contextlib import suppress
 from typing import Any, Literal
 
@@ -52,11 +52,11 @@ from pydantic import BaseModel, Field
 from evaluator_cog.flows.conformance import (
     _REPO,
     EvaluationEvent,
+    RunContext,
     _assert_findings_were_delivered,
     _build_conformance_run_id,
     _build_deterministic_run_id,
     _get_standards_version,
-    _reset_run_tally,
     handler,
     run_fleet_sweep,
 )
@@ -67,9 +67,6 @@ log = logger_mod.get_logger()
 #: first-party service on an internal hop, and CD-019's two credential
 #: types are for callers that can present one.
 SECRET_HEADER = "X-Evaluator-Token"
-
-#: Serializes evaluations. See the module docstring.
-_EVALUATION_LOCK = threading.Lock()
 
 app = FastAPI(
     title="evaluator-cog",
@@ -193,47 +190,49 @@ def _report_failure(what: str, exc: BaseException) -> None:
         )
 
 
-def _evaluate(event: EvaluationEvent) -> None:
+def _evaluate(event: EvaluationEvent, ctx: RunContext) -> None:
     """Run one evaluation to completion. Never raises into the server.
 
     Mirrors the flow's tail rather than only calling the handler: a run
     that computed findings and delivered none of them is a systemic fault,
     and the whole reason that assertion exists is that it once looked
     exactly like success from every other angle.
+
+    ``ctx`` is the one the route built when it accepted the request, so
+    the assertion below reads this evaluation's tally and not whatever a
+    later request left behind.
     """
-    with _EVALUATION_LOCK:
-        try:
-            result = handler(event, log=log)
-            log.info(
-                "invoke: %s@%s evaluated=%s not_evaluated=%s",
-                event.repo,
-                event.ref,
-                result.evaluated,
-                result.not_evaluated,
-            )
-            _assert_findings_were_delivered(log)
-        except Exception as exc:
-            # The caller is long gone — 202 was returned before this
-            # started — so there is nobody to raise to. Sentry, the log
-            # and the notification channel are the report.
-            log.exception("invoke: evaluation of %s@%s failed", event.repo, event.ref)
-            _report_failure(f"evaluation of {event.repo}@{event.ref}", exc)
+    try:
+        result = handler(event, log=log, ctx=ctx)
+        log.info(
+            "invoke: %s@%s evaluated=%s not_evaluated=%s",
+            event.repo,
+            event.ref,
+            result.evaluated,
+            result.not_evaluated,
+        )
+        _assert_findings_were_delivered(log, ctx=ctx)
+    except Exception as exc:
+        # The caller is long gone — 202 was returned before this
+        # started — so there is nobody to raise to. Sentry, the log
+        # and the notification channel are the report.
+        log.exception("invoke: evaluation of %s@%s failed", event.repo, event.ref)
+        _report_failure(f"evaluation of {event.repo}@{event.ref}", exc)
 
 
-def _sweep(*, mode: str, run_id: str) -> None:
+def _sweep(*, mode: str, run_id: str, ctx: RunContext) -> None:
     """Run one fleet sweep to completion. Never raises into the server."""
-    with _EVALUATION_LOCK:
-        try:
-            result = run_fleet_sweep(mode=mode, run_id=run_id, log=log)
-            log.info(
-                "sweep: %d repos, evaluated=%d not_evaluated=%d",
-                result.repos,
-                len(result.evaluated),
-                len(result.not_evaluated),
-            )
-        except Exception as exc:
-            log.exception("sweep: %s failed", run_id)
-            _report_failure(f"sweep {run_id}", exc)
+    try:
+        result = run_fleet_sweep(mode=mode, run_id=run_id, log=log, ctx=ctx)
+        log.info(
+            "sweep: %d repos, evaluated=%d not_evaluated=%d",
+            result.repos,
+            len(result.evaluated),
+            len(result.not_evaluated),
+        )
+    except Exception as exc:
+        log.exception("sweep: %s failed", run_id)
+        _report_failure(f"sweep {run_id}", exc)
 
 
 @app.post(
@@ -245,13 +244,15 @@ def _sweep(*, mode: str, run_id: str) -> None:
 )
 def invoke(payload: InvokeRequest, background: BackgroundTasks) -> InvokeAccepted:
     """Accept one repository for evaluation."""
-    # Resets the catalog cache as well as the tally. In a long-lived
-    # process that matters more than it does in a flow run: without it the
-    # catalog fetched on the first request would be graded against for the
-    # life of the container, however many releases went out meanwhile.
-    _reset_run_tally()
+    # One context per request, built before anything reads the catalog.
+    # It carries the catalog cache, so this request grades against the
+    # release current when it arrived — in a long-lived process that
+    # matters more than it did in a flow run, where a catalog fetched
+    # once at boot would otherwise be graded against for the life of the
+    # container however many releases went out meanwhile.
+    ctx = RunContext.for_run()
 
-    standards_version = _get_standards_version()
+    standards_version = _get_standards_version(ctx=ctx)
     run_id = payload.run_id or (
         _build_conformance_run_id(standards_version)
         if payload.mode == "llm"
@@ -274,7 +275,7 @@ def invoke(payload: InvokeRequest, background: BackgroundTasks) -> InvokeAccepte
         event.mode,
         run_id,
     )
-    background.add_task(_evaluate, event)
+    background.add_task(_evaluate, event, ctx)
     return InvokeAccepted(run_id=run_id, repo=event.repo, mode=event.mode)
 
 
@@ -294,9 +295,9 @@ def sweep(payload: SweepRequest, background: BackgroundTasks) -> SweepAccepted:
     against the version it actually runs under, not the one that happened
     to be current when the request arrived.
     """
-    _reset_run_tally()
+    ctx = RunContext.for_run()
 
-    standards_version = _get_standards_version()
+    standards_version = _get_standards_version(ctx=ctx)
     run_id = payload.run_id or (
         _build_conformance_run_id(standards_version)
         if payload.mode == "llm"
@@ -304,7 +305,7 @@ def sweep(payload: SweepRequest, background: BackgroundTasks) -> SweepAccepted:
     )
 
     log.info("sweep: accepted (%s) as %s", payload.mode, run_id)
-    background.add_task(_sweep, mode=payload.mode, run_id=run_id)
+    background.add_task(_sweep, mode=payload.mode, run_id=run_id, ctx=ctx)
     return SweepAccepted(run_id=run_id, mode=payload.mode)
 
 

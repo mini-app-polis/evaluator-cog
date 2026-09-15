@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+
+alert_email           = "you@example.com"
+kaiano_api_base_url   = "https://api.kaianolevine.com"
+evaluator_cog_api_key = "..."   # this cog's named key, CD-019
+github_token          = "..."   # read access to mini-app-polis repos
+sentry_dsn            = ""      # SENTRY_DSN_EVALUATOR
+anthropic_api_key     = ""      # only the llm mode needs this
+
+# First cog in the account creates the shared GitHub OIDC provider;
+# every cog after sets this to false.
+create_github_oidc_provider = true

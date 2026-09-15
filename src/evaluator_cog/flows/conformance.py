@@ -96,79 +96,108 @@ _DEFAULT_ORG = "mini-app-polis"
 _REPO = "evaluator-cog"
 
 
-# Accumulates every post_findings outcome in one flow invocation.
-#
-# A run that computes findings and delivers none of them is a systemic
-# fault — no route, no credential, no service — not N unlucky findings,
-# and it must fail the flow rather than log a warning. Before this, the
-# 2026-09-03 runs computed ~162 findings across 13 repos, posted zero,
-# and still finished Completed with a green Healthchecks ping, because
-# post_findings swallowed every error and the "posted N findings" log
-# line reported the length of the list handed over rather than what the
-# API accepted.
-_RUN_TALLY = PostResult()
+@dataclass
+class RunContext:
+    """Everything one run accumulates, scoped to that run.
 
-#: The catalog for this flow run. One fetch, reused by every caller, reset
-#: at the start of each run so a long-lived worker picks up a new release
-#: rather than grading against whatever was current when it booted.
-_CATALOG: dict | None = None
+    Was four module globals and a lock. The globals meant two evaluations
+    in one process corrupted each other's accounting — and not only under
+    genuine concurrency. ``/invoke`` reset them from the request thread
+    while a previously accepted evaluation was still running under that
+    lock, so a second release arriving mid-evaluation wiped the first
+    one's tally and report before either got near a write. The lock
+    serialised the work and not the state it was protecting.
 
-#: Coverage, as opposed to delivery. _RUN_TALLY answers "did the findings
-#: reach the API"; this answers "was every declared repo actually looked
-#: at, and looked at completely". A run can be perfect on the first and
-#: wrong on the second, which is what a green SUCCESS on a run that
-#: silently skipped three repos looks like.
-#:
-#: None until a flow run resets it, so the helpers below are no-ops when
-#: this module's functions are called outside a run (tests, one-off
-#: scripts) rather than writing into a report nobody will send.
-_RUN_REPORT: RunReport | None = None
+    One of these per job. The caller constructs it, because only the
+    caller knows what a job is: one repository for a release, the whole
+    fleet for a sweep. Passing it explicitly rather than reaching for it
+    is the point — a function that needs a run says so in its signature,
+    and omitting it is a :class:`TypeError` rather than silent
+    cross-talk between two runs.
+    """
 
-#: Every repo name flagged by :func:`_report_issue` this run, so the
-#: message can say how many repos came through clean without counting a
-#: flagged one twice when two things went wrong with it.
-#:
-#: Holds whatever string the call site had — a declared service id in most
-#: places, a monorepo repo name in :func:`_download_repo`. Only the
-#: intersection with declared service ids is ever counted, so the entries
-#: that name no service are ignored rather than skewing the total.
-_RUN_FLAGGED: set[str] = set()
+    #: Every ``post_findings`` outcome in this run.
+    #:
+    #: A run that computes findings and delivers none of them is a
+    #: systemic fault — no route, no credential, no service — not N
+    #: unlucky findings, and it must fail the run rather than log a
+    #: warning. Before this, the 2026-09-03 runs computed ~162 findings
+    #: across 13 repos, posted zero, and still finished Completed with a
+    #: green Healthchecks ping, because ``post_findings`` swallowed every
+    #: error and the "posted N findings" log line reported the length of
+    #: the list handed over rather than what the API accepted.
+    tally: PostResult = field(default_factory=PostResult)
 
-#: Registry entries whose download returned 404 this run, as
-#: ``{"label": "<org>/<repo>", "url": <zipball url>}``. Only a 404 lands
-#: here: a 403, 429, 5xx or timeout means the run could not tell whether
-#: the repo exists, which is not the same fact and must not be reported
-#: as one. XSTACK-008 reads this at the end of the run.
-_UNRESOLVED_DOWNLOADS: list[dict[str, str]] = []
+    #: Coverage, as opposed to delivery. :attr:`tally` answers "did the
+    #: findings reach the API"; this answers "was every declared repo
+    #: actually looked at, and looked at completely". A run can be
+    #: perfect on the first and wrong on the second, which is what a
+    #: green SUCCESS on a run that silently skipped three repos looks
+    #: like.
+    #:
+    #: ``None`` on a context with no report to send — tests, one-off
+    #: scripts — so the helpers below write nowhere rather than into a
+    #: report nobody will read. :meth:`for_run` builds one that will.
+    report: RunReport | None = None
+
+    #: Every repo name flagged by :func:`_report_issue` this run, so the
+    #: message can say how many repos came through clean without counting
+    #: a flagged one twice when two things went wrong with it.
+    #:
+    #: Holds whatever string the call site had — a declared service id in
+    #: most places, a monorepo repo name in :func:`_download_repo`. Only
+    #: the intersection with declared service ids is ever counted, so the
+    #: entries that name no service are ignored rather than skewing the
+    #: total.
+    flagged: set[str] = field(default_factory=set)
+
+    #: Registry entries whose download returned 404 this run, as
+    #: ``{"label": "<org>/<repo>", "url": <zipball url>}``. Only a 404
+    #: lands here: a 403, 429, 5xx or timeout means the run could not tell
+    #: whether the repo exists, which is not the same fact and must not be
+    #: reported as one. XSTACK-008 reads this at the end of the run.
+    unresolved_downloads: list[dict[str, str]] = field(default_factory=list)
+
+    #: The catalog for this run. One fetch, reused by every caller, and
+    #: scoped to the run rather than to the process so a long-lived worker
+    #: grades against the release current when the job starts rather than
+    #: whatever was current when it booted.
+    catalog: dict | None = None
+
+    @classmethod
+    def for_run(cls) -> RunContext:
+        """A context whose coverage report will be sent when the run ends."""
+        return cls(report=RunReport(flow_name="conformance-check", repo=_REPO))
 
 
-def _reset_run_tally() -> None:
-    """Start a fresh tally and coverage report. Called at the top of each run."""
-    global _CATALOG
-    _CATALOG = None
-    global _RUN_TALLY, _RUN_REPORT, _RUN_FLAGGED
-    _RUN_TALLY = PostResult()
-    _RUN_REPORT = RunReport(flow_name="conformance-check", repo=_REPO)
-    _RUN_FLAGGED = set()
-    _UNRESOLVED_DOWNLOADS.clear()
-
-
-def _report_issue(reason: str, repo_id: str, exc: BaseException | None = None) -> None:
+def _report_issue(
+    reason: str,
+    repo_id: str,
+    exc: BaseException | None = None,
+    *,
+    ctx: RunContext,
+) -> None:
     """Flag a repo this run did not fully evaluate. Makes the run WARN."""
-    if _RUN_REPORT is None:
+    if ctx.report is None:
         return
     detail = f"{type(exc).__name__}: {exc}" if exc is not None else None
-    _RUN_REPORT.issue(reason, repo_id, detail=detail)
-    _RUN_FLAGGED.add(repo_id)
+    ctx.report.issue(reason, repo_id, detail=detail)
+    ctx.flagged.add(repo_id)
 
 
-def _report_note(reason: str, repo_id: str) -> None:
+def _report_note(reason: str, repo_id: str, *, ctx: RunContext) -> None:
     """Record an ordinary skip. Counted in the message, severity unchanged."""
-    if _RUN_REPORT is not None:
-        _RUN_REPORT.note(reason, repo_id)
+    if ctx.report is not None:
+        ctx.report.note(reason, repo_id)
 
 
-def _post_tracked(label: str, prefect_log: Any = None, **kwargs: Any) -> PostResult:
+def _post_tracked(
+    label: str,
+    prefect_log: Any = None,
+    *,
+    ctx: RunContext,
+    **kwargs: Any,
+) -> PostResult:
     """post_findings + accumulate + log what the API actually accepted.
 
     ``label`` names the emitter (a rule id, or a repo) so a partial
@@ -186,7 +215,7 @@ def _post_tracked(label: str, prefect_log: Any = None, **kwargs: Any) -> PostRes
     """
     emit = prefect_log if prefect_log is not None else log
     result = post_findings(**kwargs)
-    _RUN_TALLY.merge(result)
+    ctx.tally.merge(result)
     if result.posted:
         emit.info("%s: posted %d findings", label, result.posted)
     if result.duplicates:
@@ -201,7 +230,7 @@ def _post_tracked(label: str, prefect_log: Any = None, **kwargs: Any) -> PostRes
             "%s: %d of %d findings suppressed as duplicates — %s",
             label,
             result.duplicates,
-            result.duplicates + result.attempted,
+            result.offered,
             "; ".join(result.duplicate_details) or "no detail recorded",
         )
     if result.failed:
@@ -219,7 +248,7 @@ class FindingDeliveryError(RuntimeError):
     """Raised when a run computed findings and delivered none of them."""
 
 
-def _assert_findings_were_delivered(prefect_log: Any) -> None:
+def _assert_findings_were_delivered(prefect_log: Any, *, ctx: RunContext) -> None:
     """Fail the run when nothing reached the API.
 
     Raising is the point. The caller stops before pinging Healthchecks.io,
@@ -228,13 +257,13 @@ def _assert_findings_were_delivered(prefect_log: Any) -> None:
     partial failure has already been warned about per emitter and does not
     fail the run.
     """
-    if not _RUN_TALLY.total_failure:
+    if not ctx.tally.total_failure:
         return
     raise FindingDeliveryError(
-        f"{_RUN_TALLY.attempted} findings were computed and none reached "
+        f"{ctx.tally.attempted} findings were computed and none reached "
         f"api-kaianolevine-com. The evaluation itself ran; delivery did "
         f"not. Check KAIANO_API_BASE_URL and EVALUATOR_COG_API_KEY on "
-        f"this service. Last error: {_RUN_TALLY.last_error}"
+        f"this service. Last error: {ctx.tally.last_error}"
     )
 
 
@@ -268,7 +297,7 @@ def _fetch_yaml(url: str) -> dict:
         return {}
 
 
-def _fetch_catalog() -> dict:
+def _fetch_catalog(*, ctx: RunContext) -> dict:
     """Fetch the compiled standards catalog. Cached for the flow run.
 
     One request replaces the index, every domain file and package.json —
@@ -282,9 +311,8 @@ def _fetch_catalog() -> dict:
     clean fleet. A run that could not read the rules has evaluated nothing
     and must fail rather than report success.
     """
-    global _CATALOG
-    if _CATALOG is not None:
-        return _CATALOG
+    if ctx.catalog is not None:
+        return ctx.catalog
     timeout = float(os.environ.get("EVALUATOR_HTTP_TIMEOUT_SECONDS", "20"))
     try:
         response = httpx.get(
@@ -307,11 +335,11 @@ def _fetch_catalog() -> dict:
         raise RuntimeError(
             f"Standards catalog at {_STANDARDS_CATALOG_URL} returned no rules"
         )
-    _CATALOG = catalog
+    ctx.catalog = catalog
     return catalog
 
 
-def _catalog_rules() -> list[dict]:
+def _catalog_rules(*, ctx: RunContext) -> list[dict]:
     """Every rule the evaluator will consider.
 
     ``checkable: false`` rules are filtered here. The catalog carries them
@@ -319,12 +347,12 @@ def _catalog_rules() -> list[dict]:
     check them, but there is no check to run and nothing is emitted for
     them — see the ``gap`` status in index.yaml.
     """
-    return [rule for rule in _fetch_catalog()["rules"] if rule.get("checkable")]
+    return [rule for rule in _fetch_catalog(ctx=ctx)["rules"] if rule.get("checkable")]
 
 
-def _get_standards_version() -> str:
+def _get_standards_version(*, ctx: RunContext) -> str:
     """The version of the catalog under evaluation. Raises on failure."""
-    version = str(_fetch_catalog().get("version") or "")
+    version = str(_fetch_catalog(ctx=ctx).get("version") or "")
     if not version:
         raise RuntimeError("Standards catalog carries no version")
     return version
@@ -358,12 +386,12 @@ def _read_workspace_package_json(monorepo_root: Path) -> str:
     return ""
 
 
-def _fetch_catalog_schema() -> dict:
+def _fetch_catalog_schema(*, ctx: RunContext) -> dict:
     """Traits, repo types and statuses, in the shapes the dispatcher expects.
 
     The catalog carries these already resolved; this only reshapes them.
     """
-    catalog = _fetch_catalog()
+    catalog = _fetch_catalog(ctx=ctx)
     schema = catalog.get("schema") or {}
 
     raw_traits = schema.get("traits") or {}
@@ -401,7 +429,7 @@ def _fetch_catalog_schema() -> dict:
     return {"traits": traits, "repo_types": repo_types, "statuses": statuses}
 
 
-def _fetch_full_rule_catalog() -> dict[str, dict]:
+def _fetch_full_rule_catalog(*, ctx: RunContext) -> dict[str, dict]:
     """Every checkable rule's dispatch metadata, keyed by rule id.
 
     ``applies_to`` is None when the rule is not a repo-source scan
@@ -417,13 +445,16 @@ def _fetch_full_rule_catalog() -> dict[str, dict]:
             "dimension": str(rule.get("dimension") or "").strip(),
             "check_mode": rule.get("check_mode"),
         }
-        for rule in _catalog_rules()
+        for rule in _catalog_rules(ctx=ctx)
         if rule.get("id")
     }
 
 
 def _fetch_standards_for_service(
-    service: dict, evaluator_cfg: EvaluatorConfig | None = None
+    service: dict,
+    evaluator_cfg: EvaluatorConfig | None = None,
+    *,
+    ctx: RunContext,
 ) -> list[dict]:
     """Checkable rules in scope for one service, for the LLM prompt.
 
@@ -453,7 +484,7 @@ def _fetch_standards_for_service(
         }
 
     rules: list[dict] = []
-    for rule in _catalog_rules():
+    for rule in _catalog_rules(ctx=ctx):
         applies_to = rule.get("applies_to") or []
         if (
             "all" in applies_to
@@ -614,7 +645,12 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
 
 
 def _fetch_zipball(
-    url: str, headers: dict[str, str], timeout: float, repo_id: str
+    url: str,
+    headers: dict[str, str],
+    timeout: float,
+    repo_id: str,
+    *,
+    ctx: RunContext,
 ) -> bytes | None:
     """Fetch a repo zipball, retrying transient failures.
 
@@ -641,7 +677,7 @@ def _fetch_zipball(
                         "name, org and branch in ecosystem.yaml",
                         repo_id,
                     )
-                    _UNRESOLVED_DOWNLOADS.append({"label": repo_id, "url": url})
+                    ctx.unresolved_downloads.append({"label": repo_id, "url": url})
                     return None
                 if response.is_success:
                     return response.content
@@ -676,7 +712,12 @@ def _fetch_zipball(
 
 
 def _download_repo(
-    repo_id: str, tmp_dir: str, branch: str = "main", org: str = _DEFAULT_ORG
+    repo_id: str,
+    tmp_dir: str,
+    branch: str = "main",
+    org: str = _DEFAULT_ORG,
+    *,
+    ctx: RunContext,
 ) -> Path | None:
     """
     Download a repo from GitHub as a zip archive and extract it.
@@ -710,7 +751,7 @@ def _download_repo(
 
     try:
         timeout = float(os.environ.get("EVALUATOR_CLONE_TIMEOUT_SECONDS", "60"))
-        content = _fetch_zipball(url, headers, timeout, f"{org}/{repo_id}")
+        content = _fetch_zipball(url, headers, timeout, f"{org}/{repo_id}", ctx=ctx)
         if content is None:
             return None
 
@@ -736,12 +777,13 @@ def _download_repo(
         # Also recorded as a STATUS finding by _post_not_evaluated at the
         # call site. Two sinks on purpose: the finding is the durable row
         # in Pipeline Health, this is the line in the channel.
-        _report_issue("repo_download_failed", repo_id, exc)
+        _report_issue("repo_download_failed", repo_id, exc, ctx=ctx)
         return None
 
 
 def run_conformance_check(
     *,
+    ctx: RunContext,
     repo_id: str,
     repo_path: Path,
     standards_version: str,
@@ -798,7 +840,7 @@ def run_conformance_check(
         # evaluated, so it posts a clean STATUS row and counts toward the
         # total. Zero deterministic findings from zero deterministic
         # checks is indistinguishable from a repo that passed them all.
-        _report_issue("deterministic_checks_failed", repo_id, exc)
+        _report_issue("deterministic_checks_failed", repo_id, exc, ctx=ctx)
 
     prefect_log.info(
         "conformance: %d deterministic findings for %s",
@@ -876,7 +918,7 @@ def run_conformance_check(
             )
         except Exception as exc:
             log.warning("conformance: LLM assessment failed for %s: %s", repo_id, exc)
-            _report_issue("llm_assessment_failed", repo_id, exc)
+            _report_issue("llm_assessment_failed", repo_id, exc, ctx=ctx)
     else:
         prefect_log.warning(
             "conformance: ANTHROPIC_API_KEY not set, skipping LLM assessment for %s",
@@ -887,7 +929,7 @@ def run_conformance_check(
         # WARN for a single cause. Counted so the message says how many
         # repos went unassessed; not escalated, because the count is the
         # information and the run is otherwise fine.
-        _report_note("llm_skipped_no_api_key", repo_id)
+        _report_note("llm_skipped_no_api_key", repo_id, ctx=ctx)
 
     all_findings = deterministic_findings + llm_findings
     findings_to_post = llm_findings if post_llm_only else all_findings
@@ -907,6 +949,7 @@ def run_conformance_check(
         _post_tracked(
             repo_id,
             prefect_log,
+            ctx=ctx,
             findings=findings_to_post,
             run_id=run_id,
             repo=repo_id,
@@ -930,6 +973,8 @@ def _run_standalone_conformance(
     monorepo_root: Path | None = None,
     workspace_package_json_text: str | None = None,
     monorepo_context: dict | None = None,
+    *,
+    ctx: RunContext,
 ) -> None:
     """Run full conformance for a single cloned service (posts immediately).
 
@@ -971,9 +1016,10 @@ def _run_standalone_conformance(
             catalog_schema=catalog_schema,
         )
 
-    standards_rules = _fetch_standards_for_service(service, evaluator_cfg)
+    standards_rules = _fetch_standards_for_service(service, evaluator_cfg, ctx=ctx)
     try:
         all_findings = run_conformance_check(
+            ctx=ctx,
             repo_id=repo_id,
             repo_path=repo_path,
             standards_version=standards_version,
@@ -1003,7 +1049,7 @@ def _run_standalone_conformance(
         )
     except Exception as exc:
         prefect_log.warning("conformance: check failed for %s: %s", repo_id, exc)
-        _report_issue("repo_check_failed", repo_id, exc)
+        _report_issue("repo_check_failed", repo_id, exc, ctx=ctx)
 
 
 def _run_suffix() -> str:
@@ -1028,6 +1074,7 @@ def _post_not_evaluated(
     repo_id: str,
     reason: str,
     *,
+    ctx: RunContext,
     run_id: str,
     flow_name: str,
     source: str,
@@ -1052,6 +1099,7 @@ def _post_not_evaluated(
     _post_tracked(
         repo_id,
         prefect_log,
+        ctx=ctx,
         findings=[
             {
                 "rule_id": "STATUS",
@@ -1087,6 +1135,7 @@ def _post_service_findings(
     repo_id: str,
     findings: list[dict],
     *,
+    ctx: RunContext,
     standards_version: str,
     run_id: str,
     flow_name: str,
@@ -1114,6 +1163,7 @@ def _post_service_findings(
     _post_tracked(
         repo_id,
         prefect_log,
+        ctx=ctx,
         findings=findings,
         run_id=run_id,
         repo=repo_id,
@@ -1133,6 +1183,8 @@ def _evaluate_service_deterministic(
     workspace_package_json_text: str | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
+    *,
+    ctx: RunContext,
 ) -> list[dict] | None:
     """Compute one service's deterministic findings. Does not deliver them.
 
@@ -1211,6 +1263,7 @@ def _evaluate_service_deterministic(
         _post_not_evaluated(
             repo_id,
             f"the deterministic checks raised ({type(exc).__name__}: {exc})",
+            ctx=ctx,
             run_id=run_id,
             flow_name="deterministic-conformance",
             source="conformance_deterministic",
@@ -1239,6 +1292,8 @@ def _run_standalone_deterministic(
     rule_applies_to: dict[str, list[str]] | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
+    *,
+    ctx: RunContext,
 ) -> None:
     """Evaluate one service and post immediately.
 
@@ -1258,12 +1313,14 @@ def _run_standalone_deterministic(
         workspace_package_json_text=workspace_package_json_text,
         rule_catalog=rule_catalog,
         catalog_schema=catalog_schema,
+        ctx=ctx,
     )
     if findings is None:
         return
     _post_service_findings(
         repo_id,
         findings,
+        ctx=ctx,
         standards_version=standards_version,
         run_id=run_id,
         flow_name="deterministic-conformance",
@@ -1273,6 +1330,7 @@ def _run_standalone_deterministic(
 
 def _run_applies_to_absent_checks(
     *,
+    ctx: RunContext,
     ecosystem: dict,
     rule_catalog: dict[str, dict],
     standards_version: str,
@@ -1297,6 +1355,7 @@ def _run_applies_to_absent_checks(
             _post_tracked(
                 "EVAL-003",
                 prefect_log,
+                ctx=ctx,
                 findings=eval_003_findings,
                 run_id=run_id,
                 repo="ecosystem-standards",
@@ -1314,6 +1373,7 @@ def _run_applies_to_absent_checks(
             _post_tracked(
                 "MONO-003",
                 prefect_log,
+                ctx=ctx,
                 findings=mono_003_findings,
                 run_id=run_id,
                 repo="ecosystem-standards",
@@ -1347,6 +1407,7 @@ def _run_applies_to_absent_checks(
                 _post_tracked(
                     _rule_id,
                     prefect_log,
+                    ctx=ctx,
                     findings=_findings,
                     run_id=run_id,
                     repo="ecosystem-standards",
@@ -1364,11 +1425,12 @@ def _run_applies_to_absent_checks(
     # It runs after every repo has been attempted, so the record is
     # complete by the time it is read.
     try:
-        xstack_008_findings = check_xstack_008(unresolved=_UNRESOLVED_DOWNLOADS)
+        xstack_008_findings = check_xstack_008(unresolved=ctx.unresolved_downloads)
         if xstack_008_findings:
             _post_tracked(
                 "XSTACK-008",
                 prefect_log,
+                ctx=ctx,
                 findings=xstack_008_findings,
                 run_id=run_id,
                 repo="ecosystem-standards",
@@ -1390,6 +1452,7 @@ def _run_applies_to_absent_checks(
             _post_tracked(
                 "EVAL-007",
                 prefect_log,
+                ctx=ctx,
                 findings=eval_007_findings,
                 run_id=run_id,
                 repo="ecosystem-standards",
@@ -1524,7 +1587,7 @@ class EvaluationResult:
     not_evaluated: list[str] = field(default_factory=list)
 
 
-def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
+def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationResult:
     """Evaluate one repository. The unit of work, and the whole of it.
 
     Downloads the ref into its own temporary directory, evaluates every
@@ -1545,9 +1608,9 @@ def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
     say — and because a run that skipped a repository silently is the
     failure this evaluator has been bitten by most.
     """
-    standards_version = _get_standards_version()
-    catalog_schema = _fetch_catalog_schema()
-    rule_catalog = _fetch_full_rule_catalog()
+    standards_version = _get_standards_version(ctx=ctx)
+    catalog_schema = _fetch_catalog_schema(ctx=ctx)
+    rule_catalog = _fetch_full_rule_catalog(ctx=ctx)
     rule_applies_to = {
         rule_id: meta["applies_to"]
         for rule_id, meta in rule_catalog.items()
@@ -1566,7 +1629,7 @@ def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
         return result
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        root = _download_repo(event.repo, tmp_dir, event.ref, event.org)
+        root = _download_repo(event.repo, tmp_dir, event.ref, event.org, ctx=ctx)
         if root is None:
             # One failed download hides every service inside it. The row
             # goes against each of them rather than against the repository,
@@ -1580,11 +1643,12 @@ def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
                     event.repo,
                     event.ref,
                 )
-                _report_issue("repo_download_failed", service_id)
+                _report_issue("repo_download_failed", service_id, ctx=ctx)
                 _post_not_evaluated(
                     service_id,
                     f"the repository could not be downloaded "
                     f"({event.repo}@{event.ref})",
+                    ctx=ctx,
                     run_id=event.run_id,
                     flow_name=flow_name,
                     source=source,
@@ -1633,11 +1697,12 @@ def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
                     event.repo,
                     service_id,
                 )
-                _report_issue("declared_path_missing", service_id)
+                _report_issue("declared_path_missing", service_id, ctx=ctx)
                 _post_not_evaluated(
                     service_id,
                     f"its declared path '{service_path}' does not exist in "
                     f"{event.repo}",
+                    ctx=ctx,
                     run_id=event.run_id,
                     flow_name=flow_name,
                     source=source,
@@ -1663,6 +1728,7 @@ def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
                         monorepo_root=monorepo_root,
                         workspace_package_json_text=workspace_package_json_text,
                         monorepo_context=monorepo_context,
+                        ctx=ctx,
                     )
                     result.evaluated.append(service_id)
                 else:
@@ -1676,6 +1742,7 @@ def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
                         workspace_package_json_text=workspace_package_json_text,
                         rule_catalog=rule_catalog,
                         catalog_schema=catalog_schema,
+                        ctx=ctx,
                     )
                     if computed is None:
                         # It reported its own failure; nothing left to say.
@@ -1698,6 +1765,7 @@ def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
                     service_id,
                     f"processing raised before findings could be computed "
                     f"({type(exc).__name__}: {exc})",
+                    ctx=ctx,
                     run_id=event.run_id,
                     flow_name=flow_name,
                     source=source,
@@ -1717,6 +1785,7 @@ def handler(event: EvaluationEvent, *, log: Any) -> EvaluationResult:
                 _post_service_findings(
                     service_id,
                     service_findings,
+                    ctx=ctx,
                     standards_version=standards_version,
                     run_id=event.run_id,
                     flow_name=flow_name,
@@ -1741,6 +1810,7 @@ def run_fleet_sweep(
     mode: str = "deterministic",
     run_id: str | None = None,
     log: Any,
+    ctx: RunContext,
 ) -> SweepResult:
     """Evaluate every active repository, then the checks that scope to none.
 
@@ -1761,12 +1831,19 @@ def run_fleet_sweep(
     this process rather than of anything it looked at, and the Healthchecks
     ping below must not happen after one.
     """
-    _reset_run_tally()
+    # Drop whatever catalog the caller already fetched. The route mints
+    # the run id from one at accept time and this runs later, off a
+    # background task: a sweep accepted while a catalog release is in
+    # flight must grade against the version it actually runs under, not
+    # the one that happened to be current when the request arrived. The
+    # per-repository path wants the opposite and keeps its catalog, which
+    # is why this belongs here rather than in the context.
+    ctx.catalog = None
 
-    standards_version = _get_standards_version()
+    standards_version = _get_standards_version(ctx=ctx)
     log.info("sweep: standards version %s", standards_version)
-    catalog_schema = _fetch_catalog_schema()
-    rule_catalog = _fetch_full_rule_catalog()
+    catalog_schema = _fetch_catalog_schema(ctx=ctx)
+    rule_catalog = _fetch_full_rule_catalog(ctx=ctx)
     log.info(
         "sweep: loaded %d traits, %d repo types, %d rules from catalog",
         len(catalog_schema.get("traits", {})),
@@ -1807,12 +1884,13 @@ def run_fleet_sweep(
     # sweeps would corrupt each other's accounting long before they raced
     # on a write.
     for event in _fleet_events(ecosystem, run_id=run_id, mode=mode, log=log):
-        one = handler(event, log=log)
+        one = handler(event, log=log, ctx=ctx)
         result.evaluated.extend(one.evaluated)
         result.not_evaluated.extend(one.not_evaluated)
 
     # ── Non-repo-scan rules (ADR-004: applies_to absent) ─────────────────
     _run_applies_to_absent_checks(
+        ctx=ctx,
         ecosystem=ecosystem,
         rule_catalog=rule_catalog,
         standards_version=standards_version,
@@ -1823,10 +1901,10 @@ def run_fleet_sweep(
 
     log.info(
         "sweep: complete — %d findings offered, %d posted, %d duplicate, %d failed",
-        _RUN_TALLY.attempted,
-        _RUN_TALLY.posted,
-        _RUN_TALLY.duplicates,
-        _RUN_TALLY.failed,
+        ctx.tally.attempted,
+        ctx.tally.posted,
+        ctx.tally.duplicates,
+        ctx.tally.failed,
     )
 
     # The run's own outcome, as a notification. Not a finding: what this
@@ -1836,39 +1914,39 @@ def run_fleet_sweep(
     # Skipped when nothing was delivered at all, because the assertion
     # below is about to fail the run and the adapter will report it.
     # Two messages for one event is how a channel earns being ignored.
-    if not _RUN_TALLY.total_failure and _RUN_REPORT is not None:
+    if not ctx.tally.total_failure and ctx.report is not None:
         # The repos that came through whole. Counted against the declared
         # list rather than by incrementing as we go, so a repo flagged for
         # two separate reasons is still one repo missing from the total —
         # and so the message reads "processed=11, repo_download_failed=1"
         # rather than "nothing to do" on a run that evaluated the fleet.
-        _RUN_REPORT.ok(
+        ctx.report.ok(
             sum(
                 1
                 for _svc in active_repos
-                if _svc.get("id") and _svc["id"] not in _RUN_FLAGGED
+                if _svc.get("id") and _svc["id"] not in ctx.flagged
             )
         )
         # Delivery failure is an issue like any other, so a run that
         # posted nine of ten batches is WARN for the same reason a run
         # that skipped a repo is.
-        if _RUN_TALLY.failed:
-            _RUN_REPORT.issue("delivery_failed", f"{_RUN_TALLY.failed} finding(s)")
-        _RUN_REPORT.count("flow", mode)
-        _RUN_REPORT.count("offered", _RUN_TALLY.attempted)
-        _RUN_REPORT.count("posted", _RUN_TALLY.posted)
-        _RUN_REPORT.count("duplicate", _RUN_TALLY.duplicates)
+        if ctx.tally.failed:
+            ctx.report.issue("delivery_failed", f"{ctx.tally.failed} finding(s)")
+        ctx.report.count("flow", mode)
+        ctx.report.count("offered", ctx.tally.attempted)
+        ctx.report.count("posted", ctx.tally.posted)
+        ctx.report.count("duplicate", ctx.tally.duplicates)
         # A run that evaluated nothing had nothing to say. A run that
         # offered findings reports either way — "162 offered, 0 posted"
         # and "162 offered, 162 posted" must not look alike from outside,
         # which is the whole lesson of September 3rd.
-        _RUN_REPORT.send(notable=_RUN_TALLY.attempted > 0)
+        ctx.report.send(notable=ctx.tally.attempted > 0)
 
     # Before the ping, deliberately: everything above has already run and
     # reported, and this only decides whether the sweep is allowed to be
     # called a success. Raising here skips the Healthchecks ping for a run
     # that delivered nothing, which is what the flow's on_completion hook
     # used to do by not firing.
-    _assert_findings_were_delivered(log)
+    _assert_findings_were_delivered(log, ctx=ctx)
     _ping_healthcheck()
     return result

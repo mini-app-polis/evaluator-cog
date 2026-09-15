@@ -16,7 +16,6 @@ SECRET = "s3cret-invoke-token"
 def client(monkeypatch):
     monkeypatch.setenv("EVALUATOR_INVOKE_SECRET", SECRET)
     with (
-        patch.object(adapter, "_reset_run_tally"),
         patch.object(adapter, "_get_standards_version", return_value="9.9.9-test"),
     ):
         yield TestClient(adapter.app)
@@ -106,7 +105,6 @@ def test_invoke_refuses_when_no_secret_is_configured(monkeypatch) -> None:
     """
     monkeypatch.delenv("EVALUATOR_INVOKE_SECRET", raising=False)
     with (
-        patch.object(adapter, "_reset_run_tally"),
         patch.object(adapter, "_get_standards_version", return_value="9.9.9-test"),
         patch.object(adapter, "handler") as handler,
     ):
@@ -130,7 +128,7 @@ def test_evaluation_failure_does_not_escape_the_background_task() -> None:
     """The caller is long gone by then; the log and Sentry are the report."""
     event = MagicMock()
     with patch.object(adapter, "handler", side_effect=RuntimeError("boom")):
-        adapter._evaluate(event)  # must not raise
+        adapter._evaluate(event, adapter.RunContext())  # must not raise
 
 
 def test_evaluation_asserts_findings_were_delivered() -> None:
@@ -140,7 +138,7 @@ def test_evaluation_asserts_findings_were_delivered() -> None:
         patch.object(adapter, "handler"),
         patch.object(adapter, "_assert_findings_were_delivered") as assert_delivered,
     ):
-        adapter._evaluate(event)
+        adapter._evaluate(event, adapter.RunContext())
 
     assert assert_delivered.call_count == 1
 
@@ -184,11 +182,13 @@ def test_sweep_carries_the_mode_and_the_run_id_through(client) -> None:
         )
 
     assert response.json()["run_id"] == "conformance-6.16.0-abc"
-    assert sweep.call_args.kwargs == {
-        "mode": "llm",
-        "run_id": "conformance-6.16.0-abc",
-        "log": adapter.log,
-    }
+    kwargs = sweep.call_args.kwargs
+    assert kwargs["mode"] == "llm"
+    assert kwargs["run_id"] == "conformance-6.16.0-abc"
+    assert kwargs["log"] is adapter.log
+    # The run state travels with the request rather than sitting in module
+    # globals that the next request would reset out from under this one.
+    assert isinstance(kwargs["ctx"], adapter.RunContext)
 
 
 def test_sweep_rejects_a_bad_token(client) -> None:
@@ -216,24 +216,38 @@ def test_sweep_failure_does_not_escape_the_background_task() -> None:
         patch.object(adapter, "run_fleet_sweep", side_effect=RuntimeError("boom")),
         patch.object(adapter, "_report_failure") as report,
     ):
-        adapter._sweep(mode="deterministic", run_id="deterministic-1-x")
+        adapter._sweep(
+            mode="deterministic",
+            run_id="deterministic-1-x",
+            ctx=adapter.RunContext(),
+        )
 
     assert report.call_count == 1
 
 
-def test_sweep_holds_the_lock_for_the_whole_run() -> None:
-    """An invoke arriving mid-sweep waits. That is the intended behaviour."""
-    held: list[bool] = []
+def test_each_accepted_request_gets_its_own_run_context(client) -> None:
+    """Two invokes in flight share no run state. This replaces the lock.
 
-    def _observe(**kwargs):
-        held.append(_EVALUATION_LOCK_IS_HELD())
-        return MagicMock(repos=0, evaluated=[], not_evaluated=[])
+    The lock serialised the work and not the state it was protecting.
+    ``/invoke`` reset the module globals from the request thread, so a
+    second release arriving while the first was still evaluating wiped
+    the first one's tally and report without ever contending for the
+    lock — and the first run then read an empty tally and could call a
+    total delivery failure a success.
+    """
+    contexts: list[adapter.RunContext] = []
 
-    def _EVALUATION_LOCK_IS_HELD() -> bool:
-        return adapter._EVALUATION_LOCK.locked()
+    def _capture(event, ctx) -> None:  # noqa: ARG001 — the event is not the subject
+        contexts.append(ctx)
 
-    with patch.object(adapter, "run_fleet_sweep", side_effect=_observe):
-        adapter._sweep(mode="deterministic", run_id="deterministic-1-x")
+    with patch.object(adapter, "_evaluate", side_effect=_capture):
+        for repo in ("watcher-cog", "deejay-cog"):
+            client.post("/invoke", json={"repo": repo}, headers=_headers())
 
-    assert held == [True]
-    assert not adapter._EVALUATION_LOCK.locked()
+    assert len(contexts) == 2
+    first, second = contexts
+    assert first is not second
+    assert first.tally is not second.tally
+    assert first.report is not second.report
+    assert first.flagged is not second.flagged
+    assert first.unresolved_downloads is not second.unresolved_downloads
