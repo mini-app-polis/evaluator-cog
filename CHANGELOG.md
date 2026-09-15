@@ -1,3 +1,11 @@
+# [3.31.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.30.0...v3.31.0) (2026-09-15)
+
+
+### Features
+
+* **evaluations:** enqueue evaluation jobs on SQS ([1c51d20](https://github.com/mini-app-polis/evaluator-cog/commit/1c51d2022472768cc66ce14fdf8e322a1a12e75b))
+* **evaluations:** enqueue evaluation jobs on SQS ([d999ebb](https://github.com/mini-app-polis/evaluator-cog/commit/d999ebb588b351725843cb2bb3c9e77d895f27c9))
+
 # [3.30.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.29.0...v3.30.0) (2026-09-15)
 
 
