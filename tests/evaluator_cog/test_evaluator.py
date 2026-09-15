@@ -4,7 +4,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import evaluator_cog.flows.pipeline_eval as pe
 from evaluator_cog.engine.llm import build_conformance_prompt
 from evaluator_cog.flows.pipeline_eval import (
     build_collection_evaluation_prompt,
@@ -326,7 +325,21 @@ def test_evaluate_pipeline_run_respects_caller_source_with_direct_finding(
     assert body["source"] == "flow_inline"
 
 
-def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:
+def test_evaluate_pipeline_run_lets_the_api_dedupe(monkeypatch) -> None:
+    """The duplicate check is the API's now, and the result says so.
+
+    This used to assert the opposite — that the POST never happened —
+    because api_client compared each finding against the single most
+    recent stored row and dropped a match itself. That check was
+    best-effort by construction and had already dropped a true finding by
+    comparing one repo's CD-021 against another's.
+
+    `pipeline_eval` passes a real run_id, so the unique index on
+    (run_id, repo, fingerprint) covers exactly the case the client check
+    covered. What matters here is that a suppressed write is counted as a
+    duplicate and not as a delivered finding: `post_findings` increments
+    `posted` on any 2xx, and a suppressed write is a 2xx.
+    """
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setenv("KAIANO_API_BASE_URL", "https://x")
 
@@ -342,19 +355,13 @@ def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:
     }
 
     api = SimpleNamespace(
-        get=MagicMock(
+        get=MagicMock(return_value={"data": []}),
+        post=MagicMock(
             return_value={
-                "data": [
-                    {
-                        "run_id": "r-dup",
-                        "dimension": "pipeline_consistency",
-                        "severity": "WARN",
-                        "finding": "duplicate finding text",
-                    }
-                ]
+                "data": {"id": "row-1", "deduplicated": True},
+                "meta": {"count": 1, "total": 1, "version": "v1"},
             }
         ),
-        post=MagicMock(return_value={}),
     )
 
     with (
@@ -363,7 +370,6 @@ def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:
             return_value=json.dumps(payload),
         ),
         patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m_client,
-        patch.object(pe.log, "info") as mock_info,
     ):
         m_client.from_env.return_value = api
         evaluate_pipeline_run(
@@ -378,14 +384,11 @@ def test_evaluate_pipeline_run_skips_duplicate_finding(monkeypatch) -> None:
             sets_attempted=0,
         )
 
-    api.post.assert_not_called()
-    assert any(
-        call.args and "⏭️ Skipping duplicate finding for run_id=" in str(call.args[0])
-        for call in mock_info.call_args_list
-    )
-    # After the dedup hoist, _get_latest_stored_finding is called exactly once
-    # (before the loop) not once per finding. Verify the fetch happened.
-    api.get.assert_called_once()
+    # Offered — the client no longer guesses on the API's behalf.
+    api.post.assert_called_once()
+    # And no read to guess with. That GET cost one round trip per repo per
+    # run and bought an answer the API already had.
+    api.get.assert_not_called()
 
 
 def test_build_conformance_prompt_includes_evaluator_yaml_exemptions(

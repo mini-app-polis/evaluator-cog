@@ -32,8 +32,13 @@ jobs:
 
       # Step 5 swaps this one step for the real package:
       #   uv pip install --target build/ . && cp -r src/evaluator_cog build/
-      # The measured package is ~26 MB zipped against Lambda's 50 MB
-      # direct-upload limit, so there is no registry and no image here.
+      #   rm -rf build/boto3 build/botocore build/s3transfer build/jmespath
+      #
+      # That last line is not optional. Measured: 41.5 MB zipped against a
+      # 50 MB limit with boto3 in the package, 25.8 MB without — and the
+      # Lambda runtime ships boto3 already, so bundling it buys nothing and
+      # spends most of the remaining headroom. No registry and no image
+      # either way.
       - name: Build the function zip
         run: |
           cd infra/stub

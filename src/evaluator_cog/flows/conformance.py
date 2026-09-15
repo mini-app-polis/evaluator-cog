@@ -230,7 +230,7 @@ def _post_tracked(
             "%s: %d of %d findings suppressed as duplicates — %s",
             label,
             result.duplicates,
-            result.offered,
+            result.attempted,
             "; ".join(result.duplicate_details) or "no detail recorded",
         )
     if result.failed:
@@ -1608,6 +1608,15 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
     say — and because a run that skipped a repository silently is the
     failure this evaluator has been bitten by most.
     """
+    # Attribute the coverage report to the run whose findings it
+    # describes. Without this the report falls back to
+    # mini_app_polis.pipeline_status.get_run_id(), whose resolution order
+    # is Prefect's — so with Prefect gone every report this cog sent
+    # arrived as "local-run", joinable to nothing. The sweep sets this
+    # first because it owns the run; a per-repository invoke sets it here.
+    if ctx.report is not None and not ctx.report.run_id:
+        ctx.report.run_id = event.run_id
+
     standards_version = _get_standards_version(ctx=ctx)
     catalog_schema = _fetch_catalog_schema(ctx=ctx)
     rule_catalog = _fetch_full_rule_catalog(ctx=ctx)
@@ -1874,6 +1883,12 @@ def run_fleet_sweep(
         if mode == "llm"
         else _build_deterministic_run_id(standards_version)
     )
+
+    # One id for the whole pass, set before the first handler call so the
+    # per-repository path below leaves it alone. The website's latest-run
+    # filter relies on a sweep's findings belonging to one run.
+    if ctx.report is not None:
+        ctx.report.run_id = run_id
 
     # No concurrency primitive here. The writes used to be wrapped in
     # prefect.concurrency('evaluator-cog-writes', occupy=1), which bought
