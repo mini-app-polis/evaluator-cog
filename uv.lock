@@ -692,7 +692,7 @@ dev = [
 requires-dist = [
     { name = "boto3", specifier = ">=1.34,<2" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "miniapppolis-common-utils", specifier = ">=5.9.0,<6" },
+    { name = "miniapppolis-common-utils", specifier = ">=5.10.0,<6" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8.0" },
     { name = "pydantic", specifier = ">=2.6,<3.0" },
@@ -1052,7 +1052,7 @@ wheels = [
 
 [[package]]
 name = "miniapppolis-common-utils"
-version = "5.9.0"
+version = "5.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-python-client" },
@@ -1069,9 +1069,9 @@ dependencies = [
     { name = "spotipy" },
     { name = "tenacity" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/a0/0c9f108587b03484a3236cfe340405da0d181aef61fde7b000dfe30808a3/miniapppolis_common_utils-5.9.0.tar.gz", hash = "sha256:1d8063a0f008e24e65ffb64c34e36533ac7f6cddafed09f96c2ed8329390a622", size = 270194, upload-time = "2026-09-11T18:46:44.902Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/64/904b6ee9fc47359ab5401ca7ae37f01c9b71be0cb8112b4e531e25e2e955/miniapppolis_common_utils-5.10.0.tar.gz", hash = "sha256:38ad2f95098dcb66fc4716ab5e19dd4fdc3f850360e1143e9883f5f804a342e1", size = 271937, upload-time = "2026-09-15T04:15:04.543Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/d4/e7fd25f012d6f4c904808a6e49a12568e8bf50db94df860fe8899be3dd73/miniapppolis_common_utils-5.9.0-py3-none-any.whl", hash = "sha256:61097f41f186bbe317d56027b5fdfb3418d636eb5a0b45869e0ef5ee3822b74a", size = 104943, upload-time = "2026-09-11T18:46:43.491Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/93/2bdea6e0e932f0895712dd8f06538967a567bf087c0df2ff8b038def1c46/miniapppolis_common_utils-5.10.0-py3-none-any.whl", hash = "sha256:2891e0c404643a323bec2a6f2d8032cf1713a8e39c7d8e7ca963ac9272edc659", size = 105417, upload-time = "2026-09-15T04:15:03.124Z" },
 ]
 
 [[package]]
