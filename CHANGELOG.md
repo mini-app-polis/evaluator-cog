@@ -1,3 +1,10 @@
+## [3.32.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.32.0...v3.32.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* **evaluations:** name the queue credentials for their caller ([99aeba7](https://github.com/mini-app-polis/evaluator-cog/commit/99aeba756ca821706124776e937bf6030780884c))
+
 # [3.32.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.31.0...v3.32.0) (2026-09-15)
 
 
