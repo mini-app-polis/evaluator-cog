@@ -1,3 +1,10 @@
+## [3.32.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.32.1...v3.32.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **infra:** let CI read the function configuration it just updated ([f7a4a8f](https://github.com/mini-app-polis/evaluator-cog/commit/f7a4a8f726f3aec056eaf4ec0208366dc066035e))
+
 ## [3.32.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.32.0...v3.32.1) (2026-09-15)
 
 
