@@ -1,3 +1,10 @@
+# [3.32.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.31.0...v3.32.0) (2026-09-15)
+
+
+### Features
+
+* **infra:** an IAM user the Railway consumer can actually use ([8a5f41c](https://github.com/mini-app-polis/evaluator-cog/commit/8a5f41c81bab7eef3359ec113211807ea27dc69d))
+
 # [3.31.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.30.0...v3.31.0) (2026-09-15)
 
 
