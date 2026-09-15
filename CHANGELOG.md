@@ -1,3 +1,15 @@
+# [3.30.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.29.0...v3.30.0) (2026-09-15)
+
+
+### Bug Fixes
+
+* **deps:** bump the python-minor-and-patch group across 1 directory with 2 updates ([288af4c](https://github.com/mini-app-polis/evaluator-cog/commit/288af4c91eb915ff981611002a13a1229b140048))
+
+
+### Features
+
+* terraform setup for aws sqs integration ([8dd0d63](https://github.com/mini-app-polis/evaluator-cog/commit/8dd0d630695ba855ca72e97d6b066313b010efe4))
+
 # [3.29.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.28.0...v3.29.0) (2026-09-13)
 
 
