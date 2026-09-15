@@ -244,7 +244,32 @@ def main() -> None:
     shutdown = _Shutdown()
     shutdown.install()
 
-    sqs = boto3.client("sqs", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    # Named for this caller rather than boto3's conventional
+    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. The producer holds a
+    # send-only key and this holds a receive-only one, and the fleet keeps
+    # its secrets in one store — under the conventional names the two
+    # collide, and this side fails quietly: receive_message raises, the
+    # loop logs and keeps polling, and the process never dies, so nothing
+    # restarts and nothing alerts.
+    #
+    # Unset falls through to boto3's default chain, which is exactly what
+    # step 5 needs: on Lambda the execution role supplies these and no key
+    # exists at all.
+    key_id = (os.environ.get("EVALUATION_QUEUE_CONSUMER_KEY_ID") or "").strip()
+    secret = (os.environ.get("EVALUATION_QUEUE_CONSUMER_SECRET") or "").strip()
+    credentials = (
+        {"aws_access_key_id": key_id, "aws_secret_access_key": secret} if key_id else {}
+    )
+    log.info(
+        "consumer: credentials from %s",
+        "EVALUATION_QUEUE_CONSUMER_KEY_ID" if key_id else "the default chain",
+    )
+
+    sqs = boto3.client(
+        "sqs",
+        region_name=os.environ.get("AWS_REGION", "us-east-1"),
+        **credentials,
+    )
     log.info("consumer: polling %s", queue_url)
 
     while not shutdown.requested:

@@ -158,7 +158,8 @@ class _OneShot:
         return self._reads > 1
 
 
-def _run_one(monkeypatch, *, process_side_effect=None) -> MagicMock:
+def _run_one(monkeypatch, *, process_side_effect=None):
+    """One poll cycle. Returns (the sqs client, the boto3.client factory)."""
     monkeypatch.setenv("EVALUATION_QUEUE_URL", "https://sqs.test/q")
     monkeypatch.setenv("AWS_REGION", "us-east-1")
     sqs = MagicMock()
@@ -172,25 +173,27 @@ def _run_one(monkeypatch, *, process_side_effect=None) -> MagicMock:
         ]
     }
     with (
-        patch.object(q.boto3, "client", return_value=sqs),
+        patch.object(q.boto3, "client", return_value=sqs) as factory,
         patch.object(q, "_Shutdown", _OneShot),
         patch.object(q, "process_message", side_effect=process_side_effect),
         patch.object(q, "_report_failure"),
         patch("sentry_sdk.init"),
     ):
         q.main()
-    return sqs
+    return sqs, factory
 
 
 def test_a_finished_job_is_deleted(monkeypatch) -> None:
-    sqs = _run_one(monkeypatch)
+    sqs, _ = _run_one(monkeypatch)
     sqs.delete_message.assert_called_once()
     assert sqs.delete_message.call_args.kwargs["ReceiptHandle"] == "rh-1"
 
 
 def test_a_failed_job_is_left_on_the_queue(monkeypatch) -> None:
     """Not deleting is the retry. Everything else follows from it."""
-    sqs = _run_one(monkeypatch, process_side_effect=RuntimeError("the repo exploded"))
+    sqs, _ = _run_one(
+        monkeypatch, process_side_effect=RuntimeError("the repo exploded")
+    )
     sqs.delete_message.assert_not_called()
 
 
@@ -198,7 +201,7 @@ def test_an_unprocessable_message_is_left_for_the_dead_letter_queue(
     monkeypatch,
 ) -> None:
     """Dropping it here would hide whatever produced it."""
-    sqs = _run_one(
+    sqs, _ = _run_one(
         monkeypatch, process_side_effect=q.UnprocessableMessage("unknown type")
     )
     sqs.delete_message.assert_not_called()
@@ -206,11 +209,37 @@ def test_an_unprocessable_message_is_left_for_the_dead_letter_queue(
 
 def test_the_consumer_long_polls(monkeypatch) -> None:
     """Short polling bills empty receives and adds latency to every job."""
-    sqs = _run_one(monkeypatch)
+    sqs, _ = _run_one(monkeypatch)
     assert sqs.receive_message.call_args.kwargs["WaitTimeSeconds"] == 20
     # One job per receive: the visibility timeout is sized for one, and a
     # batch would make the deadline depend on what happened to arrive.
     assert sqs.receive_message.call_args.kwargs["MaxNumberOfMessages"] == 1
+
+
+def test_the_consumer_uses_its_own_named_credentials(monkeypatch) -> None:
+    """Not boto3's AWS_ACCESS_KEY_ID.
+
+    The API holds a send-only key and this holds a receive-only one, and
+    the fleet keeps its secrets in one store. Under the conventional names
+    the two collide, and this is the side that fails quietly.
+    """
+    monkeypatch.setenv("EVALUATION_QUEUE_CONSUMER_KEY_ID", "AKIACONSUMER")
+    monkeypatch.setenv("EVALUATION_QUEUE_CONSUMER_SECRET", "consumer-secret")
+    # Present and wrong for this service — it must be ignored.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAPRODUCER")
+
+    _, factory = _run_one(monkeypatch)
+    assert factory.call_args.kwargs["aws_access_key_id"] == "AKIACONSUMER"
+    assert factory.call_args.kwargs["aws_secret_access_key"] == "consumer-secret"
+
+
+def test_absent_credentials_fall_through_to_the_default_chain(monkeypatch) -> None:
+    """Step 5: on Lambda the execution role supplies them and no key exists."""
+    monkeypatch.delenv("EVALUATION_QUEUE_CONSUMER_KEY_ID", raising=False)
+    monkeypatch.delenv("EVALUATION_QUEUE_CONSUMER_SECRET", raising=False)
+
+    _, factory = _run_one(monkeypatch)
+    assert "aws_access_key_id" not in factory.call_args.kwargs
 
 
 def test_it_refuses_to_start_without_a_queue(monkeypatch) -> None:
