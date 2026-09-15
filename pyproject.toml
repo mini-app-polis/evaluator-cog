@@ -7,6 +7,11 @@ dependencies = [
     "miniapppolis-common-utils>=5.9.0,<6",
     "boto3>=1.34,<2",
     "httpx>=0.27",
+    # Direct: models.py defines the finding schema with it. It used to
+    # arrive transitively through fastapi, which was never a dependency
+    # this package's own code justified — dropping the web server is what
+    # made that visible rather than what broke it.
+    "pydantic>=2.6,<3.0",
     "sentry-sdk>=2.0,<3.0",
     "pyyaml>=6.0,<7.0",
     "python-dotenv>=1.0,<2.0",
