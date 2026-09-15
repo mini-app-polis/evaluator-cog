@@ -434,27 +434,3 @@ def test_coverage_issue_makes_a_fully_delivered_run_warn() -> None:
         "repo_download_failed", "deejay-cog", RuntimeError("404"), ctx=ctx
     )
     assert ctx.report.severity == "WARN"
-
-
-def test_latest_stored_finding_is_scoped_to_the_repo() -> None:
-    """The repo filter must reach the API as a parameter.
-
-    Written into the path it was silently discarded, so this read
-    returned the newest finding across every repo. The duplicate check
-    then compared deejay-cog's CD-021 against watcher-cog's identical
-    CD-021 posted moments earlier in the same run, and dropped a true
-    finding. Three services lost their CD-021 that way.
-    """
-    from unittest.mock import MagicMock
-
-    from evaluator_cog.engine.api_client import _get_latest_stored_finding
-
-    api_client = MagicMock()
-    api_client.get.return_value = {"data": []}
-
-    _get_latest_stored_finding(api_client=api_client, repo="deejay-cog")
-
-    path = api_client.get.call_args[0][0]
-    params = api_client.get.call_args.kwargs.get("params")
-    assert "?" not in path, "a query string in the path does not survive the client"
-    assert params == {"repo": "deejay-cog", "limit": 1}

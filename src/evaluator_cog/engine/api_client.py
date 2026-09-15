@@ -1,4 +1,17 @@
-"""API client helpers for posting evaluation findings."""
+"""API client helpers for posting evaluation findings.
+
+Deduplication is the API's job and only the API's job (PIPE-002). This
+module used to guess as well, comparing each finding against the single
+most recent stored row for the repo — best-effort by construction, since
+it could not see a row two positions back or a redelivery that arrived
+after something else had been written. Two guards where one is unsound is
+worse than either alone: that one once compared deejay-cog's CD-021
+against watcher-cog's identical CD-021 and dropped a true finding.
+
+What remains is reading the answer. A suppressed write returns 200 with
+``deduplicated: true``, and counting that as a delivered finding is how a
+run comes to report findings as posted that were never stored.
+"""
 
 from __future__ import annotations
 
@@ -45,19 +58,6 @@ class PostResult:
         return self.attempted > 0 and self.posted == 0 and self.failed > 0
 
     @property
-    def offered(self) -> int:
-        """Every finding this result covers: stored, suppressed or failed.
-
-        Not the same as :attr:`attempted`, and the difference is the two
-        kinds of duplicate. One suppressed before it was offered — the
-        client-side check below — never reached ``attempted``; one
-        suppressed by the API did, because it was offered and the API
-        declined to store a second copy. This counts both, so it is what
-        a log line should use as its denominator.
-        """
-        return self.posted + self.duplicates + self.failed
-
-    @property
     def last_error(self) -> str:
         """The most recent failure, or "" — what a log line should name."""
         return self.errors[-1] if self.errors else ""
@@ -70,50 +70,6 @@ class PostResult:
         self.duplicate_details.extend(other.duplicate_details)
         self.failed += other.failed
         self.errors.extend(other.errors)
-
-
-def _get_latest_stored_finding(
-    *,
-    api_client: Any,
-    repo: str,
-) -> dict[str, Any] | None:
-    """
-    Best-effort fetch of the most recent stored finding for this repo.
-    Returns None on any failure.
-
-    Reads go through the machine-named client and nothing else. This
-    function used to carry a fallback that built a bare ``httpx.Client``
-    against ``KAIANO_API_BASE_URL`` whenever ``api_client`` had no
-    ``.get`` attribute. That branch presented no credential at all, so
-    the read was unattributable — the exact failure CD-019 exists to
-    catch, sitting beside the correct call. Post-Keystone it could not
-    have succeeded either: the API rejects an unauthenticated read. It
-    is removed rather than repaired; there is only one way for this cog
-    to reach the API, and a second one that silently drops the caller's
-    identity is worse than an exception.
-    """
-    try:
-        # Passed as params, not written into the path. A query string in
-        # the path was silently dropped by the client, so this read came
-        # back as the newest finding across every repo rather than this
-        # one's — and the duplicate check below then compared one repo's
-        # finding against another repo's row.
-        response = api_client.get("/v1/evaluations", params={"repo": repo, "limit": 1})
-
-        if isinstance(response, dict):
-            data = response.get("data")
-            if isinstance(data, list) and data:
-                item = data[0]
-                return item if isinstance(item, dict) else None
-            if isinstance(response.get("items"), list) and response["items"]:
-                item = response["items"][0]
-                return item if isinstance(item, dict) else None
-        if isinstance(response, list) and response:
-            item = response[0]
-            return item if isinstance(item, dict) else None
-    except Exception:
-        return None
-    return None
 
 
 def _was_deduplicated(response: Any) -> bool:
@@ -157,14 +113,6 @@ def post_findings(
 
     api_client = CommonPythonApiClient.from_env("evaluator-cog")
 
-    # Fetch once before the loop — avoids one GET per finding.
-    # Dedup key: (run_id, finding_text, severity, dimension). Collisions on all
-    # four fields are treated as duplicate posts (e.g. a retry); different
-    # run_id means a new run regardless of identical text. This matters
-    # because client helpers may emit identical default text (e.g. "Run
-    # completed successfully.") across many runs.
-    latest = _get_latest_stored_finding(api_client=api_client, repo=repo)
-
     for f in findings:
         if not isinstance(f, dict):
             continue
@@ -205,24 +153,6 @@ def post_findings(
             "source": source,
             "violation_id": violation_id,
         }
-        if latest and (
-            str(latest.get("run_id") or "").strip() == str(run_id).strip()
-            and str(latest.get("finding") or "").strip() == finding_text
-            and str(latest.get("severity") or "").upper() == sev
-            and str(latest.get("dimension") or "").strip() == str(payload["dimension"])
-        ):
-            log.info(
-                "⏭️ Skipping duplicate finding for run_id=%s: %s",
-                run_id,
-                finding_text[:60],
-            )
-            result.duplicates += 1
-            result.duplicate_details.append(
-                f"{violation_id or 'finding'} for {repo} matched a stored "
-                f"row (repo={latest.get('repo')!r}) under the same run_id "
-                f"({run_id}): {finding_text[:120]}"
-            )
-            continue
         result.attempted += 1
         try:
             response = api_client.post("/v1/evaluations", payload)

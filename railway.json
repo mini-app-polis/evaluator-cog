@@ -1,7 +1,7 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "deploy": {
-    "startCommand": "python -m evaluator_cog.adapters.http",
+    "startCommand": "python -m evaluator_cog.adapters.queue",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
     "limitOverride": {
