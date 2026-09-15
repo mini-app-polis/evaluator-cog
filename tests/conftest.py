@@ -1,8 +1,12 @@
 """Shared pytest configuration for evaluator-cog.
 
 Pins STANDARDS_VERSION and ENVIRONMENT so tests do not depend on the
-launching shell or reach the network for standards metadata, and clears
-the per-run catalog cache between tests.
+launching shell or reach the network for standards metadata.
+
+There is no catalog-cache fixture here any more. The catalog lives on
+the run's :class:`RunContext` rather than in module state, so a test
+that builds its own context cannot inherit another test's catalog and
+there is nothing between tests to clear.
 
 There is no Prefect fixture here any more. This file used to open an
 ephemeral Prefect backend for the whole session, disable task retries and
@@ -41,19 +45,3 @@ def _production_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.delenv("PREFECT_TRIGGER_ENABLED", raising=False)
     monkeypatch.delenv("HEALTHCHECKS_ENABLED", raising=False)
-
-
-@pytest.fixture(autouse=True)
-def reset_catalog_cache():
-    """Clear the per-run catalog between tests.
-
-    ``conformance._CATALOG`` is module state deliberately — one fetch per
-    flow run, reused by every caller. Without clearing it here the first
-    test to populate it would silently supply the catalog for every test
-    after, and a test asserting on a fetch that never happened would pass.
-    """
-    from evaluator_cog.flows import conformance
-
-    conformance._CATALOG = None
-    yield
-    conformance._CATALOG = None

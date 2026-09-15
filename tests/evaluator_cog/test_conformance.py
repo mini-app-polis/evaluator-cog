@@ -14,6 +14,7 @@ import evaluator_cog.flows.conformance as conf_mod
 from evaluator_cog.engine.deterministic import CheckResult
 from evaluator_cog.engine.evaluator_config import EvaluatorConfig
 from evaluator_cog.flows.conformance import (
+    RunContext,
     _declared_branch,
     _declared_org,
     _fetch_full_rule_catalog,
@@ -67,6 +68,7 @@ def test_post_llm_only_posts_only_llm_findings(monkeypatch) -> None:
     ):
         mock_client.from_env.return_value = api
         result = run_conformance_check(
+            ctx=RunContext(),
             repo_id="test-repo",
             repo_path=repo_path,
             standards_version="2.5.1",
@@ -108,6 +110,7 @@ def test_post_llm_only_false_posts_all_findings(monkeypatch) -> None:
     ):
         mock_client.from_env.return_value = api
         run_conformance_check(
+            ctx=RunContext(),
             repo_id="test-repo",
             repo_path=repo_path,
             standards_version="2.5.1",
@@ -146,6 +149,7 @@ def test_post_llm_only_empty_llm_posts_status(monkeypatch) -> None:
     ):
         mock_client.from_env.return_value = api
         run_conformance_check(
+            ctx=RunContext(),
             repo_id="test-repo",
             repo_path=repo_path,
             standards_version="2.5.1",
@@ -186,6 +190,7 @@ def test_run_conformance_check_posts_with_conformance_llm_source(monkeypatch) ->
     ):
         mock_client.from_env.return_value = api
         run_conformance_check(
+            ctx=RunContext(),
             repo_id="test-repo",
             repo_path=repo_path,
             standards_version="2.5.1",
@@ -247,7 +252,7 @@ def test_fetch_standards_matches_new_repo_type() -> None:
     service = {"id": "x", "dod_type": "new_cog"}
     cfg = EvaluatorConfig(repo_type="pipeline-cog")
     with _patch_catalog(_FAKE_CATALOG):
-        rules = _fetch_standards_for_service(service, cfg)
+        rules = _fetch_standards_for_service(service, cfg, ctx=RunContext())
     assert "PIPELINE-RULE" in {r["id"] for r in rules}
 
 
@@ -255,7 +260,7 @@ def test_fetch_standards_falls_back_to_dod_type_when_no_evaluator_cfg() -> None:
     """With no evaluator config, applies_to matches on the legacy dod_type."""
     service = {"id": "x", "dod_type": "new_cog"}
     with _patch_catalog(_FAKE_CATALOG):
-        rules = _fetch_standards_for_service(service, None)
+        rules = _fetch_standards_for_service(service, None, ctx=RunContext())
     assert "LEGACY-COG-RULE" in {r["id"] for r in rules}
 
 
@@ -263,7 +268,7 @@ def test_fetch_standards_includes_all_scoped_rules_regardless_of_type() -> None:
     """`[all]` is the catalog's default posture and matches every repo."""
     cfg = EvaluatorConfig(repo_type="static-site")
     with _patch_catalog(_FAKE_CATALOG):
-        rules = _fetch_standards_for_service({"id": "x"}, cfg)
+        rules = _fetch_standards_for_service({"id": "x"}, cfg, ctx=RunContext())
     ids = {r["id"] for r in rules}
     assert "EVERYWHERE-RULE" in ids
     assert "PIPELINE-RULE" not in ids
@@ -283,8 +288,9 @@ def test_unchecked_rules_are_filtered_from_every_catalog_view() -> None:
         ]
     )
     with _patch_catalog(catalog):
-        scoped = _fetch_standards_for_service({"id": "x"}, None)
-        full = _fetch_full_rule_catalog()
+        ctx = RunContext()
+        scoped = _fetch_standards_for_service({"id": "x"}, None, ctx=ctx)
+        full = _fetch_full_rule_catalog(ctx=ctx)
 
     assert {r["id"] for r in scoped} == {"LIVE-001"}
     assert set(full) == {"LIVE-001"}
@@ -295,7 +301,7 @@ def test_fetch_standards_rejects_invalid_rule_status() -> None:
     catalog = _catalog([_rule("BAD-001", status="advisory")])
     with _patch_catalog(catalog), pytest.raises(ValueError, match="invalid status"):
         _fetch_standards_for_service(
-            {"id": "x"}, EvaluatorConfig(repo_type="pipeline-cog")
+            {"id": "x"}, EvaluatorConfig(repo_type="pipeline-cog"), ctx=RunContext()
         )
 
 
@@ -327,7 +333,7 @@ def test_fetch_catalog_schema_parses_v4_shape() -> None:
         },
     )
     with _patch_catalog(catalog):
-        schema = _fetch_catalog_schema()
+        schema = _fetch_catalog_schema(ctx=RunContext())
 
     assert schema["repo_types"] == {"pipeline-cog", "api-service"}
     assert schema["statuses"] == {"requirement", "convention", "gap"}
@@ -346,7 +352,7 @@ def test_fetch_catalog_schema_tolerates_a_catalog_without_schema_blocks() -> Non
     from evaluator_cog.flows.conformance import _fetch_catalog_schema
 
     with _patch_catalog(_catalog([_rule("X-001")])):
-        schema = _fetch_catalog_schema()
+        schema = _fetch_catalog_schema(ctx=RunContext())
 
     assert schema["traits"] == {}
     assert schema["repo_types"] == set()
@@ -370,7 +376,7 @@ def test_fetch_full_rule_catalog_captures_applies_to_and_modifies() -> None:
         ]
     )
     with _patch_catalog(catalog):
-        full = _fetch_full_rule_catalog()
+        full = _fetch_full_rule_catalog(ctx=RunContext())
 
     assert full["MONO-001"]["applies_to"] == ["api-service", "react-app"]
     assert full["MONO-001"]["modifies"] == ["XSTACK-001"]
@@ -410,6 +416,7 @@ def test_run_standalone_deterministic_calls_load_evaluator_config(
             "deterministic-2.5.0-unit",
             prefect_log,
             monorepo_root=None,
+            ctx=RunContext(),
         )
 
     mock_load.assert_called()
@@ -502,7 +509,9 @@ def test_conformance_monorepo_service_failure_does_not_abort_flow(
         ],
     }
 
-    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
+    def fake_download_repo(
+        repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw
+    ):
         root = Path(tmp_dir) / repo_name
         (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
         (root / "apps" / "b").mkdir(parents=True, exist_ok=True)
@@ -544,7 +553,7 @@ def test_conformance_monorepo_service_failure_does_not_abort_flow(
         patch.object(conf, "post_findings", return_value=conf.PostResult()),
         patch.object(conf, "_fetch_standards_for_service", return_value=[]),
     ):
-        run_fleet_sweep(mode="deterministic", log=_LOG)
+        run_fleet_sweep(mode="deterministic", log=_LOG, ctx=RunContext.for_run())
 
     assert len(run_all_calls) == 1
 
@@ -624,7 +633,9 @@ def test_undownloadable_repo_is_reported_not_silently_skipped(monkeypatch) -> No
         ]
     }
 
-    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
+    def fake_download_repo(
+        repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw
+    ):
         if repo_name == "gone":
             return None
         root = Path(tmp_dir) / repo_name
@@ -653,7 +664,7 @@ def test_undownloadable_repo_is_reported_not_silently_skipped(monkeypatch) -> No
         patch.object(conf, "post_findings", side_effect=tracking_post),
         patch.object(conf, "_fetch_standards_for_service", return_value=[]),
     ):
-        run_fleet_sweep(mode="deterministic", log=_LOG)
+        run_fleet_sweep(mode="deterministic", log=_LOG, ctx=RunContext.for_run())
 
     findings = _posted_findings(post_calls)
     gone = [f for f in findings if "gone" in f.get("finding", "")]
@@ -690,7 +701,9 @@ def test_failed_checks_are_reported_not_silently_skipped(monkeypatch) -> None:
         ]
     }
 
-    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
+    def fake_download_repo(
+        repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw
+    ):
         root = Path(tmp_dir) / repo_name
         root.mkdir(parents=True, exist_ok=True)
         return root
@@ -714,7 +727,7 @@ def test_failed_checks_are_reported_not_silently_skipped(monkeypatch) -> None:
         patch.object(conf, "post_findings", side_effect=tracking_post),
         patch.object(conf, "_fetch_standards_for_service", return_value=[]),
     ):
-        run_fleet_sweep(mode="deterministic", log=_LOG)
+        run_fleet_sweep(mode="deterministic", log=_LOG, ctx=RunContext.for_run())
 
     findings = _posted_findings(post_calls)
     assert findings, "a raising check posted nothing at all"
@@ -764,7 +777,7 @@ def test_transient_download_failure_is_retried(monkeypatch) -> None:
     monkeypatch.setattr(conf.httpx, "Client", lambda **_kw: _Client())
     monkeypatch.setattr(conf.time, "sleep", lambda _s: None)
 
-    got = conf._fetch_zipball("http://x", {}, 60.0, "deejay-cog")
+    got = conf._fetch_zipball("http://x", {}, 60.0, "deejay-cog", ctx=conf.RunContext())
     assert got == b"zipbytes"
     assert len(calls) == 3
 
@@ -795,7 +808,10 @@ def test_missing_repo_is_not_retried(monkeypatch) -> None:
     monkeypatch.setattr(conf.httpx, "Client", lambda **_kw: _Client())
     monkeypatch.setattr(conf.time, "sleep", lambda _s: None)
 
-    assert conf._fetch_zipball("http://x", {}, 60.0, "gone-cog") is None
+    assert (
+        conf._fetch_zipball("http://x", {}, 60.0, "gone-cog", ctx=conf.RunContext())
+        is None
+    )
     assert len(calls) == 1
 
 
@@ -855,7 +871,9 @@ def _run_mono_flow(monkeypatch, ecosystem: dict, *, run_all):
     """Run the flow over a one-app monorepo and return what was posted."""
     import evaluator_cog.flows.conformance as conf
 
-    def fake_download_repo(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
+    def fake_download_repo(
+        repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw
+    ):
         root = Path(tmp_dir) / repo_name
         (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
         return root
@@ -876,7 +894,7 @@ def _run_mono_flow(monkeypatch, ecosystem: dict, *, run_all):
         patch.object(conf, "post_findings", side_effect=capture),
         patch.object(conf, "_fetch_standards_for_service", return_value=[]),
     ):
-        run_fleet_sweep(mode="deterministic", log=_LOG)
+        run_fleet_sweep(mode="deterministic", log=_LOG, ctx=RunContext.for_run())
     return posted
 
 
@@ -936,6 +954,32 @@ def test_monorepo_deterministic_findings_carry_the_deterministic_flow_name(
     assert all(c["flow_name"] == "deterministic-conformance" for c in service_posts)
 
 
+def test_a_sweep_regrades_against_the_catalog_current_when_it_starts() -> None:
+    """The accept-time catalog is dropped rather than reused.
+
+    /sweep mints the run id from a catalog fetch and hands the context to
+    a background task that may start well after. A sweep accepted while a
+    catalog release is in flight must grade against the version it runs
+    under, so the sweep discards whatever the route cached. An invoke
+    wants the opposite — one fetch for the whole request — which is why
+    the context caches by default and only the sweep clears it.
+    """
+    import evaluator_cog.flows.conformance as conf
+
+    ctx = conf.RunContext.for_run()
+    ctx.catalog = {"version": "stale-at-accept-time", "rules": []}
+
+    with (
+        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
+        patch.object(conf, "_fetch_catalog_schema", return_value={}),
+        patch.object(conf, "_fetch_full_rule_catalog", return_value={}),
+        patch.object(conf, "_fetch_yaml", return_value={}),
+    ):
+        conf.run_fleet_sweep(mode="deterministic", log=_LOG, ctx=ctx)
+
+    assert ctx.catalog is None, "the sweep graded against the accept-time catalog"
+
+
 def test_post_service_findings_substitutes_the_success_row() -> None:
     """Evaluated-and-clean must not look like never-evaluated."""
     import evaluator_cog.flows.conformance as conf
@@ -944,6 +988,7 @@ def test_post_service_findings_substitutes_the_success_row() -> None:
         conf._post_service_findings(
             "some-repo",
             [],
+            ctx=conf.RunContext(),
             standards_version="9.9.9",
             run_id="r",
             flow_name="deterministic-conformance",
@@ -996,7 +1041,7 @@ def test_handler_evaluates_a_standalone_repo(tmp_path) -> None:
     """One repository, one service, findings delivered."""
     import evaluator_cog.flows.conformance as conf
 
-    def download(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
+    def download(repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw):
         root = Path(tmp_dir) / repo_name
         root.mkdir(parents=True, exist_ok=True)
         return root
@@ -1022,7 +1067,7 @@ def test_handler_evaluates_a_standalone_repo(tmp_path) -> None:
         patch.object(conf, "run_all_checks", side_effect=_findings("something")),
         patch.object(conf, "post_findings", side_effect=capture),
     ):
-        result = conf.handler(event, log=MagicMock())
+        result = conf.handler(event, log=MagicMock(), ctx=conf.RunContext())
 
     assert result.evaluated == ["watcher-cog"]
     assert result.not_evaluated == []
@@ -1059,7 +1104,7 @@ def test_handler_reports_every_service_when_the_download_fails() -> None:
         patch.object(conf, "_download_repo", return_value=None),
         patch.object(conf, "post_findings", side_effect=capture),
     ):
-        result = conf.handler(event, log=MagicMock())
+        result = conf.handler(event, log=MagicMock(), ctx=conf.RunContext())
 
     assert result.not_evaluated == ["app-a", "app-b"]
     assert result.evaluated == []
@@ -1070,7 +1115,7 @@ def test_handler_deduplicates_identical_sibling_findings() -> None:
     """Why a monorepo is one event: dedup needs every app's findings first."""
     import evaluator_cog.flows.conformance as conf
 
-    def download(repo_name, tmp_dir, branch="main", org="mini-app-polis"):
+    def download(repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw):
         root = Path(tmp_dir) / repo_name
         (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
         (root / "apps" / "b").mkdir(parents=True, exist_ok=True)
@@ -1101,7 +1146,7 @@ def test_handler_deduplicates_identical_sibling_findings() -> None:
         patch.object(conf, "run_all_checks", side_effect=_findings("the same issue")),
         patch.object(conf, "post_findings", side_effect=capture),
     ):
-        conf.handler(event, log=MagicMock())
+        conf.handler(event, log=MagicMock(), ctx=conf.RunContext())
 
     by_repo = {c["repo"]: c["findings"] for c in posted}
     assert "also affects app-b" in by_repo["app-a"][0]["finding"]

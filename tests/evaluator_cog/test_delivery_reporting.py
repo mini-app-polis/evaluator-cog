@@ -19,6 +19,7 @@ failure. These tests pin the corrected behaviour.
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -118,18 +119,17 @@ def test_post_findings_reports_a_partial_failure() -> None:
 
 
 def test_delivery_assertion_raises_when_nothing_landed() -> None:
-    conf._reset_run_tally()
-    conf._RUN_TALLY.merge(
+    ctx = conf.RunContext.for_run()
+    ctx.tally.merge(
         PostResult(attempted=162, posted=0, failed=162, errors=["Connection failed"])
     )
     with pytest.raises(conf.FindingDeliveryError) as excinfo:
-        conf._assert_findings_were_delivered(MagicMock())
+        conf._assert_findings_were_delivered(MagicMock(), ctx=ctx)
     message = str(excinfo.value)
     assert "162" in message
     # The message must name the two variables an operator should check.
     assert "KAIANO_API_BASE_URL" in message
     assert "EVALUATOR_COG_API_KEY" in message
-    conf._reset_run_tally()
 
 
 def test_delivery_assertion_is_silent_on_a_partial_failure() -> None:
@@ -140,22 +140,20 @@ def test_delivery_assertion_is_silent_on_a_partial_failure() -> None:
     is a stand-in here — the per-emitter warning is asserted in
     test_post_tracked_logs_what_landed_not_what_was_handed_over.
     """
-    conf._reset_run_tally()
-    conf._RUN_TALLY.merge(PostResult(attempted=10, posted=9, failed=1))
+    ctx = conf.RunContext.for_run()
+    ctx.tally.merge(PostResult(attempted=10, posted=9, failed=1))
     prefect_log = MagicMock()
 
-    conf._assert_findings_were_delivered(prefect_log)
+    conf._assert_findings_were_delivered(prefect_log, ctx=ctx)
 
     # "Silent" is the claim in the name, so assert it: this function says
     # nothing on a partial failure. The per-emitter warning is raised by
-    # _post_tracked, not here, and is asserted in
-    # test_post_tracked_logs_what_landed_not_what_was_handed_over.
+    # _post_tracked, not here.
     assert not prefect_log.warning.called
     assert not prefect_log.error.called
-    assert conf._RUN_TALLY.total_failure is False
-    assert conf._RUN_TALLY.posted == 9
-    assert conf._RUN_TALLY.attempted == 10
-    conf._reset_run_tally()
+    assert ctx.tally.total_failure is False
+    assert ctx.tally.posted == 9
+    assert ctx.tally.attempted == 10
 
 
 def test_delivery_assertion_is_silent_when_nothing_was_offered() -> None:
@@ -165,55 +163,92 @@ def test_delivery_assertion_is_silent_when_nothing_was_offered() -> None:
     second is a failure. This pins that distinction: an empty tally
     leaves total_failure False and the run succeeds.
     """
-    conf._reset_run_tally()
+    ctx = conf.RunContext.for_run()
     prefect_log = MagicMock()
 
-    conf._assert_findings_were_delivered(prefect_log)
+    conf._assert_findings_were_delivered(prefect_log, ctx=ctx)
 
-    # Silent here too: an empty tally is a conformant fleet, not a
-    # delivery failure, and nothing should be logged about it.
     assert not prefect_log.warning.called
     assert not prefect_log.error.called
-    assert conf._RUN_TALLY.attempted == 0
-    assert conf._RUN_TALLY.total_failure is False
-    conf._reset_run_tally()
+    assert ctx.tally.attempted == 0
+    assert ctx.tally.total_failure is False
 
 
 def test_post_tracked_logs_what_landed_not_what_was_handed_over() -> None:
     """The regression test for the false 'posted N findings' log line."""
-    conf._reset_run_tally()
+    ctx = conf.RunContext.for_run()
     prefect_log = MagicMock()
     with patch.object(
         conf,
         "post_findings",
         return_value=PostResult(attempted=3, posted=0, failed=3, errors=["nope"]),
     ):
-        conf._post_tracked("EVAL-003", prefect_log, findings=[1, 2, 3])
+        conf._post_tracked("EVAL-003", prefect_log, ctx=ctx, findings=[1, 2, 3])
 
     # It must NOT have claimed a successful post.
     assert not prefect_log.info.called, (
         "logged a success line for findings that never reached the API"
     )
     assert prefect_log.warning.called
-    assert conf._RUN_TALLY.total_failure is True
-    conf._reset_run_tally()
+    assert ctx.tally.total_failure is True
 
 
 def test_post_tracked_accumulates_across_emitters() -> None:
-    conf._reset_run_tally()
+    ctx = conf.RunContext.for_run()
     prefect_log = MagicMock()
     for res in (
         PostResult(attempted=2, posted=2),
         PostResult(attempted=3, posted=0, failed=3, errors=["x"]),
     ):
         with patch.object(conf, "post_findings", return_value=res):
-            conf._post_tracked("repo", prefect_log, findings=[])
-    assert conf._RUN_TALLY.attempted == 5
-    assert conf._RUN_TALLY.posted == 2
-    assert conf._RUN_TALLY.failed == 3
+            conf._post_tracked("repo", prefect_log, ctx=ctx, findings=[])
+    assert ctx.tally.attempted == 5
+    assert ctx.tally.posted == 2
+    assert ctx.tally.failed == 3
     # Two landed, so this is partial, not total — the run still passes.
-    assert conf._RUN_TALLY.total_failure is False
-    conf._reset_run_tally()
+    assert ctx.tally.total_failure is False
+
+
+def test_two_evaluations_in_one_process_keep_separate_tallies() -> None:
+    """The condition for removing the lock: concurrency without cross-talk.
+
+    Two runs post a different number of findings and flag a different
+    repo, interleaved on a barrier so neither finishes before the other
+    has started. Each reads back only its own counters.
+
+    Against the module globals this could not have passed. The tally, the
+    report and the flagged set were one object shared by every run in the
+    process, and the reset that started a run wiped whatever a run
+    already in flight had accumulated.
+    """
+    counts = {"alpha": 2, "beta": 5}
+    both_posted = threading.Barrier(2)
+    contexts: dict[str, conf.RunContext] = {}
+
+    def fake_post(**kwargs):
+        n = counts[kwargs["repo"]]
+        return PostResult(attempted=n, posted=n)
+
+    def run(name: str) -> None:
+        ctx = conf.RunContext.for_run()
+        contexts[name] = ctx
+        conf._post_tracked(name, MagicMock(), ctx=ctx, findings=[], repo=name)
+        both_posted.wait(timeout=5)
+        conf._report_issue("repo_download_failed", f"{name}-cog", ctx=ctx)
+
+    with patch.object(conf, "post_findings", side_effect=fake_post):
+        threads = [threading.Thread(target=run, args=(n,)) for n in counts]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+            assert not t.is_alive(), "a run never finished"
+
+    assert contexts["alpha"].tally.posted == 2
+    assert contexts["beta"].tally.posted == 5
+    assert contexts["alpha"].flagged == {"alpha-cog"}
+    assert contexts["beta"].flagged == {"beta-cog"}
+    assert contexts["alpha"].report is not contexts["beta"].report
 
 
 def test_every_post_site_in_the_flow_reports_into_the_run_log() -> None:
@@ -229,6 +264,10 @@ def test_every_post_site_in_the_flow_reports_into_the_run_log() -> None:
     Asserted against the source rather than by running the flow, because
     the failure is a missing argument at a call site and a behavioural
     test would need to reach all eight of them.
+
+    The run context needs no equivalent test: it is keyword-only and has
+    no default, so a call site that forgets it is a TypeError rather than
+    a silent write into another run's accounting.
     """
     import ast
     import inspect
@@ -263,17 +302,19 @@ def test_suppressed_duplicates_are_reported_in_the_run_view() -> None:
     no line at all and read as though they had never been processed. The
     finding was real, current, and silently discarded.
     """
-    from unittest.mock import MagicMock
-
-    import evaluator_cog.flows.conformance as conf
-
     result = conf.PostResult()
     result.duplicates = 1
     result.duplicate_details = ["CD-021 for deejay-cog matched the stored row"]
 
     prefect_log = MagicMock()
     with patch.object(conf, "post_findings", return_value=result):
-        conf._post_tracked("deejay-cog", prefect_log, findings=[{}], repo="deejay-cog")
+        conf._post_tracked(
+            "deejay-cog",
+            prefect_log,
+            ctx=conf.RunContext.for_run(),
+            findings=[{}],
+            repo="deejay-cog",
+        )
 
     assert prefect_log.warning.called, "a suppressed finding logged nothing"
     message = " ".join(str(c) for c in prefect_log.warning.call_args[0])
@@ -285,47 +326,51 @@ def test_suppressed_duplicates_are_reported_in_the_run_view() -> None:
 
 # --- coverage, as opposed to delivery ------------------------------------
 #
-# _RUN_TALLY answers "did the findings reach the API". These pin the other
+# ctx.tally answers "did the findings reach the API". These pin the other
 # question: was every declared repo actually looked at, and looked at
 # completely. A run can be perfect on the first and wrong on the second.
 
 
 def test_repo_whose_checks_raise_is_named_in_the_run_report() -> None:
     """A repo evaluated with zero deterministic checks is not a clean repo."""
-    from mini_app_polis.pipeline_status import RunReport
-
-    conf._RUN_REPORT = RunReport(flow_name="conformance-check", repo="evaluator-cog")
+    ctx = conf.RunContext.for_run()
     conf._report_issue(
-        "deterministic_checks_failed", "watcher-cog", RuntimeError("catalog fetch")
+        "deterministic_checks_failed",
+        "watcher-cog",
+        RuntimeError("catalog fetch"),
+        ctx=ctx,
     )
 
-    assert conf._RUN_REPORT.severity == "WARN"
-    text = conf._RUN_REPORT.text()
+    assert ctx.report is not None
+    assert ctx.report.severity == "WARN"
+    text = ctx.report.text()
     assert "deterministic_checks_failed" in text
     assert "watcher-cog" in text
     assert "RuntimeError" in text
-    conf._RUN_REPORT = None
 
 
 def test_missing_api_key_counts_without_escalating() -> None:
     """One configuration fact must not turn every LLM run WARN."""
-    from mini_app_polis.pipeline_status import RunReport
-
-    conf._RUN_REPORT = RunReport(flow_name="conformance-check", repo="evaluator-cog")
+    ctx = conf.RunContext.for_run()
     for repo in ("a-cog", "b-cog", "c-cog"):
-        conf._report_note("llm_skipped_no_api_key", repo)
+        conf._report_note("llm_skipped_no_api_key", repo, ctx=ctx)
 
-    assert conf._RUN_REPORT.severity == "SUCCESS"
-    assert "llm_skipped_no_api_key=3" in conf._RUN_REPORT.text()
-    conf._RUN_REPORT = None
+    assert ctx.report is not None
+    assert ctx.report.severity == "SUCCESS"
+    assert "llm_skipped_no_api_key=3" in ctx.report.text()
 
 
-def test_helpers_are_noops_outside_a_run() -> None:
-    """Called outside a flow run these write nowhere rather than raising."""
-    conf._RUN_REPORT = None
-    conf._report_issue("repo_download_failed", "x-cog", RuntimeError("boom"))
-    conf._report_note("llm_skipped_no_api_key", "x-cog")
-    assert conf._RUN_REPORT is None
+def test_helpers_are_noops_on_a_context_with_no_report() -> None:
+    """A context with no report to send writes nowhere rather than raising.
+
+    Tests and one-off scripts build one of these. Nothing is going to
+    read the report, so nothing should be written into it.
+    """
+    ctx = conf.RunContext()
+    conf._report_issue("repo_download_failed", "x-cog", RuntimeError("boom"), ctx=ctx)
+    conf._report_note("llm_skipped_no_api_key", "x-cog", ctx=ctx)
+    assert ctx.report is None
+    assert ctx.flagged == set()
 
 
 def test_a_repo_flagged_twice_is_still_one_repo_missing() -> None:
@@ -334,41 +379,42 @@ def test_a_repo_flagged_twice_is_still_one_repo_missing() -> None:
     A repo whose deterministic checks raise and whose LLM pass then fails
     is one repo that did not come through whole, not two.
     """
-    conf._reset_run_tally()
-    conf._report_issue("deterministic_checks_failed", "watcher-cog", RuntimeError("a"))
-    conf._report_issue("llm_assessment_failed", "watcher-cog", RuntimeError("b"))
+    ctx = conf.RunContext.for_run()
+    conf._report_issue(
+        "deterministic_checks_failed", "watcher-cog", RuntimeError("a"), ctx=ctx
+    )
+    conf._report_issue(
+        "llm_assessment_failed", "watcher-cog", RuntimeError("b"), ctx=ctx
+    )
 
     active = [{"id": "watcher-cog"}, {"id": "deejay-cog"}, {"id": "retag-cog"}]
-    clean = sum(1 for s in active if s.get("id") and s["id"] not in conf._RUN_FLAGGED)
+    clean = sum(1 for s in active if s.get("id") and s["id"] not in ctx.flagged)
     assert clean == 2
-    conf._RUN_REPORT = None
 
 
 def test_a_note_does_not_cost_a_repo_its_clean_count() -> None:
     """A skipped LLM pass is not a repo that went unevaluated."""
-    conf._reset_run_tally()
-    conf._report_note("llm_skipped_no_api_key", "deejay-cog")
+    ctx = conf.RunContext.for_run()
+    conf._report_note("llm_skipped_no_api_key", "deejay-cog", ctx=ctx)
 
-    assert "deejay-cog" not in conf._RUN_FLAGGED
-    conf._RUN_REPORT = None
+    assert "deejay-cog" not in ctx.flagged
 
 
-def test_reset_starts_a_fresh_coverage_report() -> None:
+def test_a_fresh_context_starts_a_fresh_coverage_report() -> None:
     """A run's coverage must not inherit the previous run's issues."""
-    conf._reset_run_tally()
-    conf._report_issue("repo_download_failed", "x-cog", RuntimeError("boom"))
-    assert conf._RUN_REPORT is not None
-    assert conf._RUN_REPORT.severity == "WARN"
+    ctx = conf.RunContext.for_run()
+    conf._report_issue("repo_download_failed", "x-cog", RuntimeError("boom"), ctx=ctx)
+    assert ctx.report is not None
+    assert ctx.report.severity == "WARN"
 
-    conf._reset_run_tally()
-    assert conf._RUN_REPORT is not None
-    assert conf._RUN_REPORT.severity == "SUCCESS"
+    fresh = conf.RunContext.for_run()
+    assert fresh.report is not None
+    assert fresh.report.severity == "SUCCESS"
     # The headline now carries how long the run took, so this asserts the
     # shape rather than the exact string — the duration is real elapsed
     # time and cannot be pinned here.
-    assert conf._RUN_REPORT.text().endswith("— nothing to do.")
-    assert conf._RUN_REPORT.text().startswith("Run complete in ")
-    conf._RUN_REPORT = None
+    assert fresh.report.text().endswith("— nothing to do.")
+    assert fresh.report.text().startswith("Run complete in ")
 
 
 def test_coverage_issue_makes_a_fully_delivered_run_warn() -> None:
@@ -378,16 +424,16 @@ def test_coverage_issue_makes_a_fully_delivered_run_warn() -> None:
     "162 offered, 162 posted, 0 failed" as SUCCESS, because the tally is
     honest about delivery and silent about coverage.
     """
-    from mini_app_polis.pipeline_status import RunReport
+    ctx = conf.RunContext.for_run()
+    assert ctx.report is not None
+    ctx.report.count("offered", 162)
+    ctx.report.count("posted", 162)
+    assert ctx.report.severity == "SUCCESS"
 
-    conf._RUN_REPORT = RunReport(flow_name="conformance-check", repo="evaluator-cog")
-    conf._RUN_REPORT.count("offered", 162)
-    conf._RUN_REPORT.count("posted", 162)
-    assert conf._RUN_REPORT.severity == "SUCCESS"
-
-    conf._report_issue("repo_download_failed", "deejay-cog", RuntimeError("404"))
-    assert conf._RUN_REPORT.severity == "WARN"
-    conf._RUN_REPORT = None
+    conf._report_issue(
+        "repo_download_failed", "deejay-cog", RuntimeError("404"), ctx=ctx
+    )
+    assert ctx.report.severity == "WARN"
 
 
 def test_latest_stored_finding_is_scoped_to_the_repo() -> None:

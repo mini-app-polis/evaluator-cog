@@ -45,6 +45,19 @@ class PostResult:
         return self.attempted > 0 and self.posted == 0 and self.failed > 0
 
     @property
+    def offered(self) -> int:
+        """Every finding this result covers: stored, suppressed or failed.
+
+        Not the same as :attr:`attempted`, and the difference is the two
+        kinds of duplicate. One suppressed before it was offered — the
+        client-side check below — never reached ``attempted``; one
+        suppressed by the API did, because it was offered and the API
+        declined to store a second copy. This counts both, so it is what
+        a log line should use as its denominator.
+        """
+        return self.posted + self.duplicates + self.failed
+
+    @property
     def last_error(self) -> str:
         """The most recent failure, or "" — what a log line should name."""
         return self.errors[-1] if self.errors else ""
@@ -101,6 +114,24 @@ def _get_latest_stored_finding(
     except Exception:
         return None
     return None
+
+
+def _was_deduplicated(response: Any) -> bool:
+    """True when the API recognised this finding rather than storing it.
+
+    PIPE-002. A suppressed write answers 200 with ``deduplicated: true``,
+    so a caller that checks only for an exception counts it as delivered —
+    and a run then reports findings as posted that were never stored,
+    which is the September failure shape reached by a new route.
+
+    An absent or unrecognisable flag means stored. That is the safe
+    reading: an API from before the idempotency guard does not send the
+    field and did write the row.
+    """
+    if not isinstance(response, dict):
+        return False
+    data = response.get("data")
+    return isinstance(data, dict) and data.get("deduplicated") is True
 
 
 def post_findings(
@@ -194,12 +225,29 @@ def post_findings(
             continue
         result.attempted += 1
         try:
-            api_client.post("/v1/evaluations", payload)
-            result.posted += 1
+            response = api_client.post("/v1/evaluations", payload)
         except Exception as e:
             log.warning("pipeline evaluation: failed to POST finding: %s", e)
             result.failed += 1
             result.errors.append(str(e))
+            continue
+
+        if _was_deduplicated(response):
+            # Offered and declined, which is neither a post nor a failure.
+            # The server holds this finding already under this run — a
+            # redelivered message, or the release workflow's retry.
+            log.info(
+                "⏭️ Already stored for run_id=%s: %s",
+                run_id,
+                finding_text[:60],
+            )
+            result.duplicates += 1
+            result.duplicate_details.append(
+                f"{violation_id or 'finding'} for {repo} was already stored "
+                f"server-side under run {run_id}: {finding_text[:120]}"
+            )
+        else:
+            result.posted += 1
 
     log.info(
         "🤖 Evaluation complete: %d errors, %d warnings, %d info findings "

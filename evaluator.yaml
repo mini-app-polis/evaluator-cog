@@ -70,13 +70,6 @@ deferrals:
       by other cogs. Both use the shared mini_app_polis logger directly, which
       is correct for code with no Prefect run context to resolve.
     until: null
-  - rule: PIPE-002
-    reason: >
-      Client-side deduplication in api_client.py is intentionally best-effort (compares
-      against the most recent stored finding). A server-side idempotency guard is
-      backlogged — deferred due to complexity of constraining TEXT columns and cleaning
-      up existing duplicate rows.
-    until: null
 
 # TEST-001/002/004 covered by pipeline-cog type scoping (evaluator has no
 # normalization/deduplication of external data — its output is evaluation findings).

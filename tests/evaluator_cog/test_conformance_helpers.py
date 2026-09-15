@@ -14,6 +14,7 @@ import pytest
 import respx
 
 from evaluator_cog.flows.conformance import (
+    RunContext,
     _deduplicate_sibling_findings,
     _fetch_yaml,
     _get_active_repos,
@@ -123,7 +124,7 @@ def test_get_standards_version_returns_version_string() -> None:
     """The version comes from the catalog itself, not a separate fetch."""
     respx.get(_CATALOG_URL).mock(return_value=_catalog_response({"version": "3.0.1"}))
 
-    assert _get_standards_version() == "3.0.1"
+    assert _get_standards_version(ctx=RunContext()) == "3.0.1"
 
 
 @respx.mock
@@ -132,7 +133,7 @@ def test_get_standards_version_raises_when_version_absent() -> None:
     respx.get(_CATALOG_URL).mock(return_value=_catalog_response({}))
 
     with pytest.raises(RuntimeError, match="carries no version"):
-        _get_standards_version()
+        _get_standards_version(ctx=RunContext())
 
 
 @respx.mock
@@ -141,7 +142,7 @@ def test_get_standards_version_raises_on_http_failure() -> None:
     respx.get(_CATALOG_URL).mock(return_value=httpx.Response(503))
 
     with pytest.raises(RuntimeError, match="Cannot read the standards catalog"):
-        _get_standards_version()
+        _get_standards_version(ctx=RunContext())
 
 
 @respx.mock
@@ -159,7 +160,7 @@ def test_empty_catalog_raises_rather_than_evaluating_nothing() -> None:
     )
 
     with pytest.raises(RuntimeError, match="returned no rules"):
-        _get_standards_version()
+        _get_standards_version(ctx=RunContext())
 
 
 # ---------------------------------------------------------------------------

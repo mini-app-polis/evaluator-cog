@@ -1,0 +1,72 @@
+# Deploys the worker's code to Lambda. Nothing else.
+#
+# The split is deliberate: Terraform owns the function's configuration —
+# role, environment, timeout, concurrency — and is applied from a
+# workstation; this owns the code. The deploy role can call
+# UpdateFunctionCode and GetFunction and nothing more, so a compromised
+# workflow cannot repoint the worker at a different API without someone
+# reviewing a .tf file.
+#
+# Manual for now, on purpose. The foundation ticket wants the pipeline
+# proven against the stub before the real worker exists. When step 5 lands,
+# add the release trigger.
+
+name: Deploy worker
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write # for OIDC; this is what replaces a long-lived key
+  contents: read
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Step 5 swaps this one step for the real package:
+      #   uv pip install --target build/ . && cp -r src/evaluator_cog build/
+      # The measured package is ~26 MB zipped against Lambda's 50 MB
+      # direct-upload limit, so there is no registry and no image here.
+      - name: Build the function zip
+        run: |
+          cd infra/stub
+          zip -qr "$GITHUB_WORKSPACE/worker.zip" .
+          cd "$GITHUB_WORKSPACE"
+          echo "LOCAL_SHA=$(openssl dgst -sha256 -binary worker.zip | base64)" >> "$GITHUB_ENV"
+          ls -l worker.zip
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy
+        run: |
+          aws lambda update-function-code \
+            --function-name "${{ vars.AWS_FUNCTION_NAME }}" \
+            --zip-file fileb://worker.zip \
+            --publish >/dev/null
+          aws lambda wait function-updated \
+            --function-name "${{ vars.AWS_FUNCTION_NAME }}"
+
+      # "Which version is actually deployed" answered by the pipeline
+      # rather than by inspection later. The checksum AWS reports must be
+      # the checksum of the artifact this run built.
+      - name: Confirm what is deployed
+        run: |
+          REMOTE_SHA=$(aws lambda get-function \
+            --function-name "${{ vars.AWS_FUNCTION_NAME }}" \
+            --query 'Configuration.CodeSha256' --output text)
+          echo "built:    $LOCAL_SHA"
+          echo "deployed: $REMOTE_SHA"
+          if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+            echo "::error::the deployed checksum is not the one this run built"
+            exit 1
+          fi
