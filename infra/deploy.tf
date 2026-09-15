@@ -55,12 +55,25 @@ resource "aws_iam_role" "deploy" {
 }
 
 data "aws_iam_policy_document" "deploy" {
-  # Code only. CI cannot change the function's configuration, its role, its
-  # environment or its concurrency — those are Terraform's, applied from a
-  # workstation, and a deploy that could change them would be able to point
-  # the worker at a different API without anyone reviewing a .tf file.
+  # Code only, plus the reads a deploy needs to confirm itself.
+  #
+  # CI cannot change the function's configuration, its role, its environment
+  # or its concurrency — those are Terraform's, applied from a workstation,
+  # and a deploy that could change them would be able to point the worker at
+  # a different API without anyone reviewing a .tf file. Note the asymmetry
+  # that makes that safe: UpdateFunctionConfiguration is absent while
+  # GetFunctionConfiguration is present, because reading is not writing.
+  #
+  # GetFunctionConfiguration is a separate IAM action from GetFunction and
+  # is not implied by it. `aws lambda wait function-updated` polls it, so
+  # without it the deploy lands and then fails on the wait — the worst of
+  # both: the code is live and the run is red.
   statement {
-    actions   = ["lambda:UpdateFunctionCode", "lambda:GetFunction"]
+    actions = [
+      "lambda:UpdateFunctionCode",
+      "lambda:GetFunction",
+      "lambda:GetFunctionConfiguration",
+    ]
     resources = [aws_lambda_function.worker.arn]
   }
 }
