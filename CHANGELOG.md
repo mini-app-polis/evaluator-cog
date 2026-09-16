@@ -1,3 +1,10 @@
+# [3.36.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.35.0...v3.36.0) (2026-09-16)
+
+
+### Features
+
+* **worker:** add the Lambda entrypoint and build the real package ([bf43e2e](https://github.com/mini-app-polis/evaluator-cog/commit/bf43e2e48ca29be5d5129e8d599110c7c30d3ec3))
+
 # [3.35.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.34.0...v3.35.0) (2026-09-16)
 
 
