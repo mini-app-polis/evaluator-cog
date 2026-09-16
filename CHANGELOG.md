@@ -1,3 +1,16 @@
+# [3.35.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.34.0...v3.35.0) (2026-09-16)
+
+
+### Bug Fixes
+
+* **evaluations:** count suppressed findings without naming or flagging them ([b628a40](https://github.com/mini-app-polis/evaluator-cog/commit/b628a404ca7bac888f062006004cd0ecbf7b6cdf))
+
+
+### Features
+
+* **evaluations:** name suppressed findings and title runs correctly ([e058c26](https://github.com/mini-app-polis/evaluator-cog/commit/e058c2603472c71e1c1e224248629da51913b3eb))
+* **evaluations:** run the fleet-scoped checks as their own job ([2ff0251](https://github.com/mini-app-polis/evaluator-cog/commit/2ff02511c7479754b0eeaa91604d06d6a688ae6c))
+
 # [3.34.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.33.0...v3.34.0) (2026-09-16)
 
 
