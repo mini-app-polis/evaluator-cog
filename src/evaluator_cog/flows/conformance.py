@@ -1576,6 +1576,19 @@ class EvaluationEvent:
     mode: str = "deterministic"
     #: The monorepo registry record, when this repository is one.
     monorepo: dict | None = None
+    #: The catalog version the dispatcher pinned, when it pinned one.
+    #:
+    #: Empty for a release-triggered evaluation, which resolves the
+    #: version itself and should: one repository graded against whatever
+    #: is published when it runs is correct.
+    #:
+    #: Set for one repository within a fan-out, where it is the opposite.
+    #: N messages each resolving their own version means a catalog release
+    #: landing mid-pass grades some repositories against the old rules and
+    #: some against the new, inside a run id that claims one version for
+    #: all of them. The dispatcher resolves it once so the pass is
+    #: internally consistent.
+    standards_version: str = ""
 
 
 @dataclass
@@ -1617,7 +1630,7 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
     if ctx.report is not None and not ctx.report.run_id:
         ctx.report.run_id = event.run_id
 
-    standards_version = _get_standards_version(ctx=ctx)
+    standards_version = event.standards_version or _get_standards_version(ctx=ctx)
     catalog_schema = _fetch_catalog_schema(ctx=ctx)
     rule_catalog = _fetch_full_rule_catalog(ctx=ctx)
     rule_applies_to = {
@@ -1840,13 +1853,21 @@ def run_fleet_sweep(
     this process rather than of anything it looked at, and the Healthchecks
     ping below must not happen after one.
     """
-    # Drop whatever catalog the caller already fetched. The route mints
-    # the run id from one at accept time and this runs later, off a
-    # background task: a sweep accepted while a catalog release is in
-    # flight must grade against the version it actually runs under, not
-    # the one that happened to be current when the request arrived. The
-    # per-repository path wants the opposite and keeps its catalog, which
-    # is why this belongs here rather than in the context.
+    # Drop whatever catalog the caller already fetched. A sweep is one
+    # message accepted at one moment and run later, so grading against the
+    # version current when it *runs* keeps the pass internally consistent:
+    # every repository in it sees the same catalog because one process
+    # fetches it once.
+    #
+    # Note the fan-out path reverses this, and deliberately. N independent
+    # messages each resolving their own version is not "the version it
+    # actually runs under" — it is several of them, inside a run id that
+    # claims one. So the dispatcher pins standards_version at accept time
+    # and the message carries it. Both are the same goal reached from
+    # opposite directions; neither is the general rule.
+    #
+    # The per-repository path keeps its catalog, which is why this belongs
+    # here rather than in the context.
     ctx.catalog = None
 
     standards_version = _get_standards_version(ctx=ctx)
@@ -1892,12 +1913,15 @@ def run_fleet_sweep(
 
     # No concurrency primitive here. The writes used to be wrapped in
     # prefect.concurrency('evaluator-cog-writes', occupy=1), which bought
-    # mutual exclusion across processes from Prefect Cloud. Nothing calls
-    # this outside the adapter now, and the adapter holds a process-level
-    # lock across the whole call for the harder reason: the tally, the
-    # catalog and the run report above are module state, so two overlapping
-    # sweeps would corrupt each other's accounting long before they raced
-    # on a write.
+    # mutual exclusion across processes from Prefect Cloud.
+    #
+    # This comment used to add that the adapter holds a process-level lock
+    # because the tally, catalog and run report are module state. Both
+    # halves of that are stale: _EVALUATION_LOCK went with adapters/http.py,
+    # and that state is now per-run on RunContext. Two overlapping sweeps
+    # no longer corrupt each other's accounting — they each carry their
+    # own. What remains unguarded is the write side, which server-side
+    # idempotency (PIPE-002) covers instead.
     for event in _fleet_events(ecosystem, run_id=run_id, mode=mode, log=log):
         one = handler(event, log=log, ctx=ctx)
         result.evaluated.extend(one.evaluated)

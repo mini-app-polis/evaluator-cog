@@ -59,6 +59,13 @@ log = logger_mod.get_logger()
 
 #: Must match api-kaianolevine-com's evaluation_dispatch. A mismatch is a
 #: message this consumer refuses rather than misreads.
+#:
+#: This queue is evaluator-cog's alone — `infra/` names it from
+#: `name_prefix`, one prefix per cog. A shared fleet queue was considered
+#: and cannot work: SQS has no selective receive, so a consumer takes
+#: whatever it is handed, and an unrecognised type would send another
+#: cog's job to *this* cog's dead-letter queue. The type check below is
+#: therefore a producer-bug detector, not a router.
 MESSAGE_VERSION = 1
 TYPE_REPOSITORY = "evaluation.repository"
 TYPE_SWEEP = "evaluation.sweep"
@@ -133,14 +140,44 @@ def _event_from(payload: dict[str, Any], *, ctx: RunContext) -> EvaluationEvent:
             else _build_deterministic_run_id(standards_version)
         )
 
-    repo_id = str(payload.get("repo_id") or repo)
+    # Services, when the dispatcher grouped them; one synthesised service
+    # when it did not.
+    #
+    # A release-triggered evaluation names a repository and nothing else,
+    # and synthesising its single service from the repo id is right: CI
+    # knows what it built and no registry lookup can add to that.
+    #
+    # A fan-out is different in a way that is not cosmetic. A monorepo is
+    # ONE event carrying every app in it, because sibling deduplication
+    # treats an identical finding on two apps as one issue and cannot know
+    # that until every app has been evaluated. Flatten a monorepo into one
+    # message per app and monorepo_root, the workspace package.json and
+    # monorepo_context all resolve to None, _deduplicate_sibling_findings
+    # never fires — it is gated on more than one service — and duplicate
+    # findings land looking like a clean run. So the grouping travels in
+    # the message rather than being rebuilt from it.
+    services = payload.get("services")
+    if isinstance(services, list) and services:
+        if not all(isinstance(service, dict) for service in services):
+            raise UnprocessableMessage("services must be a list of objects")
+        resolved = tuple(services)
+    else:
+        repo_id = str(payload.get("repo_id") or repo)
+        resolved = ({"id": repo_id, "repo": repo},)
+
+    monorepo = payload.get("monorepo")
+    if monorepo is not None and not isinstance(monorepo, dict):
+        raise UnprocessableMessage("monorepo must be an object")
+
     return EvaluationEvent(
         org=str(payload.get("org") or "mini-app-polis"),
         repo=repo,
         ref=str(payload.get("ref") or "main"),
-        services=({"id": repo_id, "repo": repo},),
+        services=resolved,
         run_id=run_id,
         mode=mode,
+        monorepo=monorepo,
+        standards_version=str(payload.get("standards_version") or ""),
     )
 
 

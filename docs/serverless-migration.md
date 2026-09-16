@@ -7,9 +7,14 @@ let the fleet's services stop holding memory while doing nothing.
 the reasoning is in "Why Lambda" below — do not relitigate it mid-migration.
 
 **This retires Prefect.** The queue in step 2 replaces what Prefect is actually
-being used for, and step 6 is the cleanup. See "What Prefect is doing today"
-before starting, because two of its jobs need deliberate replacements rather
-than deletion.
+being used for, and the final step is the cleanup. See "What Prefect is doing
+today" before starting, because two of its jobs need deliberate replacements
+rather than deletion.
+
+**One cog at a time, all the way to Lambda.** The plan originally moved the
+whole fleet onto queues and then moved every worker to Lambda in one wave. It no
+longer does; see "Why vertical slices" below. Steps 1–3 were fleet-wide
+groundwork and are done. Everything after them is per-cog.
 
 ## Context
 
@@ -41,9 +46,9 @@ no `.submit()`, no task runners anywhere. It is doing four jobs:
 
 | Job | Replaced by | Deliberate? |
 |---|---|---|
-| **The queue.** watcher-cog calls `create_flow_run`; each cog's runner loop polls Prefect Cloud for it | Step 2 | direct replacement |
-| **Task-level retries.** `retries=` / `retry_delay` — 27 occurrences in transcription-cog alone | `tenacity`, per call site | **yes — see step 4** |
-| **Cross-process concurrency limits.** `prefect.concurrency` in transcription-cog and wiki-curator-cog | SQS consumer concurrency | **yes — see step 4** |
+| **The queue.** watcher-cog calls `create_flow_run`; each cog's runner loop polls Prefect Cloud for it | The per-cog queue | direct replacement |
+| **Task-level retries.** `retries=` / `retry_delay` — 27 occurrences in transcription-cog alone | `tenacity`, per call site | **yes — see the per-cog checklist** |
+| **Cross-process concurrency limits.** `prefect.concurrency` in transcription-cog and wiki-curator-cog | SQS consumer concurrency | **yes — see the per-cog checklist** |
 | **Run history and run identity** | `pipeline_evaluations` + the website, already built | already duplicated |
 
 The fourth row is worth sitting with: `pipeline_eval` already posts run outcomes
@@ -84,6 +89,32 @@ semantics that are guaranteed rather than hand-maintained.
 The honest remaining cost is a second cloud for a solo operator — two places to
 look when something is wrong.
 
+## Why vertical slices
+
+The original plan finished every cog's queue conversion before starting on
+Lambda. Two things changed.
+
+**The reason for that ordering was watcher-cog, and watcher-cog is being
+retired.** The argument was that watcher is the producer — it calls
+`create_flow_run` to trigger the other three — so converting it last meant
+running two brokers in the meantime. That is still true of the *trigger*, but
+the trigger is not moving to a queue consumer any more. It is being replaced
+outright; see "Retiring watcher-cog".
+
+**A horizontal wave defers every Lambda unknown until four cogs are committed to
+it.** The packaging, the entrypoint, the cold starts, the concurrency quota —
+none of that is exercised by converting a cog to a Railway queue consumer. Doing
+one cog end to end means those are answered on the cog whose code you know best,
+and a wrong answer costs one cog to unwind rather than four.
+
+What does **not** fit in a slice is the final step. Prefect cannot be retired
+until the last cog is off it, so that stays terminal.
+
+**Order:** evaluator-cog first (it is nearly there), then deejay-cog — its
+`deejay_router(mode)` is already `handler(event)` and `DeejayMode` is already
+the message schema — then transcription-cog and wiki-curator-cog. watcher-cog is
+not in the list; it is replaced rather than converted.
+
 ---
 
 ## Step 1 — Server-side idempotency (PIPE-002) — **done**
@@ -114,36 +145,39 @@ What shipped:
   stored — the September failure shape reached by a new route. `api_client`
   reads the flag and counts a duplicate instead of a post.
 
-## Step 2 — SQS, with the worker still on Railway
+## Step 2 — SQS, with the worker still on Railway — **done**
 
-**Repos:** api-kaianolevine-com, evaluator-cog. **The next thing to do.**
+**Repos:** api-kaianolevine-com, evaluator-cog.
 
-Replace the synchronous HTTP hand-off with the queue. The seam already exists:
-`services/evaluation_dispatch.py::_dispatch()` is one function whose docstring
-says it is meant to become an enqueue.
+The synchronous HTTP hand-off is gone. `services/evaluation_dispatch.py`
+enqueues; `adapters/queue.py` long-polls and does the work. `adapters/http.py`,
+`EVALUATOR_INVOKE_URL`, `EVALUATOR_INVOKE_SECRET` and the `X-Evaluator-Token`
+guard all came out, along with the 502-on-dispatch branch and the Cloudflare hop
+between two first-party services.
 
-- **Producer:** the API sends to SQS. Needs `boto3` and SigV4 credentials in the
-  Railway service — the one piece of cross-cloud coupling in this plan, and a
-  credential to rotate.
-- **Consumer:** evaluator-cog long-polls the queue instead of serving HTTP.
+**One queue per cog — settled, and not a judgement call.** An earlier draft left
+this open ("one queue with a message type, or one queue per cog"). It is not
+open: SQS has no selective receive. A consumer takes whatever it is handed, so
+on a shared queue evaluator-cog's consumer would receive a `transcription.run`
+message, fail to recognise the type, and its redrive policy would put *another
+cog's job* in evaluator's dead-letter queue. Every consumer would do that to
+every other consumer's work, and which one loses is a race. `infra/` already has
+this right — `name_prefix` defaults to `evaluator` and produces
+`evaluator-jobs`, one prefix per cog.
 
-`adapters/http.py`, `EVALUATOR_INVOKE_URL`, `EVALUATOR_INVOKE_SECRET` and the
-`X-Evaluator-Token` guard all come out, and with them the 502-on-dispatch branch
-and the Cloudflare hop between two first-party services.
+The type discriminator stays anyway. An unrecognised type on a cog's *own* queue
+means a producer bug, and dead-lettering it deliberately beats guessing.
 
-**The worker will not sleep during this step, and that is expected.** A
+**The worker does not sleep during this step, and that is expected.** A
 long-polling consumer has continuous outbound traffic, so Railway never
-considers it idle. Step 5 is what fixes that. Do not add a watchdog, a cron, or
-a sleep workaround here — it is temporary scaffolding and it comes out.
+considers it idle. Moving to Lambda is what fixes that. Do not add a watchdog, a
+cron, or a sleep workaround — it is temporary scaffolding and it comes out.
 
-Size the queue for the other cogs too, not only evaluations: step 4 uses it. One
-queue with a message type, or one queue per cog, is a judgement call — the
-existing `DeejayMode` enum suggests a type discriminator is already natural.
+**Done:** killing the worker mid-burst loses no jobs; a job that fails
+repeatedly lands in the DLQ (watched end to end, ~17 minutes for three
+receives); the evaluator accepts no inbound requests.
 
-**Done when:** killing the worker mid-burst loses no jobs; a job that fails
-repeatedly lands in the DLQ; the evaluator accepts no inbound requests.
-
-## Step 3 — Make the handler pure — **done, bar run identity**
+## Step 3 — Make the handler pure — **done**
 
 **Repos:** evaluator-cog, common-python-utils.
 
@@ -160,31 +194,26 @@ so a call site that forgets it is a `TypeError` rather than silent cross-talk.
 `_reset_run_tally` and the lock are gone. `prefect` is out of `pyproject.toml`,
 taking 70 transitive packages with it.
 
-**Still outstanding:** `mini_app_polis.pipeline_status.get_run_id()` resolves the
-Prefect flow run id, then `PREFECT_FLOW_RUN_ID`, then falls back to
-`"local-run"` — and with Prefect gone it always falls back, so every run report
-the evaluator sends is unattributable. The evaluator already mints a good id
-(`deterministic-<version>-<uuid>`, the one findings are filed under); it needs a
-way to hand that to `RunReport`. Bundle with the XSTACK-007 floor bumps.
+Run identity is closed too. `pipeline_status.get_run_id()` resolved the Prefect
+flow run id and, with Prefect gone, always fell back to `"local-run"` — so every
+run report the evaluator sent was unattributable. `RunReport.run_id` (common-utils
+5.10.0) now takes the id the evaluator already mints, set in both
+`run_fleet_sweep` and `handler`. **Both repos need the `>=5.10.0` floor**: with
+an older lock the assignment is a silent no-op, which is how it was first missed.
 
-## Step 4 — Convert the polling cogs
+---
 
-**Repos:** watcher-cog first, then deejay-cog, transcription-cog,
-wiki-curator-cog.
+## The per-cog slice
 
-Same change evaluator-cog already made: replace `prefect.serve()` with a queue
-consumer so the process stops asking whether there is work.
+Each cog does all of this before the next one starts.
 
-**Start with watcher-cog. It is the keystone, not a peer.** It is the producer —
-it calls `create_flow_run` to trigger the others. Point it at SQS and the other
-three cogs' trigger source moves with it. Convert it last and you are running two
-brokers in the meantime. Its own Drive poll becomes a scheduled invocation
-rather than a resident process.
+### 1. Convert the consumer
 
-deejay-cog is closer to this than evaluator-cog was: `deejay_router(mode)` is
-already `handler(event)` and `DeejayMode` is already the message schema.
+Replace `prefect.serve()` with a queue consumer so the process stops asking
+whether there is work. The message is not deleted until the work is done — that
+single rule is what the queue buys.
 
-Two of Prefect's jobs must be **replaced, not dropped**, as each cog converts:
+Two of Prefect's jobs must be **replaced, not dropped**:
 
 - **Task-level retries.** The queue retries the *job*; Prefect retried a *task
   inside* the job. Re-running an entire transcription because one API call
@@ -194,47 +223,181 @@ Two of Prefect's jobs must be **replaced, not dropped**, as each cog converts:
   gives the same thing through consumer concurrency, but only if you set it.
   Check what each existing limit was protecting before removing it.
 
-**Done when:** no cog polls Prefect Cloud, and `create_flow_run` has no callers.
+### 2. Stand up the cog's own infrastructure
 
-## Step 5 — Workers move to Lambda
+Copy `infra/` and set `name_prefix`. Two things to get right:
 
-The AWS account, queue, IAM and deploy pipeline are built —
-[aws-foundation.md](aws-foundation.md) and `infra/`. Each consumer becomes a
-Lambda behind an SQS event source mapping. `handler()` does not change; this is
-packaging and deployment.
+- **`create_github_oidc_provider = false` for every cog after the first.** There
+  is one OIDC provider per account; a second `terraform apply` fails on a
+  resource that already exists.
+- **`worker_consumes_queue` stays `false` until the cutover.** The stub Lambda
+  and a Railway consumer on one queue is two consumers, and the stub wins — it
+  logs, probes the API, returns success, and SQS deletes the message. Queue
+  empty, DLQ empty, no evaluation, and it looks exactly like a job that was
+  never enqueued. This ate five real evaluations before anyone noticed.
 
-- **Flip `worker_consumes_queue` to true and stop the Railway consumer in the
-  same change.** The mapping has been disabled since the foundation work for
-  the reason this step removes: one queue delivers each message to one
-  consumer, so a Lambda and a container both attached to it split the traffic
-  arbitrarily. Two consumers is never a valid intermediate state — it is a
-  cutover, not an overlap.
+Doppler names must be distinct per cog. The fleet shares one secrets store, so
+`AWS_ACCESS_KEY_ID` in two services is a collision; use
+`<COG>_QUEUE_CONSUMER_KEY_ID` and friends, with explicit boto3 credentials and a
+default-chain fallback.
 
+Producer and consumer keys are separate and must stay that way. A consumer that
+can `SendMessage` on its own queue can enqueue its own work and loop.
+
+### 3. Move the worker to Lambda
+
+`handler()` does not change; this is packaging and deployment.
+
+- **Write the Lambda entrypoint.** `process_message` was built for it — "shared
+  with the Lambda entrypoint, which differs only in where the body comes from
+  and who deletes it afterwards" — but nothing calls it from a `lambda_handler`
+  yet. The event source mapping is already configured with
+  `ReportBatchItemFailures`, so the entrypoint must return that shape.
 - **A zip, not a container image.** Measured after dropping `prefect`: 25.8 MB
   zipped against a 50 MB limit, 136 MB unzipped against 250 MB. An earlier draft
-  of this document asserted the tree was past the zip limit; it is not. Skipping
-  ECR removes a registry, a build-and-push step and an entire class of "which
-  image is actually deployed" confusion.
+  asserted the tree was past the zip limit; it is not. Skipping ECR removes a
+  registry, a build-and-push step and an entire class of "which image is
+  actually deployed" confusion.
+- **Exclude boto3 from the zip** — 41.5 MB with it, 25.8 without, against 50.
+  The runtime provides it.
 - 100 MB of that 136 MB is `googleapiclient`, pulled in by
   `miniapppolis-common-utils` and never imported by the evaluator. Behind a
-  `[google]` extra the package is 8.2 MB zipped. Worth doing for every cog's
-  cold start, not just this one.
+  `[google]` extra the package is 8.2 MB zipped. Worth doing once, on the first
+  cog, because every later cog's cold start inherits it.
 - GitHub Actions with OIDC to AWS, so CI holds no long-lived keys. Terraform
-  owns the function's configuration and CI owns only its code.
-- Concurrency limits per queue, replacing the semaphores from step 4. Note a new
-  account cannot set reserved concurrency at all until the Lambda concurrency
-  quota is raised above 100.
-- Timeout above the slowest observed job with headroom: one repository is ~13s, a
-  16-repo sweep is ~46s. Currently 300s, which means a poison message takes ~17
-  minutes to reach the DLQ — shorten it if failures should escalate faster.
+  owns the function's configuration and CI owns only its code. Note
+  `lambda:GetFunctionConfiguration` is a **separate IAM action** from
+  `GetFunction`, and `aws lambda wait function-updated` polls the former.
+- **Flip `worker_consumes_queue` to true and stop the Railway consumer in the
+  same change.** Two consumers is never a valid intermediate state — it is a
+  cutover, not an overlap.
+- Timeout above the slowest observed job with headroom: one repository is ~13s,
+  a 16-repo fleet pass is ~46s. Currently 300s, which means a poison message
+  takes ~17 minutes to reach the DLQ — shorten it if failures should escalate
+  faster.
+- A new account **cannot set reserved concurrency at all** until the Lambda
+  concurrency quota is raised above 100. AWS refuses to reserve if doing so
+  would leave the account with fewer than 100 unreserved, and the error names
+  `UnreservedConcurrentExecution` rather than anything that sounds like a quota.
 
-**Done when:** no cog runs a resident process, and the Railway project holds only
-api-kaianolevine-com and Postgres.
+**Cog done when:** it runs no resident process, and its queue, DLQ, alarm and
+deploy pipeline are its own.
 
-## Step 6 — Retire Prefect
+---
 
-Once step 4 is done, nothing creates a Prefect flow run, so nothing Prefect
-offers has a subject. This is cleanup, not a decision.
+## Retiring watcher-cog
+
+watcher-cog is **replaced, not converted**. It does two jobs that were bundled
+together, and only one of them is Prefect's:
+
+- **Noticing a Drive folder changed.** Four infinite loops, one per folder.
+  Nothing about SQS replaces this.
+- **Turning that into a trigger with a mode.** `prefect_trigger.fire()` calls
+  `create_flow_run_from_deployment` with parameters that pin the dispatch mode —
+  `{"mode": "process-new-files"}` at deejay-cog's router, `{"mode":
+  "wcs-transcripts"}` and `{"mode": "voicenotes"}` at transcription-cog's. This
+  becomes a `SendMessage`, and the static `folder_id → deployment_id + parameters`
+  map in `config.py` is already the message schema.
+
+The replacement is **Drive push notifications → an API webhook → the cog's
+queue**. Constraints, confirmed against Google's documentation:
+
+- Channels expire. Maximum TTL is 604800s (one week) for the `changes` resource,
+  86400s for `files`, and there is **no automatic renewal** — you call `watch`
+  again with a fresh channel id before it lapses. So this is not zero scheduled
+  jobs; it is one renewal a week in place of a per-minute poll per folder. Say
+  that plainly rather than "no polling", or the next reader wonders why there is
+  a cron.
+- **Notifications carry no payload.** "Push notifications don't contain resource
+  metadata, content, or directory paths." You get a channel id and a resource
+  state, then call `changes.list` with a saved `pageToken`. That token is
+  persistent state, and it now lives in the API — watcher held its position in
+  memory in a resident process.
+- `changes.watch` is drive-wide, not per-folder, so watcher's static folder map
+  becomes parent-folder filtering in the API.
+- `X-Goog-Channel-Token` is set at watch time and returned on every
+  notification; that is the webhook's authentication, not a key in the URL.
+  `X-Goog-Message-Number` increments per channel and is the dedup key.
+- The endpoint must answer 200/201/202/204/102 over HTTPS with a valid
+  certificate.
+
+**Check Cloudflare before writing any of it.** The settled finding below is that
+Cloudflare does not challenge *AWS* egress — that was measured. Google's webhook
+senders are a different source range and have not been tested. A challenge page
+is a non-2xx, Drive reads that as failed delivery, and the symptom is a folder
+that silently stops triggering. Same shape as the stub-Lambda bug.
+
+---
+
+## Fan-out replaces the sweep
+
+`run_fleet_sweep` handed the evaluator one message and let it read the registry
+and work through the fleet serially. The API now fans out instead: one
+`evaluation.repository` message per repository, from
+`POST /v1/evaluations/fleet`.
+
+**Why**, honestly stated — because one of the original arguments for this was
+wrong. A serial pass does *not* strain Lambda's fifteen-minute ceiling; it is
+~46 seconds. What fan-out actually buys is failure granularity and parallelism:
+one repository failing retries alone, instead of redelivering a pass that
+re-evaluates the fifteen repositories that already succeeded.
+
+Three things the sweep got for free and the fan-out arranges deliberately:
+
+- **One `run_id` across the pass**, minted at dispatch. The website's latest-run
+  filter relies on a pass's findings belonging to one run.
+- **One pinned `standards_version`**, resolved once from `standards_catalogs`.
+  N jobs each resolving their own would let a catalog release landing mid-pass
+  grade some repositories against the old rules and some against the new, inside
+  a run id claiming one version for all of them. **This reverses the reasoning
+  behind `ctx.catalog = None` in `run_fleet_sweep`**, which argues a pass must
+  grade against the version it actually runs under. That was correct for a pass
+  accepted as one unit; it is wrong for N independent messages.
+- **The monorepo grouping travels in the message.** A monorepo is one job
+  carrying every app in it. Flatten it and `monorepo_root`, the workspace
+  `package.json` and `monorepo_context` all resolve to `None`, and
+  `_deduplicate_sibling_findings` never fires — it is gated on a job carrying
+  more than one service. Nothing raises. The findings post, the run reports
+  success, and the same finding lands once per app looking like a deduplication
+  bug in the evaluator.
+
+The roster comes from the API. Today that is `ecosystem.yaml` fetched behind a
+five-minute cache in `services/fleet_registry.py`, which is a down payment on
+the API owning the registry rather than an end state — when it does, only the
+fetch changes. The grouping is **ported from `_fleet_events`** rather than
+rewritten, so the two agree while both exist; when `run_fleet_sweep` is retired,
+that one deletes and the API's remains.
+
+`/v1/evaluations/sweeps` stays live until the fan-out is proven, and is the
+rollback: revert the `fleet` branch in the shared `evaluate.yml`, release, and
+the fleet is on the old route without touching either service.
+
+### The checks that do not fan out
+
+EVAL-003, MONO-003 and EVAL-007 are scoped to no repository at all (ADR-004).
+They grade the inventory, the stored findings and the catalog itself, so there
+is no per-repository message they belong to — and two of them read
+`pipeline_evaluations`, which the sweep guaranteed by running them after its
+loop. Fan-out has no "after".
+
+**Decision: their own endpoint, called rather than scheduled.** A small second
+message type that does one thing, dispatched deliberately, rather than a cron or
+a completion barrier. An earlier draft of this document reached a per-check
+version of the same answer that is still worth keeping as detail: EVAL-007 needs
+nothing from the run and belongs on the standards-release trigger; EVAL-003
+grades the table rather than the run; only MONO-003 wants completion, and it can
+satisfy that by grading the previous pass rather than racing the current one.
+
+Do **not** build a fan-in coordinator. Tracking N acks to fire three checks adds
+distributed-completion state to the API, and a stuck message means the checks
+never run at all.
+
+---
+
+## Retire Prefect
+
+Terminal. Once the last cog is converted, nothing creates a Prefect flow run, so
+nothing Prefect offers has a subject. This is cleanup, not a decision.
 
 - **The webhook path is dead.** `pipeline_eval.handle_prefect_flow_run_event`
   observes Prefect Cloud state changes. Remove it and the Prefect Cloud
@@ -248,7 +411,9 @@ offers has a subject. This is cleanup, not a decision.
   (concurrency guard), PIPE-006 (dual logger) and PIPE-015 (trigger
   architecture) encode Prefect as an architectural assumption. Five cogs
   carrying the same exemption is the signal to retire or rescope the rules, not
-  to write the exemption five times.
+  to write the exemption five times. Note evaluator-cog's own
+  `engine/deterministic/` still *grades other repos* on these — those checks
+  change meaning here rather than disappearing.
 - **Docs:** `evaluator-cog/docs/PREFECT_AUTOMATION.md`.
 - **The `prefect` dependency** in each converted cog's `pyproject.toml`.
 - **The Prefect Cloud account itself** — a cost line and a dependency.
@@ -257,27 +422,38 @@ offers has a subject. This is cleanup, not a decision.
 
 - The shared release workflow retries the evaluation POST five times with a five
   second delay. Step 1 is what makes that safe.
-- **Job retries are not task retries.** See step 4. The single most likely thing
-  to be quietly lost in the conversion.
-- **deejaytools-com is a monorepo** and is deliberately not wired for
-  self-evaluation. `/invoke` carries one service, and ADR-0002 sibling
-  deduplication needs every app in the workspace in the same event. The sweep
-  builds its event correctly. Do not "fix" this by sending two requests.
+- **Job retries are not task retries.** The single most likely thing to be
+  quietly lost in a conversion.
+- **deejaytools-com is a monorepo** — `deejaytools-com-api` and
+  `deejaytools-com-app` — and is deliberately not wired for self-evaluation.
+  `/invoke` carried one service, and ADR-0002 sibling deduplication needs every
+  app in the workspace in the same event. Do not "fix" this by sending two
+  requests. It is also the one repository that would expose a fan-out grouping
+  bug, and a repository count will not show it: 16 active services group into 15
+  jobs, so a count of 16 is itself the tell.
 - **A fleet pass must keep one `run_id` across all repositories.** The website's
   latest-run filter (`website-astro-software/src/lib/latest-run.ts`) keys on
-  `(repo, cluster)` and relies on a sweep's findings belonging to one run graded
-  against one catalog version. `EvaluationEvent.run_id` and
-  `EvaluationRunRequest.run_id` already accept a caller-supplied id.
+  `(repo, cluster)` and relies on a pass's findings belonging to one run graded
+  against one catalog version.
+- **`RunReport` counter keys collide with `post_run_finding`'s signature.**
+  `send()` ends with `**self.counters`, so `count("repo", …)` is a `TypeError`
+  at send time — on a path a green suite never walks. Worth a guard in
+  common-utils before the next cog converts.
+- **A run report is once per instance.** `RunReport.send` returns
+  `DeliveryReport(suppressed=1)` on a second call, so whichever caller sends
+  first spends it. This is why the per-repository outcome report lives in the
+  consumer's message branch and not in `handler()`, which a fleet pass also
+  calls.
 - CD-026's canonical job set is `security, test, release, evaluate`.
-- Do **not** build a fan-in coordinator for the sweep as part of this. It stays a
-  loop until steps 1–4 are done. When it is finally fanned out, EVAL-007 needs
-  nothing from the run (move it to the standards-release trigger), EVAL-003
-  grades the table rather than the run (make it periodic), and only MONO-003
-  needs completion — which it can satisfy by grading the previous run rather than
-  racing the current one.
 
 ### Settled, and no longer a risk
 
 - **Cloudflare does not challenge AWS egress.** The stub Lambda's probe got 200
   and JSON from `api.kaianolevine.com`, not a challenge page. No WAF rule is
-  needed. This was the constraint flagged as most likely to bite.
+  needed *for AWS*. This was the constraint flagged as most likely to bite.
+  Google's Drive webhook range is a separate question and is not covered by this
+  measurement — see "Retiring watcher-cog".
+- **The zip limit is not a problem.** 25.8 MB against 50. An earlier draft
+  asserted otherwise.
+- **The DLQ works.** Watched end to end with `stub_fail`, three receives, ~17
+  minutes.
