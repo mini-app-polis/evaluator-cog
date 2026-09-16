@@ -1,3 +1,11 @@
+# [3.34.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.33.0...v3.34.0) (2026-09-16)
+
+
+### Features
+
+* **evaluate:** route fleet scope to the fan-out endpoint ([f9483f8](https://github.com/mini-app-polis/evaluator-cog/commit/f9483f851dacaa35412f0affc15a921e4d8f920a))
+* **evaluations:** fan the fleet out to one job per repository ([89c8900](https://github.com/mini-app-polis/evaluator-cog/commit/89c8900dc7dcea7fcb4b28b0e3953313158858e5))
+
 # [3.33.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.32.3...v3.33.0) (2026-09-16)
 
 
