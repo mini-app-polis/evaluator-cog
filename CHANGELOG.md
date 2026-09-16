@@ -1,3 +1,10 @@
+# [3.37.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.36.1...v3.37.0) (2026-09-16)
+
+
+### Features
+
+* **infra:** give the mapping a concurrency ceiling ([57c59c6](https://github.com/mini-app-polis/evaluator-cog/commit/57c59c6fefe0261fce62eee585d9f2fe241b0531))
+
 ## [3.36.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.36.0...v3.36.1) (2026-09-16)
 
 
