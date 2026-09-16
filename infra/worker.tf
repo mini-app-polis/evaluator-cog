@@ -120,7 +120,7 @@ resource "aws_lambda_event_source_mapping" "jobs" {
   event_source_arn = aws_sqs_queue.jobs.arn
   function_name    = aws_lambda_function.worker.arn
 
-  # Off until step 5. One queue, one consumer — see worker_consumes_queue.
+  # One queue, one consumer — see worker_consumes_queue.
   enabled = var.worker_consumes_queue
 
   # One job per invocation. The handler's unit of work is one repository,

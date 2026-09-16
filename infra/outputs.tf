@@ -42,7 +42,4 @@ output "alerts_topic_arn" {
   value       = aws_sns_topic.alerts.arn
 }
 
-output "consumer_user_name" {
-  description = "The Railway worker. Mint its key by hand — see consumer.tf. Goes away at step 5."
-  value       = aws_iam_user.consumer.name
-}
+

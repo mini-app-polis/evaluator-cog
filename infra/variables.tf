@@ -155,18 +155,26 @@ variable "worker_consumes_queue" {
   description = <<-DESC
     Whether the Lambda is attached to the queue as a consumer.
 
-    False until step 5, and this is not a stylistic default. SQS delivers a
-    message to exactly one consumer. While the worker is still the stub —
-    which logs its event, probes the API and returns success — an enabled
-    event source mapping makes it a competing consumer against the Railway
-    container that does the real evaluation, and it wins nearly every race
-    because Lambda's pollers are more aggressive than one container's long
-    poll. The symptom is an empty queue, an empty dead-letter queue, and no
-    evaluation: the job was consumed and discarded, which looks identical to
-    a job that was never enqueued.
+    True for evaluator-cog since the cutover. It defaults to false because
+    that is the safe state for a cog whose worker is still the stub, and
+    the reason is worth keeping: SQS delivers a message to exactly one
+    consumer. A stub that logs its event, probes the API and returns
+    success is a competing consumer against whatever does the real work,
+    and it wins nearly every race because Lambda's pollers are more
+    aggressive than a container's long poll. The symptom is an empty queue,
+    an empty dead-letter queue, and no evaluation — a job consumed and
+    discarded, which looks identical to one that was never enqueued. That
+    cost five real evaluations before anyone noticed.
 
-    Flip this to true in step 5, in the same change that stops the Railway
+    Flip it true in the same change that stops the cog's container
     consumer. Never have both running.
+
+    **Pin it in terraform.tfvars once a cog has cut over.** The default is
+    false, so an apply that forgets `-var worker_consumes_queue=true`
+    disables the mapping — and nothing raises, because a queue with no
+    consumer is not an error. Jobs accumulate, releases look fine, and the
+    first sign is somebody noticing evaluations stopped. That happened on
+    the apply that added the concurrency ceiling.
   DESC
   type        = bool
   default     = false

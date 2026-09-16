@@ -512,6 +512,12 @@ nothing Prefect offers has a subject. This is cleanup, not a decision.
   first spends it. This is why the per-repository outcome report lives in the
   consumer's message branch and not in `handler()`, which a fleet pass also
   calls.
+- **`worker_consumes_queue` must be pinned in `terraform.tfvars`, not passed
+  on the command line.** It defaults to false, so any apply that forgets the
+  flag disables the mapping. Nothing raises — a queue with no consumer is
+  not an error — so jobs accumulate, releases stay green, and the first sign
+  is somebody noticing evaluations stopped. It happened on the apply that
+  added the concurrency ceiling, hours after the cutover.
 - **A build-time strip is not a dependency.** The Lambda zip drops the Google
   stack because nothing imports it. That stays true only while it stays true,
   which is why the deploy build imports every module before uploading. An
