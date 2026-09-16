@@ -1357,6 +1357,13 @@ def _run_standalone_deterministic(
     )
 
 
+#: How many checks carry ``applies_to: None`` (ADR-004): EVAL-003,
+#: MONO-003, XSTACK-006, XSTACK-007, XSTACK-008 and EVAL-007. Declared so
+#: a run can say "five of six ran" rather than reporting a partial pass as
+#: a whole one. Adding a check to the lane means changing this too.
+_APPLIES_TO_ABSENT_CHECKS = 6
+
+
 def _run_applies_to_absent_checks(
     *,
     ctx: RunContext,
@@ -1366,8 +1373,15 @@ def _run_applies_to_absent_checks(
     evaluator_standards_version: str,
     run_id: str,
     prefect_log: Any,
-) -> None:
-    """Run applies_to-absent checks once per flow invocation."""
+) -> int:
+    """Run applies_to-absent checks once per flow invocation.
+
+    Returns how many of them completed. Each is wrapped individually — a
+    check that raises is logged and the rest still run — so the count is
+    the only thing that distinguishes "six checks found nothing" from "six
+    checks all blew up", which are the same silence from outside.
+    """
+    completed = 0
     from evaluator_cog.engine.deterministic import (
         check_eval_003,
         check_eval_007,
@@ -1392,6 +1406,7 @@ def _run_applies_to_absent_checks(
                 source="data_quality",
                 standards_version=standards_version,
             )
+        completed += 1
     except Exception as exc:
         prefect_log.warning("EVAL-003: check failed: %s", exc)
 
@@ -1410,6 +1425,7 @@ def _run_applies_to_absent_checks(
                 source="data_quality",
                 standards_version=standards_version,
             )
+        completed += 1
     except Exception as exc:
         prefect_log.warning("MONO-003: check failed: %s", exc)
 
@@ -1444,6 +1460,7 @@ def _run_applies_to_absent_checks(
                     source="standards_drift",
                     standards_version=standards_version,
                 )
+            completed += 1
         except Exception as exc:
             prefect_log.warning("%s: check failed: %s", _rule_id, exc)
 
@@ -1467,6 +1484,7 @@ def _run_applies_to_absent_checks(
                 source="standards_drift",
                 standards_version=standards_version,
             )
+        completed += 1
     except Exception as exc:
         prefect_log.warning("XSTACK-008: check failed: %s", exc)
 
@@ -1489,8 +1507,11 @@ def _run_applies_to_absent_checks(
                 source="standards_drift",
                 standards_version=standards_version,
             )
+        completed += 1
     except Exception as exc:
         prefect_log.warning("EVAL-007: check failed: %s", exc)
+
+    return completed
 
 
 def _fleet_events(
@@ -1976,6 +1997,16 @@ def run_introspection(
     Pass it whenever there is a pass to name.
     """
     ctx.catalog = None
+
+    # Attribute the report to this run. Without it RunReport falls back to
+    # mini_app_polis.pipeline_status.get_run_id(), whose resolution order
+    # is Prefect's — and with Prefect gone that always lands on
+    # "local-run", joinable to nothing. The repository path sets this in
+    # handler and the sweep sets it before its loop; this is the third
+    # place that has to, and the first pass shipped without it.
+    if ctx.report is not None:
+        ctx.report.run_id = run_id
+
     standards_version = standards_version or _get_standards_version(ctx=ctx)
     rule_catalog = _fetch_full_rule_catalog(ctx=ctx)
     ecosystem = _fetch_yaml(_ECOSYSTEM_YAML_URL)
@@ -1988,7 +2019,7 @@ def run_introspection(
 
     ctx.unresolved_downloads = _unresolved_from_run(pass_run_id, log=log)
 
-    _run_applies_to_absent_checks(
+    completed = _run_applies_to_absent_checks(
         ctx=ctx,
         ecosystem=ecosystem,
         rule_catalog=rule_catalog,
@@ -1998,9 +2029,27 @@ def run_introspection(
         prefect_log=log,
     )
 
+    # The checks that ran, so the report says what it did. Without this the
+    # tally is empty and RunReport renders "nothing to do" — over a pass
+    # that had just posted a finding, which is the opposite of true and
+    # exactly the reading a quiet channel trains you to skim past.
+    if ctx.report is not None:
+        ctx.report.ok(completed)
+        if completed < _APPLIES_TO_ABSENT_CHECKS:
+            # A check that raised was logged and skipped, and the run went
+            # on. Said here as well, because "five of six ran" and "six ran
+            # and found nothing" are the same silence from outside.
+            ctx.report.issue(
+                "check_failed",
+                f"{_APPLIES_TO_ABSENT_CHECKS - completed} of "
+                f"{_APPLIES_TO_ABSENT_CHECKS} did not complete",
+            )
+
     log.info(
-        "introspection: complete — %d findings offered, %d posted, "
-        "%d duplicate, %d failed",
+        "introspection: complete — %d of %d checks, %d findings offered, "
+        "%d posted, %d duplicate, %d failed",
+        completed,
+        _APPLIES_TO_ABSENT_CHECKS,
         ctx.tally.attempted,
         ctx.tally.posted,
         ctx.tally.duplicates,
