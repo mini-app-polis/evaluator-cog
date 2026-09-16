@@ -1,3 +1,10 @@
+## [3.36.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.36.0...v3.36.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* **evaluations:** attribute the introspection run and say what it ran ([60483ad](https://github.com/mini-app-polis/evaluator-cog/commit/60483ad63a36af39ec380159b82c0d3b7ec3a54d))
+
 # [3.36.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.35.0...v3.36.0) (2026-09-16)
 
 
