@@ -31,7 +31,8 @@ resources are orphaned and must be re-imported by hand.
 `UpdateFunctionCode` and `GetFunction` and nothing else, so a compromised
 workflow cannot repoint the worker at a different API without someone reviewing
 a `.tf` change. The function carries `ignore_changes` on its code attributes, or
-every apply after a deploy would silently roll it back to the stub.
+every apply after a deploy would silently roll it back to the bootstrap
+placeholder it was created with.
 
 **A zip, not a container image.** Measured rather than assumed: 25.8 MB zipped
 against a 50 MB limit once `prefect` is dropped. No ECR, no build-and-push, no
@@ -86,6 +87,13 @@ not sound like a quota. Until then the account limit is itself the throttle.
 
 **Cloudflare does not challenge AWS egress.** This was called the thing most
 likely to bite — Bot Fight Mode had previously managed-challenged CI traffic
-from GitHub runner ranges and cost an evening. The stub's probe against
+from GitHub runner ranges and cost an evening. A probe from Lambda against
 `api.kaianolevine.com` returned 200 and JSON, not a challenge page. No WAF rule
-is needed, and the probe stays in the stub so the answer is re-checkable.
+is needed.
+
+This is a property of the account and the network rather than of a cog, so it
+holds for every later cog without being re-measured. Re-check it only if
+Cloudflare's bot settings change. (The probe used to live in a stub worker that
+ran before the real code; that stub is gone — it was a second consumer on the
+queue and ate real jobs. A cog that wants to re-measure can invoke the deployed
+function against a harmless endpoint instead.)

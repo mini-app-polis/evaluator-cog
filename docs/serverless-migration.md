@@ -333,11 +333,22 @@ Copy `infra/` and set `name_prefix`. Two things to get right:
   to widen. Leave it default-true and by the fifth cog the API carries five
   credentials, five Doppler entries and five client configurations all
   saying the same thing.
-- **`worker_consumes_queue` stays `false` until the cutover.** The stub Lambda
-  and a Railway consumer on one queue is two consumers, and the stub wins — it
-  logs, probes the API, returns success, and SQS deletes the message. Queue
-  empty, DLQ empty, no evaluation, and it looks exactly like a job that was
-  never enqueued. This ate five real evaluations before anyone noticed.
+- **There is no stub worker and no flag that disables the consumer.** Both
+  existed, and both are gone. evaluator-cog stood its Lambda up beside a
+  Railway container that was already reading the same queue, so it needed a
+  stub to prove the wiring and a `worker_consumes_queue` toggle to keep the
+  stub from racing the container. The stub won those races — it logged,
+  probed the API, returned success, and SQS deleted the message. Queue
+  empty, DLQ empty, no evaluation, indistinguishable from a job never
+  enqueued. Five real evaluations went that way.
+
+  No cog after this one has that problem. They move from Prefect to SQS, so
+  the queue is created with exactly one reader and never has another, and
+  there is nothing for a stub to prove that this cog has not already
+  proven — see "Settled, and no longer a risk". The function is created
+  holding a placeholder that cannot import, so an invocation before the
+  first deploy dead-letters instead of succeeding, and the mapping is
+  simply on.
 
 Doppler names must be distinct per cog. The fleet shares one secrets store, so
 `AWS_ACCESS_KEY_ID` in two services is a collision; use
@@ -388,9 +399,12 @@ can `SendMessage` on its own queue can enqueue its own work and loop.
   owns the function's configuration and CI owns only its code. Note
   `lambda:GetFunctionConfiguration` is a **separate IAM action** from
   `GetFunction`, and `aws lambda wait function-updated` polls the former.
-- **Flip `worker_consumes_queue` to true and stop the Railway consumer in the
-  same change.** Two consumers is never a valid intermediate state — it is a
-  cutover, not an overlap.
+- **Retire the old trigger in the same change that points the new one at the
+  API.** For these cogs the queue's consumer is never in question; what
+  overlaps is the *trigger*, a Prefect schedule or a watcher call still
+  firing while the API also enqueues. That duplicates work rather than
+  losing it, which is the mild version — but it is still a cutover, not an
+  overlap. Prefer a gap: stopping the old path first only delays events.
 - Timeout above the slowest observed job with headroom: one repository is ~13s,
   a 16-repo fleet pass is ~46s. Currently 300s, which means a poison message
   takes ~17 minutes to reach the DLQ — shorten it if failures should escalate
@@ -457,7 +471,8 @@ queue**. Constraints, confirmed against Google's documentation:
 Cloudflare does not challenge *AWS* egress — that was measured. Google's webhook
 senders are a different source range and have not been tested. A challenge page
 is a non-2xx, Drive reads that as failed delivery, and the symptom is a folder
-that silently stops triggering. Same shape as the stub-Lambda bug.
+that silently stops triggering — a failure that looks like nothing
+happening, which is the shape worth fearing.
 
 ---
 
@@ -630,12 +645,15 @@ nothing Prefect offers has a subject. This is cleanup, not a decision.
   first spends it. This is why the per-repository outcome report lives in the
   consumer's message branch and not in `handler()`, which a fleet pass also
   calls.
-- **`worker_consumes_queue` must be pinned in `terraform.tfvars`, not passed
-  on the command line.** It defaults to false, so any apply that forgets the
-  flag disables the mapping. Nothing raises — a queue with no consumer is
-  not an error — so jobs accumulate, releases stay green, and the first sign
-  is somebody noticing evaluations stopped. It happened on the apply that
-  added the concurrency ceiling, hours after the cutover.
+- **A false-by-default flag on a live path is a loaded gun.**
+  `worker_consumes_queue` defaulted to false and was passed with `-var`; an
+  apply that forgot it disabled the mapping. Nothing raised — a queue with
+  no consumer is not an error — so jobs accumulated, releases stayed green,
+  and the first sign was somebody noticing evaluations had stopped. It
+  happened on the apply that added the concurrency ceiling, hours after the
+  cutover. Pinning it in `terraform.tfvars` fixed the immediate hazard; the
+  variable has since been deleted, which fixes it properly. When a switch
+  has exactly one correct setting, it should not be a switch.
 - **A build-time strip is not a dependency.** The Lambda zip drops the Google
   stack because nothing imports it. That stays true only while it stays true,
   which is why the deploy build imports every module before uploading. An
@@ -645,12 +663,16 @@ nothing Prefect offers has a subject. This is cleanup, not a decision.
 
 ### Settled, and no longer a risk
 
-- **Cloudflare does not challenge AWS egress.** The stub Lambda's probe got 200
+Each of these is a property of the account, the network or this Terraform —
+all shared. A later cog inherits them and does not re-measure them.
+
+- **Cloudflare does not challenge AWS egress.** A probe from Lambda got 200
   and JSON from `api.kaianolevine.com`, not a challenge page. No WAF rule is
   needed *for AWS*. This was the constraint flagged as most likely to bite.
   Google's Drive webhook range is a separate question and is not covered by this
   measurement — see "Retiring watcher-cog".
 - **The zip limit is not a problem.** 25.8 MB against 50. An earlier draft
   asserted otherwise.
-- **The DLQ works.** Watched end to end with `stub_fail`, three receives, ~17
-  minutes.
+- **The DLQ works.** Watched end to end with a deliberately failing
+  function: three receives, ~17 minutes, then the message in the DLQ and the
+  `evaluator-dlq-not-empty` alarm firing.

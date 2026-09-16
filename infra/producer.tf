@@ -47,7 +47,7 @@ data "aws_iam_policy_document" "producer" {
 }
 
 resource "aws_iam_user_policy" "producer" {
-  count  = var.create_api_producer ? 1 : 0
+  count = var.create_api_producer ? 1 : 0
   # Keeps the name_prefix form, for the same reason the user keeps its
   # name: changing it forces a replacement, and Terraform replaces an
   # inline policy by deleting it and then creating the new one — a window,

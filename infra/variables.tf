@@ -148,52 +148,6 @@ variable "create_github_oidc_provider" {
   default     = true
 }
 
-variable "stub_fail" {
-  description = <<-DESC
-    Makes the stub raise on every invocation, so a message is retried
-    max_receive_count times and then lands in the dead-letter queue.
-    Foundation ticket step 6: a DLQ nobody has watched a message enter is
-    not yet a DLQ.
-
-    A variable rather than a console or CLI edit because a Lambda's
-    environment is a single map — setting one value with
-    update-function-configuration replaces the whole thing, and putting the
-    others back means typing secrets on a command line. Flip this, watch
-    the DLQ, flip it back.
-  DESC
-  type        = bool
-  default     = false
-}
-
-variable "worker_consumes_queue" {
-  description = <<-DESC
-    Whether the Lambda is attached to the queue as a consumer.
-
-    True for evaluator-cog since the cutover. It defaults to false because
-    that is the safe state for a cog whose worker is still the stub, and
-    the reason is worth keeping: SQS delivers a message to exactly one
-    consumer. A stub that logs its event, probes the API and returns
-    success is a competing consumer against whatever does the real work,
-    and it wins nearly every race because Lambda's pollers are more
-    aggressive than a container's long poll. The symptom is an empty queue,
-    an empty dead-letter queue, and no evaluation — a job consumed and
-    discarded, which looks identical to one that was never enqueued. That
-    cost five real evaluations before anyone noticed.
-
-    Flip it true in the same change that stops the cog's container
-    consumer. Never have both running.
-
-    **Pin it in terraform.tfvars once a cog has cut over.** The default is
-    false, so an apply that forgets `-var worker_consumes_queue=true`
-    disables the mapping — and nothing raises, because a queue with no
-    consumer is not an error. Jobs accumulate, releases look fine, and the
-    first sign is somebody noticing evaluations stopped. That happened on
-    the apply that added the concurrency ceiling.
-  DESC
-  type        = bool
-  default     = false
-}
-
 variable "max_concurrency" {
   description = <<-DESC
     How many workers the queue may run at once.

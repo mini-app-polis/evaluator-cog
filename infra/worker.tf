@@ -51,14 +51,34 @@ resource "aws_cloudwatch_log_group" "worker" {
   retention_in_days = var.log_retention_days
 }
 
-# The stub. A function that logs its event, probes the API and exits —
-# enough to prove the delivery path, the deploy pipeline and the Cloudflare
-# hop before any real code exists. Step 5 replaces the contents of the zip,
-# not this resource.
-data "archive_file" "stub" {
+# Bootstrap code, and nothing more.
+#
+# `aws_lambda_function` cannot be created without a payload, and the real
+# package comes from CI, which cannot run until the function exists. This
+# is that chicken-and-egg and nothing else: it is read once, at create, and
+# then `ignore_changes` below means Terraform never looks at it again.
+#
+# It is deliberately not runnable. The `handler` string points into
+# `evaluator_cog/`, which this archive does not contain, so an invocation
+# that somehow arrives before the first deploy fails with an import error
+# and the message is retried and then dead-lettered. That is the behaviour
+# we want from an undeployed function.
+#
+# This used to be a stub worker under `infra/stub/` that logged its event,
+# probed the API and returned success. Returning success is what made it
+# dangerous — it consumed real jobs and discarded them, and an evaluation
+# eaten that way is indistinguishable from one never enqueued. The things
+# it was written to prove are proven (see "Verified" in README.md); they
+# are properties of the account, not of a cog, so no later cog re-proves
+# them. A placeholder that cannot succeed replaces it.
+data "archive_file" "bootstrap" {
   type        = "zip"
-  source_dir  = "${path.module}/stub"
-  output_path = "${path.module}/stub.zip"
+  output_path = "${path.module}/bootstrap.zip"
+
+  source {
+    filename = "PLACEHOLDER"
+    content  = "Replaced by the first CI deploy. See worker.tf.\n"
+  }
 }
 
 resource "aws_lambda_function" "worker" {
@@ -66,11 +86,11 @@ resource "aws_lambda_function" "worker" {
   role          = aws_iam_role.worker.arn
   runtime       = "python3.11"
 
-  # The real worker, not infra/stub. Terraform owns this because it is
-  # configuration rather than code, and the split matters: CI can call
-  # UpdateFunctionCode and nothing else, so a compromised workflow cannot
-  # repoint the function at a different entrypoint without someone
-  # reviewing a .tf file.
+  # The real worker, not the bootstrap placeholder. Terraform owns this
+  # because it is configuration rather than code, and the split matters:
+  # CI can call UpdateFunctionCode and nothing else, so a compromised
+  # workflow cannot repoint the function at a different entrypoint without
+  # someone reviewing a .tf file.
   #
   # Deploying a zip whose layout does not match this string fails at the
   # first invocation with an import error, not at deploy time — the
@@ -78,8 +98,8 @@ resource "aws_lambda_function" "worker" {
   handler       = "evaluator_cog.adapters.lambda_worker.lambda_handler"
   architectures = ["arm64"]
 
-  filename         = data.archive_file.stub.output_path
-  source_code_hash = data.archive_file.stub.output_base64sha256
+  filename         = data.archive_file.bootstrap.output_path
+  source_code_hash = data.archive_file.bootstrap.output_base64sha256
 
   timeout     = var.worker_timeout_seconds
   memory_size = var.worker_memory_mb
@@ -89,17 +109,14 @@ resource "aws_lambda_function" "worker" {
   reserved_concurrent_executions = var.reserved_concurrency
 
   environment {
-    variables = merge(
-      {
-        KAIANO_API_BASE_URL   = var.kaiano_api_base_url
-        EVALUATOR_COG_API_KEY = var.evaluator_cog_api_key
-        GITHUB_TOKEN          = var.github_token
-        SENTRY_DSN_EVALUATOR  = var.sentry_dsn
-        ANTHROPIC_API_KEY     = var.anthropic_api_key
-        ENVIRONMENT           = "production"
-      },
-      var.stub_fail ? { EVALUATOR_STUB_FAIL = "1" } : {}
-    )
+    variables = {
+      KAIANO_API_BASE_URL   = var.kaiano_api_base_url
+      EVALUATOR_COG_API_KEY = var.evaluator_cog_api_key
+      GITHUB_TOKEN          = var.github_token
+      SENTRY_DSN_EVALUATOR  = var.sentry_dsn
+      ANTHROPIC_API_KEY     = var.anthropic_api_key
+      ENVIRONMENT           = "production"
+    }
   }
 
   depends_on = [aws_cloudwatch_log_group.worker]
@@ -108,7 +125,7 @@ resource "aws_lambda_function" "worker" {
     # Terraform owns the function's configuration; CI owns its code.
     #
     # Without this, every `terraform apply` after a deploy would quietly
-    # roll the function back to whatever is in infra/stub — which is the
+    # roll the function back to the bootstrap placeholder — which is the
     # "which version is actually deployed" confusion that skipping a
     # container registry was supposed to avoid, reintroduced from the
     # other side.
@@ -120,8 +137,19 @@ resource "aws_lambda_event_source_mapping" "jobs" {
   event_source_arn = aws_sqs_queue.jobs.arn
   function_name    = aws_lambda_function.worker.arn
 
-  # One queue, one consumer — see worker_consumes_queue.
-  enabled = var.worker_consumes_queue
+  # On. There is no variable behind this any more, and that is the point.
+  #
+  # It used to be `var.worker_consumes_queue`, defaulting to false, so that
+  # the stub could exist without racing the Railway container for messages
+  # — SQS hands a message to exactly one consumer. The default is the
+  # hazard: a bare `terraform apply` disabled the mapping, nothing
+  # consumed, and nothing raised, because a queue with no consumer is not
+  # an error. Releases looked fine for hours.
+  #
+  # No cog after this one has that overlap to guard. They move from Prefect
+  # straight to SQS, so the queue is created with exactly one reader and
+  # has never had another. Nothing left to toggle.
+  enabled = true
 
   # One job per invocation. The handler's unit of work is one repository,
   # and the visibility-timeout arithmetic above is per job — a batch would
