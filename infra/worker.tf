@@ -65,7 +65,17 @@ resource "aws_lambda_function" "worker" {
   function_name = "${var.name_prefix}-worker"
   role          = aws_iam_role.worker.arn
   runtime       = "python3.11"
-  handler       = "handler.lambda_handler"
+
+  # The real worker, not infra/stub. Terraform owns this because it is
+  # configuration rather than code, and the split matters: CI can call
+  # UpdateFunctionCode and nothing else, so a compromised workflow cannot
+  # repoint the function at a different entrypoint without someone
+  # reviewing a .tf file.
+  #
+  # Deploying a zip whose layout does not match this string fails at the
+  # first invocation with an import error, not at deploy time — the
+  # package's top level must contain evaluator_cog/.
+  handler = "evaluator_cog.adapters.lambda_worker.lambda_handler"
   architectures = ["arm64"]
 
   filename         = data.archive_file.stub.output_path
