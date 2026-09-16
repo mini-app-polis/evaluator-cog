@@ -11,6 +11,12 @@ being used for, and the final step is the cleanup. See "What Prefect is doing
 today" before starting, because two of its jobs need deliberate replacements
 rather than deletion.
 
+**evaluator-cog is done.** It runs on Lambda behind an SQS event source
+mapping, holds no resident process, and has no Prefect. The Railway service
+is gone. What that slice left behind is in "After the first slice" at the
+end — read it before starting the next cog, because most of it is a
+template and one item is a live credential.
+
 **One cog at a time, all the way to Lambda.** The plan originally moved the
 whole fleet onto queues and then moved every worker to Lambda in one wave. It no
 longer does; see "Why vertical slices" below. Steps 1–3 were fleet-wide
@@ -260,10 +266,24 @@ can `SendMessage` on its own queue can enqueue its own work and loop.
   actually deployed" confusion.
 - **Exclude boto3 from the zip** — 41.5 MB with it, 25.8 without, against 50.
   The runtime provides it.
-- 100 MB of that 136 MB is `googleapiclient`, pulled in by
-  `miniapppolis-common-utils` and never imported by the evaluator. Behind a
-  `[google]` extra the package is 8.2 MB zipped. Worth doing once, on the first
-  cog, because every later cog's cold start inherits it.
+- **Strip the Google stack from the zip, not from common-utils.** Measured on
+  the real package: 150 MB unzipped and 28.4 MB zipped with it, 42 MB and
+  15.3 MB without. evaluator-cog imports none of it — no
+  `mini_app_polis.google`, no `GoogleAPI`, no `googleapiclient` — and the
+  library's lazy `__init__` means nothing reaches it transitively.
+
+  A `[google]` extra on common-utils is the right end state and the wrong
+  move now: `google-api-python-client` is an unconditional dependency, so
+  watcher, transcription, wiki-curator and deejay all get it free and would
+  fail at import without declaring the extra. That is a major version and a
+  coordinated release across five repos, four of which are still on Prefect.
+  It belongs at the end of the per-cog migrations, when every consumer
+  already declares what it needs.
+
+  The strip is only correct while nothing imports what it removes, which is
+  a property of the code rather than of the workflow — so the deploy build
+  imports every module against the built package and fails if any of them
+  needs what was stripped.
 - GitHub Actions with OIDC to AWS, so CI holds no long-lived keys. Terraform
   owns the function's configuration and CI owns only its code. Note
   `lambda:GetFunctionConfiguration` is a **separate IAM action** from
@@ -368,9 +388,17 @@ fetch changes. The grouping is **ported from `_fleet_events`** rather than
 rewritten, so the two agree while both exist; when `run_fleet_sweep` is retired,
 that one deletes and the API's remains.
 
-`/v1/evaluations/sweeps` stays live until the fan-out is proven, and is the
-rollback: revert the `fleet` branch in the shared `evaluate.yml`, release, and
-the fleet is on the old route without touching either service.
+`/v1/evaluations/sweeps` and `run_fleet_sweep` are **gone**. They stayed live
+until the fan-out had run a real pass — 15 jobs under one run id, with
+deejaytools-com arriving grouped — and were deleted once it had. The four
+registry helpers only `_fleet_events` called went with them; that
+translation now exists once, in the API.
+
+`_ping_healthcheck` moved to `run_introspection` in the same change. It was
+called from the sweep's tail and nowhere else, and Healthchecks.io watches
+for *absence* — deleting the sweep without rehoming it would have stopped
+the pings and reported the evaluator dead at the moment it started working
+properly.
 
 ### The checks that do not fan out
 
@@ -393,6 +421,52 @@ distributed-completion state to the API, and a stuck message means the checks
 never run at all.
 
 ---
+
+## After the first slice
+
+What evaluator-cog's migration left behind, and what the next cog inherits.
+
+**A live credential that now consumes nothing.** `infra/consumer.tf` creates
+an IAM user whose access key existed for the Railway container, and that
+container is gone — the Lambda authenticates with its execution role. In a
+design whose point was minimising standing credentials, this is the one that
+should not exist. Delete the access key **first**: `aws_iam_user.consumer`
+has no `force_destroy` and the key was minted by hand, so `apply` fails with
+`DeleteConflict: Cannot delete entity, must delete access keys first`. Then
+remove `consumer.tf`, apply, and drop the two Doppler secrets. A later cog
+that keeps a container consumer needs this file; one that goes straight to
+Lambda does not.
+
+**The container consumer is deleted, not parked.** `main()`, the poll loop
+and the SIGTERM handler are gone from `adapters/queue.py`, along with
+`railway.json`. Rolling back to a container is a rewrite rather than a
+restart — deliberately, because two consumers on one queue is the failure
+that cost five evaluations, and keeping a second one runnable is how that
+happens by accident. `nixpacks.toml` went with it — API-001 is the only
+rule that reads it, and it gates on `is_api_service`, which a pipeline-cog
+is not.
+
+**The throttle is `scaling_config`, not `reserved_concurrency`.** AWS refuses
+to reserve if it would leave the account under 100 unreserved, and this
+account is below that. `maximum_concurrency` on the event source mapping
+needs no quota and is what actually limits a fleet pass today.
+
+`TODO(lambda-quota)` in `infra/variables.tf` tracks the increase. The
+trigger for doing it is **the second cog going to Lambda**, not a date:
+what a reservation adds over a mapping ceiling is guaranteed capacity
+rather than a cap, and that only matters once two workers compete for the
+same account pool.
+
+**Deploys run on release.** `deploy-worker.yml` was manual while the mapping
+was disabled, because a deploy changed what *would* run. Once the function
+is what actually evaluates, manual deploys mean the deployed code drifts
+behind main silently.
+
+**What is a template now.** The fan-out and registry in the API, the Lambda
+entrypoint's `batchItemFailures` handling, the deploy workflow's layout and
+import guards, and `infra/` with `name_prefix`. None of these are design
+problems for the next cog. Set `create_github_oidc_provider = false` on
+every cog after the first.
 
 ## Retire Prefect
 
@@ -444,6 +518,17 @@ nothing Prefect offers has a subject. This is cleanup, not a decision.
   first spends it. This is why the per-repository outcome report lives in the
   consumer's message branch and not in `handler()`, which a fleet pass also
   calls.
+- **`worker_consumes_queue` must be pinned in `terraform.tfvars`, not passed
+  on the command line.** It defaults to false, so any apply that forgets the
+  flag disables the mapping. Nothing raises — a queue with no consumer is
+  not an error — so jobs accumulate, releases stay green, and the first sign
+  is somebody noticing evaluations stopped. It happened on the apply that
+  added the concurrency ceiling, hours after the cutover.
+- **A build-time strip is not a dependency.** The Lambda zip drops the Google
+  stack because nothing imports it. That stays true only while it stays true,
+  which is why the deploy build imports every module before uploading. An
+  `ImportError` there is the guard working; an `ImportError` at invocation
+  means the guard was removed.
 - CD-026's canonical job set is `security, test, release, evaluate`.
 
 ### Settled, and no longer a risk

@@ -66,9 +66,23 @@ variable "reserved_concurrency" {
     time with a message about UnreservedConcurrentExecution rather than
     anything that sounds like a quota.
 
-    Until that quota is raised the account limit is itself the throttle,
-    which for a pilot is adequate. Raise the quota (Service Quotas ->
-    Lambda -> "Concurrent executions"), then set this.
+    TODO(lambda-quota): request the increase, then set this.
+
+      Service Quotas -> Lambda -> "Concurrent executions" -> Request
+      increase. The default account limit is 1,000 in most regions but a
+      new account is throttled well below it; the ask is to be raised to
+      the standard limit, not above it, so it is routine rather than a
+      capacity case.
+
+    Not urgent, and worth saying why rather than leaving it open-ended.
+    max_concurrency on the event source mapping is a real ceiling and
+    needs no quota — it is what actually limits a fleet pass today. What
+    this variable adds once available is a *reservation*: guaranteed
+    capacity for this function rather than a cap on it, which matters when
+    a second cog's worker starts competing for the same account pool.
+
+    So the trigger for doing this is the second cog going to Lambda, not
+    a date.
   DESC
   type        = number
   default     = -1
@@ -155,18 +169,26 @@ variable "worker_consumes_queue" {
   description = <<-DESC
     Whether the Lambda is attached to the queue as a consumer.
 
-    False until step 5, and this is not a stylistic default. SQS delivers a
-    message to exactly one consumer. While the worker is still the stub —
-    which logs its event, probes the API and returns success — an enabled
-    event source mapping makes it a competing consumer against the Railway
-    container that does the real evaluation, and it wins nearly every race
-    because Lambda's pollers are more aggressive than one container's long
-    poll. The symptom is an empty queue, an empty dead-letter queue, and no
-    evaluation: the job was consumed and discarded, which looks identical to
-    a job that was never enqueued.
+    True for evaluator-cog since the cutover. It defaults to false because
+    that is the safe state for a cog whose worker is still the stub, and
+    the reason is worth keeping: SQS delivers a message to exactly one
+    consumer. A stub that logs its event, probes the API and returns
+    success is a competing consumer against whatever does the real work,
+    and it wins nearly every race because Lambda's pollers are more
+    aggressive than a container's long poll. The symptom is an empty queue,
+    an empty dead-letter queue, and no evaluation — a job consumed and
+    discarded, which looks identical to one that was never enqueued. That
+    cost five real evaluations before anyone noticed.
 
-    Flip this to true in step 5, in the same change that stops the Railway
+    Flip it true in the same change that stops the cog's container
     consumer. Never have both running.
+
+    **Pin it in terraform.tfvars once a cog has cut over.** The default is
+    false, so an apply that forgets `-var worker_consumes_queue=true`
+    disables the mapping — and nothing raises, because a queue with no
+    consumer is not an error. Jobs accumulate, releases look fine, and the
+    first sign is somebody noticing evaluations stopped. That happened on
+    the apply that added the concurrency ceiling.
   DESC
   type        = bool
   default     = false

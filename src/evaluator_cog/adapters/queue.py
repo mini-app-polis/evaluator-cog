@@ -1,44 +1,41 @@
-"""Queue consumer: the evaluator's front door.
+"""What one queue message means, and what happens when it cannot be done.
 
-This replaced an HTTP adapter, and the difference is what happens to an
-accepted job. A 202 put the work in one process's memory behind a lock; a
-deploy, an OOM or a restart mid-burst discarded every accepted-but-unstarted
-job silently — no findings, no failure, no retry, and each repository's
-record sitting at its previous state looking healthy. A message on SQS is
-durable, redelivered if this process dies holding it, and dead-lettered if
-it cannot be processed at all.
+The evaluator's front door, minus the door. This module used to open with
+a long-polling loop that received messages, ran them and deleted them; the
+worker runs on Lambda now, so the platform receives and deletes and what
+is left here is the part that was always the point — reading a message,
+doing its work, and being clear about failure.
 
-**Nothing is deleted until the work is done.** That single rule is what
-makes the above true, and it is why every failure path here ends by
-letting the message go back rather than by swallowing anything. A job that
-raises, a delivery that landed nowhere, a process killed mid-evaluation —
-all of them leave the message on the queue, and SQS redelivers it once the
-visibility timeout expires.
+``adapters.lambda_worker`` is the entrypoint that calls into this.
 
-**One queue, several message types.** The fleet's other cogs move onto this
-queue in step 4, so a type this consumer does not understand is expected
-rather than exceptional. It is left for the redrive policy deliberately: a
-message nobody can process should end up somewhere a person will look at
-it, not be quietly dropped by the first consumer to see it.
+**Nothing is deleted until the work is done.** The rule survives the move
+and inverts: this code no longer deletes anything, so "do not delete"
+became "report the message back" and lives in the entrypoint. Every
+failure path here still ends by raising rather than swallowing, which is
+what lets that happen. A job that raises, a delivery that landed nowhere,
+a worker killed mid-evaluation — all of them leave the message on the
+queue, and SQS redelivers once the visibility timeout expires.
 
-**No watchdog, no cron, no sleep workaround.** A long-polling consumer has
-continuous outbound traffic, so Railway never considers it idle and this
-process will not sleep. That is expected and temporary — the move to Lambda
-is what fixes it, by letting the platform do the polling. Anything added
-here to work around the cost would be scaffolding that has to come out.
+**An unrecognised message type is a producer bug.** This queue is
+evaluator-cog's alone — one prefix per cog in ``infra/``. A shared fleet
+queue was considered and cannot work, because SQS has no selective
+receive: a consumer takes whatever it is handed, so an unrecognised type
+would send another cog's job to this cog's dead-letter queue. Refusing it
+deliberately beats guessing at it.
+
+**The Railway consumer is gone.** ``main()``, the poll loop and the
+SIGTERM handler were deleted with the cutover, along with ``railway.json``.
+Rolling back to a container is now a rewrite rather than a restart —
+deliberately, because two consumers on one queue is the failure that cost
+five evaluations, and keeping a second one runnable is how that happens by
+accident.
 """
 
 from __future__ import annotations
 
 import json
-import os
-import signal
-import sys
-from dataclasses import dataclass
 from typing import Any
 
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from mini_app_polis import logger as logger_mod
 from mini_app_polis.pipeline_status import post_run_finding
 
@@ -71,14 +68,6 @@ MESSAGE_VERSION = 1
 TYPE_REPOSITORY = "evaluation.repository"
 TYPE_INTROSPECTION = "evaluation.introspection"
 
-#: Long polling. Short polling bills empty receives and adds latency.
-WAIT_TIME_SECONDS = 20
-
-#: One message per receive. The unit of work is one repository, and the
-#: queue's visibility timeout is sized for one job — a batch would make the
-#: deadline depend on how many happened to arrive together.
-MAX_MESSAGES = 1
-
 
 class UnprocessableMessage(RuntimeError):
     """The message cannot be handled by this consumer, ever.
@@ -87,28 +76,6 @@ class UnprocessableMessage(RuntimeError):
     message is still left for the dead-letter queue rather than dropped,
     because something produced it and someone should see what.
     """
-
-
-@dataclass
-class _Shutdown:
-    """Set by SIGTERM so the current job finishes before the process exits.
-
-    Railway sends SIGTERM on every deploy. Without this the process dies
-    mid-evaluation, and while the message is safe — it was never deleted —
-    it waits out the whole visibility timeout before anyone retries it.
-    Finishing the job in hand turns a deploy from a six-minute stall into
-    nothing at all.
-    """
-
-    requested: bool = False
-
-    def install(self) -> None:
-        def _handle(signum: int, _frame: Any) -> None:
-            self.requested = True
-            log.info("consumer: %s received, finishing the current job", signum)
-
-        signal.signal(signal.SIGTERM, _handle)
-        signal.signal(signal.SIGINT, _handle)
 
 
 def _event_from(payload: dict[str, Any], *, ctx: RunContext) -> EvaluationEvent:
@@ -342,101 +309,3 @@ def _report_failure(what: str, exc: BaseException) -> None:
         )
     except Exception:  # noqa: BLE001 — the notification is not the job
         log.exception("consumer: could not report the failure")
-
-
-def main() -> None:
-    """Long-poll the queue until told to stop."""
-    import sentry_sdk
-    from dotenv import load_dotenv
-    from mini_app_polis.environment import current_environment
-
-    load_dotenv()
-    sentry_sdk.init(
-        dsn=os.getenv("SENTRY_DSN_EVALUATOR"),
-        environment=current_environment().value,
-    )
-
-    queue_url = (os.environ.get("EVALUATION_QUEUE_URL") or "").strip()
-    if not queue_url:
-        # Fail loudly at boot rather than idling forever against nothing.
-        # A consumer that starts, polls no queue and reports healthy is the
-        # same silence this whole migration exists to remove.
-        log.error("consumer: EVALUATION_QUEUE_URL is not set; refusing to start")
-        sys.exit(1)
-
-    shutdown = _Shutdown()
-    shutdown.install()
-
-    # Named for this caller rather than boto3's conventional
-    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. The producer holds a
-    # send-only key and this holds a receive-only one, and the fleet keeps
-    # its secrets in one store — under the conventional names the two
-    # collide, and this side fails quietly: receive_message raises, the
-    # loop logs and keeps polling, and the process never dies, so nothing
-    # restarts and nothing alerts.
-    #
-    # Unset falls through to boto3's default chain, which is exactly what
-    # step 5 needs: on Lambda the execution role supplies these and no key
-    # exists at all.
-    key_id = (os.environ.get("EVALUATION_QUEUE_CONSUMER_KEY_ID") or "").strip()
-    secret = (os.environ.get("EVALUATION_QUEUE_CONSUMER_SECRET") or "").strip()
-    credentials = (
-        {"aws_access_key_id": key_id, "aws_secret_access_key": secret} if key_id else {}
-    )
-    log.info(
-        "consumer: credentials from %s",
-        "EVALUATION_QUEUE_CONSUMER_KEY_ID" if key_id else "the default chain",
-    )
-
-    sqs = boto3.client(
-        "sqs",
-        region_name=os.environ.get("AWS_REGION", "us-east-1"),
-        **credentials,
-    )
-    log.info("consumer: polling %s", queue_url)
-
-    while not shutdown.requested:
-        try:
-            received = sqs.receive_message(
-                QueueUrl=queue_url,
-                MaxNumberOfMessages=MAX_MESSAGES,
-                WaitTimeSeconds=WAIT_TIME_SECONDS,
-                MessageAttributeNames=["All"],
-                AttributeNames=["ApproximateReceiveCount"],
-            )
-        except (ClientError, BotoCoreError):
-            # A transport or credential problem. Log and keep polling: the
-            # restart policy is the backstop, and exiting on the first
-            # blip would turn a rate limit into an outage.
-            log.exception("consumer: receive failed")
-            continue
-
-        for message in received.get("Messages", []):
-            receipt = message.get("ReceiptHandle")
-            body = message.get("Body") or ""
-            attempt = (message.get("Attributes") or {}).get(
-                "ApproximateReceiveCount", "?"
-            )
-            try:
-                process_message(body)
-            except UnprocessableMessage as exc:
-                # Left on the queue on purpose. It will exhaust its
-                # receives and land in the dead-letter queue, where a
-                # person can see what produced it.
-                log.error(
-                    "consumer: unprocessable message (attempt %s): %s", attempt, exc
-                )
-                _report_failure("an unprocessable message", exc)
-            except Exception as exc:  # noqa: BLE001 — every failure is a retry
-                log.exception("consumer: job failed (attempt %s)", attempt)
-                _report_failure("a queued evaluation", exc)
-            else:
-                # Only now. Deleting before the work is done is the one
-                # change that would give back everything this costs.
-                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt)
-
-    log.info("consumer: stopped")
-
-
-if __name__ == "__main__":
-    main()

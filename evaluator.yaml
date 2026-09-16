@@ -8,11 +8,12 @@ traits:
   # This repo IS evaluator-cog — PIPE-011 (AI evaluation step) cannot
   # apply to the evaluator itself.
 
-# Note: evaluator-cog no longer serves Prefect deployments at all. It is a
-# web service: api-kaianolevine-com posts one repository to /invoke when
-# that repository releases, and posts /sweep when the standards catalog or
-# the evaluator itself releases. pipeline_eval.py remains a library module
-# called in-process by other cogs, not a served deployment.
+# Note: evaluator-cog serves nothing and polls nothing. It is an AWS Lambda
+# behind an SQS queue: api-kaianolevine-com puts a message on the queue when
+# a repository releases, and fans out one message per repository plus one for
+# the fleet-scoped checks when the standards catalog or the evaluator itself
+# releases. The event source mapping invokes the function. pipeline_eval.py
+# remains a library module called in-process by other cogs.
 #
 # The type is still pipeline-cog because what this repo *is* has not
 # changed — it consumes a source of truth, evaluates, and files findings.
@@ -26,36 +27,46 @@ exemptions:
     reason: >
       CD-015 asserts a prefect.serve() registration exists and has no
       applicability gate, so it WARNs on any cog that does not register
-      flows. evaluator-cog registers none: src/evaluator_cog/main.py was
-      deleted when the conformance flow became handler() behind an HTTP
-      adapter, and railway.json starts uvicorn rather than a Prefect
-      runner. CD-016 already models this correctly — it gates on whether
-      the repo serves anything at all before checking how — and CD-015
-      needs the same gate.
+      flows. evaluator-cog registers none and serves nothing: there is no
+      resident process at all. The entry point is
+      adapters/lambda_worker.lambda_handler, invoked by an SQS event source
+      mapping. CD-016 already models this correctly — it gates on whether
+      the repo serves anything before checking how — and CD-015 needs the
+      same gate.
   - rule: PIPE-015
     reason: >
       The canonical pattern PIPE-015 describes is a Drive event picked up
       by watcher-cog and turned into a Prefect flow run. There is no input
       artifact here to watch: the event that should evaluate a repository
       is that repository cutting a release, and CI posts it to
-      api-kaianolevine-com, which hands it to /invoke. That is event-driven
-      — more so than the daily cron this exemption used to describe — but
-      it is not the shape PIPE-015 checks for.
+      api-kaianolevine-com, which enqueues it. That is event-driven — more
+      so than the daily cron this exemption used to describe — but it is
+      not the shape PIPE-015 checks for.
   - rule: PIPE-008
     reason: "The deterministic checker source contains retired trigger pattern strings (e.g. repository_dispatch) as string literals being checked against, not as active trigger usage. PIPE-008 does not apply."
   - rule: CD-009
     reason: "evaluator_config.py uses stdlib logging intentionally — it is a pure utility module loaded during unit tests where the mini_app_polis shared logger is unavailable. CD-009 does not apply to test-safe utility modules."
   - rule: CD-010
-    reason: "sentry_sdk.init() is present with SENTRY_DSN_EVALUATOR in the entry point, src/evaluator_cog/adapters/http.py. The LLM conformance pass cannot read source content directly and incorrectly flags this as absent."
+    reason: >
+      sentry_sdk.init() is present with SENTRY_DSN_EVALUATOR in the entry
+      point, src/evaluator_cog/adapters/lambda_worker.py, called at import
+      rather than per invocation so a warm container initialises once. The
+      LLM conformance pass cannot read source content directly and
+      incorrectly flags this as absent.
   - rule: PIPE-004
     reason: >
-      The concurrency guard is threading.Lock in adapters/http.py, held
-      across every evaluation and every sweep. It replaced
-      prefect.concurrency('evaluator-cog-writes', occupy=1), which is
-      unavailable outside a Prefect runtime — and which guarded less than
-      the lock does: the catalog, the delivery tally and the run report are
-      module state, so overlapping runs corrupt each other's accounting
-      before they ever race on a write.
+      There is no in-process concurrency guard because there is no longer
+      any in-process state to guard. PIPE-004 expects
+      prefect.concurrency('...', occupy=1), which is unavailable outside a
+      Prefect runtime; the threading.Lock that replaced it went with the
+      HTTP adapter, and the module globals it was protecting — the catalog,
+      the delivery tally, the run report — are now per-run on RunContext,
+      threaded as a required argument so a call site that forgets it is a
+      TypeError.
+      What limits concurrency now is the platform: maximum_concurrency on
+      the event source mapping (infra/worker.tf), which is a fleet-wide
+      ceiling rather than a per-process lock and is the thing
+      prefect.concurrency was actually standing in for.
 
 deferrals:
   # CD-012 was retired in ecosystem-standards (ADR-008) and replaced by

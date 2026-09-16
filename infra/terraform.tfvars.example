@@ -10,3 +10,10 @@ anthropic_api_key     = ""      # only the llm mode needs this
 # First cog in the account creates the shared GitHub OIDC provider;
 # every cog after sets this to false.
 create_github_oidc_provider = true
+
+# False while a cog's worker is still the stub; true once it has cut over
+# and its container consumer is gone. Pin it here rather than passing
+# -var on the command line: the default is false, so an apply without the
+# flag disables the mapping and nothing consumes — silently, because a
+# queue with no consumer raises nothing.
+worker_consumes_queue = false
