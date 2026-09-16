@@ -45,6 +45,7 @@ from mini_app_polis.pipeline_status import post_run_finding
 from evaluator_cog.flows.conformance import (
     _REPO,
     EvaluationEvent,
+    EvaluationResult,
     RunContext,
     _assert_findings_were_delivered,
     _build_conformance_run_id,
@@ -184,6 +185,7 @@ def process_message(body: str) -> None:
         # the work is retried rather than logged and lost — which is the
         # property the HTTP adapter could not have.
         _assert_findings_were_delivered(log, ctx=ctx)
+        _report_run(event, result, ctx=ctx)
         return
 
     if kind == TYPE_SWEEP:
@@ -205,6 +207,52 @@ def process_message(body: str) -> None:
         return
 
     raise UnprocessableMessage(f"unknown message type {kind!r}")
+
+
+def _report_run(
+    event: EvaluationEvent, result: EvaluationResult, *, ctx: RunContext
+) -> None:
+    """Say how one repository's evaluation went.
+
+    Here rather than in ``handler``, and the placement is load-bearing:
+    ``handler`` is also what ``run_fleet_sweep`` calls for each repository
+    it visits, and ``RunReport.send`` is once-per-instance. Reporting from
+    inside the handler would spend the sweep's single report on its first
+    repository and silence the sweep's own summary — twelve messages where
+    there should be one, and the one that mattered missing.
+
+    Called after the delivery assertion, deliberately. A run whose findings
+    all failed to post raises there and is reported as a failure instead,
+    because two messages for one event is how a channel earns being
+    ignored.
+    """
+    if ctx.report is None:
+        return
+
+    ctx.report.ok(len(result.evaluated))
+    for service_id in result.not_evaluated:
+        ctx.report.issue("not_evaluated", service_id)
+    # Delivery failure is an issue like any other, matching the sweep: a
+    # run that posted nine of ten batches is WARN for the same reason a
+    # run that skipped a service is.
+    if ctx.tally.failed:
+        ctx.report.issue("delivery_failed", f"{ctx.tally.failed} finding(s)")
+    ctx.report.count("flow", event.mode)
+    # Not "repo": RunReport.send splats its counters into post_run_finding
+    # as keyword arguments, and that function already has a repo parameter
+    # of its own. The collision is a TypeError at send time, on a path a
+    # green test suite would otherwise never walk.
+    ctx.report.count("target", f"{event.repo}@{event.ref}")
+    ctx.report.count("offered", ctx.tally.attempted)
+    ctx.report.count("posted", ctx.tally.posted)
+    ctx.report.count("duplicate", ctx.tally.duplicates)
+    # Notable whatever the tally, which is where this parts company with
+    # the sweep. A release triggered this run and someone is waiting to
+    # hear it happened, so a clean evaluation must still say so. Silence
+    # already meant both "clean run" and "the job was destroyed before it
+    # started" — the ambiguity that let a stub Lambda eat five
+    # evaluations without anyone noticing.
+    ctx.report.send(notable=True)
 
 
 def _report_failure(what: str, exc: BaseException) -> None:
