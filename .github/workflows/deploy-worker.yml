@@ -7,20 +7,24 @@
 # workflow cannot repoint the worker at a different API without someone
 # reviewing a .tf file.
 #
-# Manual, and staying that way until the cutover.
+# Runs on release, and by hand when needed.
 #
-# The mapping is still disabled (worker_consumes_queue), so a deploy here
-# changes what *would* run rather than what does — which is what makes it
-# safe to prove the package before flipping anything. Add the release
-# trigger in the same change that flips the mapping and stops the Railway
-# consumer, not before: a function nobody invokes deploying automatically
-# is noise, and one that is live deploying automatically before its
-# consumer is retired is two consumers on one queue.
+# The manual-only period is over: the mapping is enabled, the Railway
+# consumer is gone, and the function is what actually evaluates. Leaving
+# deploys manual now would mean a release that changes handler() ships the
+# change everywhere except the thing running it — the deployed code
+# drifting behind main, silently, which is the shape this fleet keeps
+# paying for.
+#
+# workflow_dispatch stays for redeploying a known-good build without
+# cutting a release.
 
 name: Deploy worker
 
 on:
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   id-token: write # for OIDC; this is what replaces a long-lived key
@@ -56,6 +60,29 @@ jobs:
           # it buys nothing and spends most of the remaining headroom on a
           # copy that is then shadowed anyway.
           rm -rf build/boto3 build/botocore build/s3transfer build/jmespath
+
+          # The Google client stack, which this cog does not use at all —
+          # no mini_app_polis.google, no GoogleAPI, no googleapiclient. It
+          # arrives because miniapppolis-common-utils depends on it
+          # unconditionally for the cogs that do, and the library's lazy
+          # __init__ means nothing here ever imports it.
+          #
+          # Measured: 150 MB unzipped and 28.4 MB zipped with it, 42 MB and
+          # 15.3 MB without. That is the cold start, on every invocation
+          # that gets one.
+          #
+          # Stripped here rather than fixed in common-utils on purpose.
+          # Making it a [google] extra is a breaking change for every other
+          # consumer — watcher, transcription, wiki-curator and deejay all
+          # get it free today and would fail at import without declaring
+          # it. That belongs at the end of the per-cog migrations, when
+          # every consumer already declares what it needs. This is local
+          # and reversible.
+          rm -rf build/googleapiclient build/google build/gspread \
+                 build/google_auth_httplib2.py build/httplib2 \
+                 build/oauth2client build/pyasn1 build/pyasn1_modules \
+                 build/rsa build/uritemplate
+
           rm -rf build/*.dist-info build/__pycache__
 
           # Fail here rather than at the first invocation. An import error
@@ -67,6 +94,32 @@ jobs:
             echo "::error::lambda_worker is not at the package root of the zip"
             exit 1
           }
+
+          # Import every module against the package as it will be unpacked,
+          # with boto3 supplied the way the runtime supplies it and nothing
+          # else on the path. This is what makes the strip above safe: it
+          # is only correct while nothing imports what it removed, and that
+          # is a property of the code rather than of this file. Adding a
+          # Google call upstream should fail this build, not a message.
+          python -m venv /tmp/rt && /tmp/rt/bin/pip install --quiet boto3
+          RT=$(/tmp/rt/bin/python -c "import site; print(site.getsitepackages()[0])")
+          PYTHONPATH="$PWD/build:$RT" python - <<'IMPORTS'
+          import importlib, pkgutil, sys
+          import evaluator_cog
+
+          failed = []
+          for m in pkgutil.walk_packages(evaluator_cog.__path__, "evaluator_cog."):
+              try:
+                  importlib.import_module(m.name)
+              except Exception as exc:
+                  failed.append(f"{m.name}: {type(exc).__name__}: {exc}")
+          if failed:
+              print("::error::the package does not import as it will be unpacked")
+              for line in failed:
+                  print(f"  {line}")
+              sys.exit(1)
+          print("every module imports from the built package")
+          IMPORTS
 
           cd build
           zip -qr "$GITHUB_WORKSPACE/worker.zip" .

@@ -75,7 +75,7 @@ resource "aws_lambda_function" "worker" {
   # Deploying a zip whose layout does not match this string fails at the
   # first invocation with an import error, not at deploy time — the
   # package's top level must contain evaluator_cog/.
-  handler = "evaluator_cog.adapters.lambda_worker.lambda_handler"
+  handler       = "evaluator_cog.adapters.lambda_worker.lambda_handler"
   architectures = ["arm64"]
 
   filename         = data.archive_file.stub.output_path
