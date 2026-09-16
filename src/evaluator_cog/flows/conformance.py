@@ -1,14 +1,21 @@
 """Conformance checking, and the two shapes it is asked for.
 
 ``handler(event)`` is the unit of work: one repository, everything needed
-to evaluate it passed in, nothing looked up. It is what a release triggers
-through the API and what the sweep calls in a loop, and it does not know
-which of those it is serving.
+to evaluate it passed in, nothing looked up. A release triggers one
+through the API; a whole-fleet pass is N of them, dispatched by the API
+from the registry. It does not know which of those it is serving, and
+that is the point.
 
-``run_fleet_sweep()`` is the whole fleet, for the occasions that invalidate
-every repository's last result at once — a new standards catalog, a new
-evaluator. It reads the registry, builds one event per repository, and then
-runs the checks that scope to no repository at all.
+``run_introspection()`` is the rest of a fleet pass: the six checks that
+carry ``applies_to: None`` and grade the inventory, the stored findings
+and the catalog itself. No repository owns them, so they get their own
+job.
+
+``run_fleet_sweep()`` used to be here — one message the evaluator expanded
+into a serial loop over the fleet. The API fans out instead, so a failure
+retries one repository rather than redelivering a pass that re-evaluates
+everything that already succeeded. The registry-to-events translation it
+did now lives in api-kaianolevine-com's ``services/fleet_registry.py``.
 
 Two modes, in both shapes:
 
@@ -297,12 +304,18 @@ def _assert_findings_were_delivered(prefect_log: Any, *, ctx: RunContext) -> Non
 
 
 def _ping_healthcheck() -> None:
-    """Tell Healthchecks.io a sweep finished clean. Never raises.
+    """Tell Healthchecks.io a fleet pass finished clean. Never raises.
 
-    Called at the tail of :func:`run_fleet_sweep` and nowhere else. It used
-    to be a Prefect ``on_completion`` hook, which is why it is a ping and
-    not a check: the fact being reported is that the sweep reached its end,
-    and a per-repository invoke is not that fact.
+    Called at the tail of :func:`run_introspection`, which is the
+    once-per-pass job now that the sweep is gone. It was the sweep's tail
+    before that, and a Prefect ``on_completion`` hook before that — which
+    is why it is a ping and not a check: the fact being reported is that a
+    pass reached its end, and a per-repository job is not that fact.
+
+    Moving it mattered. Healthchecks.io watches for *absence*, so deleting
+    the sweep without rehoming this would have stopped the pings and fired
+    the check — reporting the evaluator dead at the moment it started
+    working properly.
     """
     import urllib.request
 
@@ -385,20 +398,6 @@ def _get_standards_version(*, ctx: RunContext) -> str:
     if not version:
         raise RuntimeError("Standards catalog carries no version")
     return version
-
-
-def _get_active_repos(ecosystem: dict) -> list[dict]:
-    """Return all active services from ecosystem.yaml."""
-    services = ecosystem.get("services", [])
-    return [s for s in services if s.get("status") == "active"]
-
-
-def _get_monorepos(ecosystem: dict) -> dict[str, dict]:
-    """
-    Return a dict of {monorepo_id: monorepo_record} from ecosystem.yaml.
-    Keys match the `monorepo` field on service entries.
-    """
-    return {m["id"]: m for m in ecosystem.get("monorepos", []) if m.get("id")}
 
 
 def _read_workspace_package_json(monorepo_root: Path) -> str:
@@ -598,35 +597,6 @@ def _deduplicate_sibling_findings(
         deduplicated[sibling_id] = remaining
 
     return deduplicated
-
-
-def _declared_branch(record: dict | None) -> str:
-    """The branch a registry entry says it develops on, else ``main``.
-
-    Read from the service record for a plain repo and from the monorepo
-    record for a monorepo, because that is where the repo is named in
-    each case.
-    """
-    if not isinstance(record, dict):
-        return "main"
-    branch = str(record.get("branch") or "").strip()
-    return branch or "main"
-
-
-def _declared_org(record: dict | None) -> str:
-    """The GitHub org a registry entry says it lives in, else the fleet default.
-
-    Mirrors :func:`_declared_branch`. Almost every repo is under
-    ``mini-app-polis`` and omits the field, but not all of them are: with
-    the org hardcoded into the download URL, a repo in a personal org
-    404'd on every single run. It was registered, it carried an
-    evaluator.yaml declaring itself governed, and it had never once been
-    evaluated — the exact state XSTACK-006 exists to make visible.
-    """
-    if not isinstance(record, dict):
-        return _DEFAULT_ORG
-    org = str(record.get("org") or "").strip()
-    return org or _DEFAULT_ORG
 
 
 #: Attempts per repo download, including the first. GitHub's secondary
@@ -1514,93 +1484,6 @@ def _run_applies_to_absent_checks(
     return completed
 
 
-def _fleet_events(
-    ecosystem: dict,
-    *,
-    run_id: str,
-    mode: str,
-    log: Any,
-) -> list[EvaluationEvent]:
-    """Turn the registry into one event per repository.
-
-    This is the sweep's job and only the sweep's job. A release-triggered
-    invoke builds its event from what CI already knows — repository, ref,
-    commit — and never reads a registry at all, which is why the
-    translation lives out here rather than inside the handler.
-
-    A service id appears at most once: duplicate registry rows are a
-    data-quality problem, and evaluating one twice would post two sets of
-    findings for the same repository in the same run.
-    """
-    monorepos = _get_monorepos(ecosystem)
-    seen: set[str] = set()
-    events: list[EvaluationEvent] = []
-    grouped: dict[str, list[dict]] = {}
-
-    for service in _get_active_repos(ecosystem):
-        service_id = str(service.get("id") or "")
-        if not service_id:
-            continue
-        if service_id in seen:
-            log.warning("skipping duplicate service %s", service_id)
-            continue
-        seen.add(service_id)
-
-        monorepo_id = str(service.get("monorepo") or "")
-        if monorepo_id:
-            grouped.setdefault(monorepo_id, []).append(service)
-            continue
-
-        events.append(
-            EvaluationEvent(
-                org=_declared_org(service),
-                repo=str(service.get("repo") or service_id),
-                ref=_declared_branch(service),
-                services=(service,),
-                run_id=run_id,
-                mode=mode,
-            )
-        )
-
-    for monorepo_id, services in grouped.items():
-        record = monorepos.get(monorepo_id)
-        if record is None:
-            # Declared membership of a monorepo the registry does not
-            # describe. Each app is still a repository of its own as far
-            # as the registry is concerned, so evaluate them that way
-            # rather than dropping them.
-            log.warning(
-                "monorepo %s is not in the registry — evaluating its apps individually",
-                monorepo_id,
-            )
-            for service in services:
-                events.append(
-                    EvaluationEvent(
-                        org=_declared_org(service),
-                        repo=str(service.get("repo") or service.get("id")),
-                        ref=_declared_branch(service),
-                        services=(service,),
-                        run_id=run_id,
-                        mode=mode,
-                    )
-                )
-            continue
-
-        events.append(
-            EvaluationEvent(
-                org=_declared_org(record),
-                repo=str(record.get("repo") or monorepo_id),
-                ref=_declared_branch(record),
-                services=tuple(services),
-                run_id=run_id,
-                mode=mode,
-                monorepo=record,
-            )
-        )
-
-    return events
-
-
 def flow_name_for_mode(mode: str) -> str:
     """What a run of ``mode`` files its findings under.
 
@@ -1896,15 +1779,6 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
     return result
 
 
-@dataclass
-class SweepResult:
-    """What one fleet sweep did. Counts, not findings — those went to the API."""
-
-    repos: int = 0
-    evaluated: list[str] = field(default_factory=list)
-    not_evaluated: list[str] = field(default_factory=list)
-
-
 def _unresolved_from_run(pass_run_id: str, *, log: Any) -> list[dict[str, str]]:
     """Rebuild XSTACK-008's input from what a fan-out pass recorded.
 
@@ -2045,6 +1919,11 @@ def run_introspection(
                 f"{_APPLIES_TO_ABSENT_CHECKS} did not complete",
             )
 
+    # Before the report, matching what the sweep did: the ping says the
+    # pass reached its end, and it should not depend on a notification
+    # channel being reachable.
+    _ping_healthcheck()
+
     log.info(
         "introspection: complete — %d of %d checks, %d findings offered, "
         "%d posted, %d duplicate, %d failed",
@@ -2055,167 +1934,3 @@ def run_introspection(
         ctx.tally.duplicates,
         ctx.tally.failed,
     )
-
-
-def run_fleet_sweep(
-    *,
-    mode: str = "deterministic",
-    run_id: str | None = None,
-    log: Any,
-    ctx: RunContext,
-) -> SweepResult:
-    """Evaluate every active repository, then the checks that scope to none.
-
-    The occasional whole-fleet pass, not the primary path. A repository's
-    own release is what normally evaluates it; this exists for the two
-    events that invalidate every repository's last result at once — a new
-    standards catalog and a new evaluator — where asking each repository to
-    re-run itself would be the same work reached by a worse trigger.
-
-    It is also the only place the applies_to-absent checks can run. EVAL-003,
-    MONO-003 and EVAL-007 are scoped to no repository at all (ADR-004), so
-    there is no per-repo invocation they belong to: they grade the inventory,
-    the stored findings and the catalog itself, once per pass.
-
-    A repository-level problem does not raise — that is a finding, and the
-    run report carries it. :class:`FindingDeliveryError` does raise, because
-    a run that computed findings and delivered none of them is a fault of
-    this process rather than of anything it looked at, and the Healthchecks
-    ping below must not happen after one.
-    """
-    # Drop whatever catalog the caller already fetched. A sweep is one
-    # message accepted at one moment and run later, so grading against the
-    # version current when it *runs* keeps the pass internally consistent:
-    # every repository in it sees the same catalog because one process
-    # fetches it once.
-    #
-    # Note the fan-out path reverses this, and deliberately. N independent
-    # messages each resolving their own version is not "the version it
-    # actually runs under" — it is several of them, inside a run id that
-    # claims one. So the dispatcher pins standards_version at accept time
-    # and the message carries it. Both are the same goal reached from
-    # opposite directions; neither is the general rule.
-    #
-    # The per-repository path keeps its catalog, which is why this belongs
-    # here rather than in the context.
-    ctx.catalog = None
-
-    standards_version = _get_standards_version(ctx=ctx)
-    log.info("sweep: standards version %s", standards_version)
-    catalog_schema = _fetch_catalog_schema(ctx=ctx)
-    rule_catalog = _fetch_full_rule_catalog(ctx=ctx)
-    log.info(
-        "sweep: loaded %d traits, %d repo types, %d rules from catalog",
-        len(catalog_schema.get("traits", {})),
-        len(catalog_schema.get("repo_types", set())),
-        len(rule_catalog),
-    )
-
-    # rule_applies_to is derived inside the handler now, from the same
-    # cached catalog. The sweep keeps rule_catalog only for the log line
-    # above and for the applies_to-absent checks below.
-    if not rule_catalog:
-        log.warning(
-            "sweep: full rule catalog empty — type-based auto-exceptions "
-            "disabled for this run"
-        )
-
-    ecosystem = _fetch_yaml(_ECOSYSTEM_YAML_URL)
-    active_repos = _get_active_repos(ecosystem)
-    result = SweepResult(repos=len(active_repos))
-
-    if not active_repos:
-        log.warning("sweep: no active repos found in ecosystem.yaml")
-        return result
-
-    log.info("sweep: checking %d active repos", len(active_repos))
-    run_id = run_id or (
-        _build_conformance_run_id(standards_version)
-        if mode == "llm"
-        else _build_deterministic_run_id(standards_version)
-    )
-
-    # One id for the whole pass, set before the first handler call so the
-    # per-repository path below leaves it alone. The website's latest-run
-    # filter relies on a sweep's findings belonging to one run.
-    if ctx.report is not None:
-        ctx.report.run_id = run_id
-
-    # No concurrency primitive here. The writes used to be wrapped in
-    # prefect.concurrency('evaluator-cog-writes', occupy=1), which bought
-    # mutual exclusion across processes from Prefect Cloud.
-    #
-    # This comment used to add that the adapter holds a process-level lock
-    # because the tally, catalog and run report are module state. Both
-    # halves of that are stale: _EVALUATION_LOCK went with adapters/http.py,
-    # and that state is now per-run on RunContext. Two overlapping sweeps
-    # no longer corrupt each other's accounting — they each carry their
-    # own. What remains unguarded is the write side, which server-side
-    # idempotency (PIPE-002) covers instead.
-    for event in _fleet_events(ecosystem, run_id=run_id, mode=mode, log=log):
-        one = handler(event, log=log, ctx=ctx)
-        result.evaluated.extend(one.evaluated)
-        result.not_evaluated.extend(one.not_evaluated)
-
-    # ── Non-repo-scan rules (ADR-004: applies_to absent) ─────────────────
-    _run_applies_to_absent_checks(
-        ctx=ctx,
-        ecosystem=ecosystem,
-        rule_catalog=rule_catalog,
-        standards_version=standards_version,
-        evaluator_standards_version=standards_version,
-        run_id=run_id,
-        prefect_log=log,
-    )
-
-    log.info(
-        "sweep: complete — %d findings offered, %d posted, %d duplicate, %d failed",
-        ctx.tally.attempted,
-        ctx.tally.posted,
-        ctx.tally.duplicates,
-        ctx.tally.failed,
-    )
-
-    # The run's own outcome, as a notification. Not a finding: what this
-    # sweep computed about other repos is graded and stays in the
-    # evaluations table; whether the sweep itself worked is not.
-    #
-    # Skipped when nothing was delivered at all, because the assertion
-    # below is about to fail the run and the adapter will report it.
-    # Two messages for one event is how a channel earns being ignored.
-    if not ctx.tally.total_failure and ctx.report is not None:
-        # The repos that came through whole. Counted against the declared
-        # list rather than by incrementing as we go, so a repo flagged for
-        # two separate reasons is still one repo missing from the total —
-        # and so the message reads "processed=11, repo_download_failed=1"
-        # rather than "nothing to do" on a run that evaluated the fleet.
-        ctx.report.ok(
-            sum(
-                1
-                for _svc in active_repos
-                if _svc.get("id") and _svc["id"] not in ctx.flagged
-            )
-        )
-        # Delivery failure is an issue like any other, so a run that
-        # posted nine of ten batches is WARN for the same reason a run
-        # that skipped a repo is.
-        if ctx.tally.failed:
-            ctx.report.issue("delivery_failed", f"{ctx.tally.failed} finding(s)")
-        ctx.report.count("flow", mode)
-        ctx.report.count("offered", ctx.tally.attempted)
-        ctx.report.count("posted", ctx.tally.posted)
-        ctx.report.count("duplicate", ctx.tally.duplicates)
-        # A run that evaluated nothing had nothing to say. A run that
-        # offered findings reports either way — "162 offered, 0 posted"
-        # and "162 offered, 162 posted" must not look alike from outside,
-        # which is the whole lesson of September 3rd.
-        ctx.report.send(notable=ctx.tally.attempted > 0)
-
-    # Before the ping, deliberately: everything above has already run and
-    # reported, and this only decides whether the sweep is allowed to be
-    # called a success. Raising here skips the Healthchecks ping for a run
-    # that delivered nothing, which is what the flow's on_completion hook
-    # used to do by not firing.
-    _assert_findings_were_delivered(log, ctx=ctx)
-    _ping_healthcheck()
-    return result

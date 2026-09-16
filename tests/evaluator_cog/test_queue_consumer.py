@@ -16,7 +16,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from evaluator_cog.adapters import queue as q
-from evaluator_cog.flows.conformance import EvaluationResult
+from evaluator_cog.flows import conformance
+from evaluator_cog.flows.conformance import (
+    EvaluationEvent,
+    EvaluationResult,
+    RunContext,
+)
 
 
 def _evaluated(repo: str = "watcher-cog", *, services=("watcher-cog",)):
@@ -109,15 +114,6 @@ def test_a_supplied_run_id_is_used_unchanged() -> None:
         )
 
     assert handler.call_args.args[0].run_id == "conformance-7.0.0-fleet"
-
-
-def test_a_sweep_message_runs_the_fleet() -> None:
-    with patch.object(q, "run_fleet_sweep") as sweep:
-        sweep.return_value = MagicMock(repos=3, evaluated=[], not_evaluated=[])
-        q.process_message(_body(kind=q.TYPE_SWEEP, mode="llm"))
-
-    assert sweep.call_args.kwargs["mode"] == "llm"
-    assert sweep.call_args.kwargs["run_id"] is None
 
 
 # ── messages this consumer cannot handle ─────────────────────────────────
@@ -350,22 +346,6 @@ def test_a_run_that_delivered_nothing_reports_once_not_twice(
     assert _no_notifications == []
 
 
-def test_a_sweep_does_not_gain_a_second_report() -> None:
-    """``RunReport.send`` is once-per-instance, so the sweep's own summary
-    is spent by whatever sends first. Reporting from the consumer's
-    repository branch — and not from ``handler``, which the sweep calls per
-    repository — is what keeps the sweep's one message intact. Revert that
-    placement and this fails."""
-    with (
-        patch.object(q, "run_fleet_sweep") as sweep,
-        patch.object(q, "_report_run") as report,
-    ):
-        q.process_message(_body(kind=q.TYPE_SWEEP, mode="deterministic"))
-
-    assert sweep.called
-    assert not report.called
-
-
 # ── what a fan-out message carries ───────────────────────────────────────
 
 
@@ -547,3 +527,40 @@ def test_the_run_report_is_filed_under_the_findings_flow_name(mode, expected) ->
         q.process_message(_body(repo="watcher-cog", ref="main", mode=mode))
 
     assert seen["flow_name"] == expected
+
+
+def test_the_handler_does_not_report_on_its_own() -> None:
+    """Where the per-job report lives, and why it is not in handler.
+
+    RunReport.send is once-per-instance. A fleet pass is N calls to
+    handler sharing nothing, so a report built there would be one per
+    repository — which is what we want — but an introspection job also
+    calls into the same module and must keep its own. Putting the report
+    in the consumer's branch is what keeps each job's report its own.
+
+    This guards the placement rather than the count: move the report into
+    handler and the introspection job's summary is spent by whatever ran
+    first.
+    """
+    ctx = RunContext.for_run("deterministic-conformance")
+    event = EvaluationEvent(
+        org="mini-app-polis",
+        repo="watcher-cog",
+        ref="main",
+        services=({"id": "watcher-cog", "repo": "watcher-cog"},),
+        run_id="deterministic-7.0.0-abc",
+        mode="deterministic",
+    )
+
+    with (
+        patch.object(conformance, "_get_standards_version", return_value="7.0.0"),
+        patch.object(conformance, "_fetch_catalog_schema", return_value={}),
+        patch.object(conformance, "_fetch_full_rule_catalog", return_value={}),
+        patch.object(conformance, "_download_repo", return_value=None),
+        patch.object(conformance, "_report_issue"),
+        patch.object(conformance, "_post_not_evaluated"),
+    ):
+        conformance.handler(event, log=MagicMock(), ctx=ctx)
+
+    assert ctx.report is not None
+    assert not ctx.report._sent

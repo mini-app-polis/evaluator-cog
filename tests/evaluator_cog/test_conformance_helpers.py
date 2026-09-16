@@ -17,8 +17,6 @@ from evaluator_cog.flows.conformance import (
     RunContext,
     _deduplicate_sibling_findings,
     _fetch_yaml,
-    _get_active_repos,
-    _get_monorepos,
     _get_standards_version,
     _parse_check_exceptions,
     _ping_healthcheck,
@@ -168,53 +166,9 @@ def test_empty_catalog_raises_rather_than_evaluating_nothing() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_active_repos_filters_by_status() -> None:
-    """Only services with status='active' are returned."""
-    ecosystem = {
-        "services": [
-            {"id": "a", "status": "active"},
-            {"id": "b", "status": "retired"},
-            {"id": "c", "status": "active"},
-        ]
-    }
-    result = _get_active_repos(ecosystem)
-    assert [s["id"] for s in result] == ["a", "c"]
-
-
-def test_get_active_repos_empty_ecosystem() -> None:
-    """Empty or missing services key returns []."""
-    assert _get_active_repos({}) == []
-    assert _get_active_repos({"services": []}) == []
-
-
 # ---------------------------------------------------------------------------
 # _get_monorepos — pure dict parsing
 # ---------------------------------------------------------------------------
-
-
-def test_get_monorepos_returns_id_keyed_dict() -> None:
-    """Monorepo records are keyed by their id field."""
-    ecosystem = {
-        "monorepos": [
-            {"id": "deejaytools-com", "repo": "deejaytools-com", "apps": []},
-            {"id": "other-mono", "repo": "other-mono", "apps": []},
-        ]
-    }
-    result = _get_monorepos(ecosystem)
-    assert set(result.keys()) == {"deejaytools-com", "other-mono"}
-    assert result["deejaytools-com"]["repo"] == "deejaytools-com"
-
-
-def test_get_monorepos_skips_entries_without_id() -> None:
-    """Entries missing id are excluded from the result."""
-    ecosystem = {
-        "monorepos": [
-            {"repo": "no-id-repo"},
-            {"id": "valid-mono", "repo": "valid-mono"},
-        ]
-    }
-    result = _get_monorepos(ecosystem)
-    assert list(result.keys()) == ["valid-mono"]
 
 
 # ---------------------------------------------------------------------------
