@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -90,6 +91,26 @@ _VALID_RULE_STATUSES: frozenset[str] = frozenset({"requirement", "convention", "
 
 #: GitHub org every registry entry resolves under unless it declares its own.
 _DEFAULT_ORG = "mini-app-polis"
+
+#: How a 404 is written into the not-evaluated row, and read back out.
+#:
+#: XSTACK-008 must never collapse "I could not tell" into "it is not
+#: there": a 403, 429, 5xx or timeout means the run could not determine
+#: whether the repository exists, and only a 404 says it does not. That
+#: distinction used to live solely in ``RunContext.unresolved_downloads``,
+#: in the memory of the process that did the download — which was fine
+#: for a sweep that ran the checks at the end of its own loop, and is not
+#: fine now. Under fan-out each repository is a separate job with its own
+#: context, so no single one sees the fleet, and the introspection pass
+#: that runs the check sees none of them.
+#:
+#: So the 404 goes into the row's text, in a shape that can be parsed
+#: back. The phrasing is load-bearing; change it here and in the pattern
+#: below together.
+_NOT_FOUND_REASON_FMT = "the repository does not exist at {org}/{repo}@{ref} (404)"
+_NOT_FOUND_RE = re.compile(
+    r"does not exist at (?P<org>[^/\s]+)/(?P<repo>[^@\s]+)@(?P<ref>\S+) \(404\)"
+)
 
 #: This cog, as the notification channel and the version stamp know it.
 #: Must match [project] name in pyproject.toml.
@@ -1666,10 +1687,27 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                     event.ref,
                 )
                 _report_issue("repo_download_failed", service_id, ctx=ctx)
+                # A 404 and an unreachable GitHub are both "not
+                # evaluated", and only the first is evidence the registry
+                # is wrong. _download_repo records a 404 on the context;
+                # anything else it could not tell apart from a bad day.
+                not_found = any(
+                    entry.get("label") == f"{event.org}/{event.repo}"
+                    for entry in ctx.unresolved_downloads
+                )
+                reason = (
+                    _NOT_FOUND_REASON_FMT.format(
+                        org=event.org, repo=event.repo, ref=event.ref
+                    )
+                    if not_found
+                    else (
+                        f"the repository could not be downloaded "
+                        f"({event.repo}@{event.ref})"
+                    )
+                )
                 _post_not_evaluated(
                     service_id,
-                    f"the repository could not be downloaded "
-                    f"({event.repo}@{event.ref})",
+                    reason,
                     ctx=ctx,
                     run_id=event.run_id,
                     flow_name=flow_name,
@@ -1825,6 +1863,130 @@ class SweepResult:
     repos: int = 0
     evaluated: list[str] = field(default_factory=list)
     not_evaluated: list[str] = field(default_factory=list)
+
+
+def _unresolved_from_run(pass_run_id: str, *, log: Any) -> list[dict[str, str]]:
+    """Rebuild XSTACK-008's input from what a fan-out pass recorded.
+
+    The check reads a list of 404s. Under the sweep that list was built in
+    memory as the loop downloaded each repository; under fan-out there is
+    no such loop and no shared memory, so it is read back out of the rows
+    those jobs posted.
+
+    Only 404s come back. Rows written for an unreachable GitHub do not
+    match the pattern and are left where they are, which is the whole
+    point — see :data:`_NOT_FOUND_REASON_FMT`.
+
+    An empty list on failure, not an exception. A pass whose rows cannot
+    be read should not take the other five checks down with it, and
+    XSTACK-008 finding nothing is the same answer it gives when every
+    repository resolved. That is a real weakness of this path and worth
+    naming: it can only under-report.
+    """
+    if not pass_run_id:
+        return []
+
+    from mini_app_polis.api import KaianoApiClient
+
+    try:
+        api = KaianoApiClient.from_env(_REPO)
+        response = api.get(f"/v1/evaluations?run_id={pass_run_id}&limit=500")
+    except Exception as exc:  # noqa: BLE001 — reported, not raised
+        log.warning(
+            "introspection: could not read run %s for XSTACK-008: %s",
+            pass_run_id,
+            exc,
+        )
+        return []
+
+    if isinstance(response, dict):
+        rows = response.get("data") or response.get("items") or []
+    elif isinstance(response, list):
+        rows = response
+    else:
+        rows = []
+
+    unresolved: list[dict[str, str]] = []
+    for row in rows:
+        match = _NOT_FOUND_RE.search(str(row.get("finding") or ""))
+        if not match:
+            continue
+        org, repo, ref = match.group("org"), match.group("repo"), match.group("ref")
+        entry = {
+            "label": f"{org}/{repo}",
+            # Rebuilt rather than stored. The check parses org, repo and
+            # branch back out of this with its own regex, and handing it
+            # the shape it already understands keeps it a pure function
+            # over a list rather than something that knows about rows.
+            "url": f"https://api.github.com/repos/{org}/{repo}/zipball/{ref}",
+        }
+        if entry not in unresolved:
+            unresolved.append(entry)
+
+    log.info(
+        "introspection: %d registered repo(s) did not resolve in run %s",
+        len(unresolved),
+        pass_run_id,
+    )
+    return unresolved
+
+
+def run_introspection(
+    *,
+    run_id: str,
+    pass_run_id: str = "",
+    standards_version: str = "",
+    log: Any,
+    ctx: RunContext,
+) -> None:
+    """Run the checks that are scoped to no repository at all.
+
+    EVAL-003, MONO-003, XSTACK-006, XSTACK-007, XSTACK-008 and EVAL-007
+    carry ``applies_to: None`` (ADR-004). They grade the inventory, the
+    stored findings and the catalog itself, so there is no per-repository
+    invocation any of them belongs to — which is why they lived at the tail
+    of the sweep, the one place in the old design that ran once per pass.
+
+    Fan-out removed that place. This is its replacement: its own job, its
+    own message, dispatched deliberately rather than on a schedule.
+
+    ``pass_run_id`` names the fan-out pass to grade, and only XSTACK-008
+    uses it. Omitted, five of the six checks still run correctly against
+    the registry, the catalog and the stored findings; XSTACK-008 reports
+    nothing, which is indistinguishable from every repository resolving.
+    Pass it whenever there is a pass to name.
+    """
+    ctx.catalog = None
+    standards_version = standards_version or _get_standards_version(ctx=ctx)
+    rule_catalog = _fetch_full_rule_catalog(ctx=ctx)
+    ecosystem = _fetch_yaml(_ECOSYSTEM_YAML_URL)
+
+    if not rule_catalog:
+        log.warning(
+            "introspection: full rule catalog empty — EVAL-007 will have "
+            "nothing to compare against"
+        )
+
+    ctx.unresolved_downloads = _unresolved_from_run(pass_run_id, log=log)
+
+    _run_applies_to_absent_checks(
+        ctx=ctx,
+        ecosystem=ecosystem,
+        rule_catalog=rule_catalog,
+        standards_version=standards_version,
+        evaluator_standards_version=standards_version,
+        run_id=run_id,
+        prefect_log=log,
+    )
+
+    log.info(
+        "introspection: complete — %d findings offered, %d posted, "
+        "%d duplicate, %d failed",
+        ctx.tally.attempted,
+        ctx.tally.posted,
+        ctx.tally.duplicates,
+        ctx.tally.failed,
+    )
 
 
 def run_fleet_sweep(

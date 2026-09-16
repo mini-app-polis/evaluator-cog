@@ -53,6 +53,7 @@ from evaluator_cog.flows.conformance import (
     _get_standards_version,
     handler,
     run_fleet_sweep,
+    run_introspection,
 )
 
 log = logger_mod.get_logger()
@@ -69,6 +70,7 @@ log = logger_mod.get_logger()
 MESSAGE_VERSION = 1
 TYPE_REPOSITORY = "evaluation.repository"
 TYPE_SWEEP = "evaluation.sweep"
+TYPE_INTROSPECTION = "evaluation.introspection"
 
 #: Long polling. Short polling bills empty receives and adds latency.
 WAIT_TIME_SECONDS = 20
@@ -243,6 +245,25 @@ def process_message(body: str) -> None:
         )
         return
 
+    if kind == TYPE_INTROSPECTION:
+        run_id = str(payload.get("run_id") or "")
+        if not run_id:
+            raise UnprocessableMessage("introspection message names no run_id")
+        run_introspection(
+            run_id=run_id,
+            # The fan-out pass to grade. Only XSTACK-008 reads it, and it
+            # is optional on purpose: the other five checks grade the
+            # registry, the catalog and the stored findings, none of which
+            # belong to a pass.
+            pass_run_id=str(payload.get("pass_run_id") or ""),
+            standards_version=str(payload.get("standards_version") or ""),
+            log=log,
+            ctx=ctx,
+        )
+        _assert_findings_were_delivered(log, ctx=ctx)
+        _report_introspection(ctx=ctx)
+        return
+
     raise UnprocessableMessage(f"unknown message type {kind!r}")
 
 
@@ -289,6 +310,27 @@ def _report_run(
     # already meant both "clean run" and "the job was destroyed before it
     # started" — the ambiguity that let a stub Lambda eat five
     # evaluations without anyone noticing.
+    ctx.report.send(notable=True)
+
+
+def _report_introspection(*, ctx: RunContext) -> None:
+    """Say how the fleet-scoped checks went.
+
+    Notable whatever the tally, matching the per-repository report and for
+    the same reason: something asked for this run and is waiting to hear
+    it happened. These six checks are the ones nobody would notice had
+    stopped — they grade the inventory and the table rather than any
+    repository, so no release goes red when they quietly do nothing.
+    """
+    if ctx.report is None:
+        return
+
+    if ctx.tally.failed:
+        ctx.report.issue("delivery_failed", f"{ctx.tally.failed} finding(s)")
+    ctx.report.count("flow", "introspection")
+    ctx.report.count("offered", ctx.tally.attempted)
+    ctx.report.count("posted", ctx.tally.posted)
+    ctx.report.count("duplicate", ctx.tally.duplicates)
     ctx.report.send(notable=True)
 
 
