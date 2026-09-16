@@ -66,9 +66,23 @@ variable "reserved_concurrency" {
     time with a message about UnreservedConcurrentExecution rather than
     anything that sounds like a quota.
 
-    Until that quota is raised the account limit is itself the throttle,
-    which for a pilot is adequate. Raise the quota (Service Quotas ->
-    Lambda -> "Concurrent executions"), then set this.
+    TODO(lambda-quota): request the increase, then set this.
+
+      Service Quotas -> Lambda -> "Concurrent executions" -> Request
+      increase. The default account limit is 1,000 in most regions but a
+      new account is throttled well below it; the ask is to be raised to
+      the standard limit, not above it, so it is routine rather than a
+      capacity case.
+
+    Not urgent, and worth saying why rather than leaving it open-ended.
+    max_concurrency on the event source mapping is a real ceiling and
+    needs no quota — it is what actually limits a fleet pass today. What
+    this variable adds once available is a *reservation*: guaranteed
+    capacity for this function rather than a cap on it, which matters when
+    a second cog's worker starts competing for the same account pool.
+
+    So the trigger for doing this is the second cog going to Lambda, not
+    a date.
   DESC
   type        = number
   default     = -1

@@ -442,14 +442,20 @@ and the SIGTERM handler are gone from `adapters/queue.py`, along with
 `railway.json`. Rolling back to a container is a rewrite rather than a
 restart — deliberately, because two consumers on one queue is the failure
 that cost five evaluations, and keeping a second one runnable is how that
-happens by accident. `nixpacks.toml` is the same category and is still
-there.
+happens by accident. `nixpacks.toml` went with it — API-001 is the only
+rule that reads it, and it gates on `is_api_service`, which a pipeline-cog
+is not.
 
 **The throttle is `scaling_config`, not `reserved_concurrency`.** AWS refuses
 to reserve if it would leave the account under 100 unreserved, and this
 account is below that. `maximum_concurrency` on the event source mapping
-needs no quota. Request the quota increase anyway; until it lands the
-mapping is the only ceiling there is.
+needs no quota and is what actually limits a fleet pass today.
+
+`TODO(lambda-quota)` in `infra/variables.tf` tracks the increase. The
+trigger for doing it is **the second cog going to Lambda**, not a date:
+what a reservation adds over a mapping ceiling is guaranteed capacity
+rather than a cap, and that only matters once two workers compete for the
+same account pool.
 
 **Deploys run on release.** `deploy-worker.yml` was manual while the mapping
 was disabled, because a deploy changed what *would* run. Once the function
