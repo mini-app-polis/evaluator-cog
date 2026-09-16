@@ -186,9 +186,17 @@ class RunContext:
     catalog: dict | None = None
 
     @classmethod
-    def for_run(cls) -> RunContext:
-        """A context whose coverage report will be sent when the run ends."""
-        return cls(report=RunReport(flow_name="conformance-check", repo=_REPO))
+    def for_run(cls, flow_name: str = "conformance-check") -> RunContext:
+        """A context whose coverage report will be sent when the run ends.
+
+        ``flow_name`` is what the report is filed and titled under, and it
+        should match the name this run's *findings* carry — see
+        :func:`flow_name_for_mode`. It was hardcoded to the llm name, so a
+        deterministic run announced itself as "conformance-check" while
+        writing rows under "deterministic-conformance", and correlating
+        the notification with the rows meant knowing that.
+        """
+        return cls(report=RunReport(flow_name=flow_name, repo=_REPO))
 
 
 def _report_issue(
@@ -1572,6 +1580,17 @@ def _fleet_events(
     return events
 
 
+def flow_name_for_mode(mode: str) -> str:
+    """What a run of ``mode`` files its findings under.
+
+    One definition, because two drifted: ``handler`` derives this for the
+    rows and the adapter needs the same string for the run report, and a
+    report titled differently from the rows it describes is a join nobody
+    can make from the outside.
+    """
+    return "conformance-check" if mode == "llm" else "deterministic-conformance"
+
+
 @dataclass(frozen=True)
 class EvaluationEvent:
     """One repository to evaluate, and everything needed to do it.
@@ -1661,7 +1680,7 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
     }
 
     run_llm = event.mode == "llm"
-    flow_name = "conformance-check" if run_llm else "deterministic-conformance"
+    flow_name = flow_name_for_mode(event.mode)
     source = "conformance_check" if run_llm else "conformance_deterministic"
 
     result = EvaluationResult(repo=event.repo)

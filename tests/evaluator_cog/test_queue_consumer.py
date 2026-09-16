@@ -455,3 +455,98 @@ def test_a_malformed_grouping_is_refused_not_guessed_at(payload, why) -> None:
     like a clean run."""
     with pytest.raises(q.UnprocessableMessage, match=why):
         q.process_message(_body(repo="watcher-cog", run_id="r-1", **payload))
+
+
+# ── what a suppressed finding means ──────────────────────────────────────
+
+
+def _run_with_tally(*, attempted: int, duplicates: int, details=("CD-021 …",)):
+    """Drive one repository message with a pre-loaded delivery tally."""
+
+    def _handler(event, *, log, ctx):
+        ctx.tally.attempted = attempted
+        ctx.tally.posted = attempted - duplicates
+        ctx.tally.duplicates = duplicates
+        ctx.tally.duplicate_details.extend(details)
+        return _evaluated()
+
+    captured = {}
+
+    def _send(self, *, notable=False, **kw):
+        captured["severity"] = self.severity
+        captured["text"] = self.text()
+        return None
+
+    with (
+        patch.object(q, "handler", _handler),
+        patch.object(q, "_assert_findings_were_delivered"),
+        patch.object(q, "_get_standards_version", return_value="7.0.0"),
+        patch("mini_app_polis.pipeline_status.RunReport.send", _send),
+    ):
+        q.process_message(_body())
+
+    return captured
+
+
+def test_a_wholly_duplicate_run_is_a_note_not_a_warning() -> None:
+    """Every finding already stored means the job had been done under this
+    run id — a redelivered message or the release workflow's retry landing
+    twice. That is at-least-once delivery working, and raising the run to
+    WARN for it would make every redelivery look like a fault."""
+    report = _run_with_tally(attempted=7, duplicates=7)
+
+    assert report["severity"] == "SUCCESS"
+
+
+def test_a_partly_duplicate_run_is_worth_looking_at() -> None:
+    """Some stored and some suppressed under a freshly minted run id means
+    the same finding was computed twice in one evaluation — nothing else
+    could already hold that id. There is no within-service deduplication,
+    so it is a rule emitting twice."""
+    report = _run_with_tally(attempted=7, duplicates=2)
+
+    assert report["severity"] == "WARN"
+
+
+def test_the_suppressed_findings_are_named_not_just_counted() -> None:
+    """The write leaves no trace in the table — one row survives — so this
+    report is the only record of which rule stopped being reported."""
+    report = _run_with_tally(
+        attempted=7, duplicates=2, details=("CD-021 for api was already stored",)
+    )
+
+    assert "CD-021" in report["text"]
+
+
+def test_a_clean_run_records_no_duplicates_at_all() -> None:
+    report = _run_with_tally(attempted=7, duplicates=0)
+
+    assert report["severity"] == "SUCCESS"
+    assert "already_stored" not in report["text"]
+
+
+# ── the report is titled like the rows it describes ──────────────────────
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [("deterministic", "deterministic-conformance"), ("llm", "conformance-check")],
+)
+def test_the_run_report_is_filed_under_the_findings_flow_name(mode, expected) -> None:
+    """It was hardcoded to the llm name, so a deterministic run announced
+    itself as conformance-check while writing rows under
+    deterministic-conformance."""
+    seen = {}
+
+    def _handler(event, *, log, ctx):
+        seen["flow_name"] = ctx.report.flow_name
+        return _evaluated()
+
+    with (
+        patch.object(q, "handler", _handler),
+        patch.object(q, "_assert_findings_were_delivered"),
+        patch.object(q, "_get_standards_version", return_value="7.0.0"),
+    ):
+        q.process_message(_body(repo="watcher-cog", ref="main", mode=mode))
+
+    assert seen["flow_name"] == expected
