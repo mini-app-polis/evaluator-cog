@@ -1,3 +1,10 @@
+# [3.33.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.32.3...v3.33.0) (2026-09-16)
+
+
+### Features
+
+* **evaluations:** report the outcome of a single-repository run ([dc328b5](https://github.com/mini-app-polis/evaluator-cog/commit/dc328b540a70c80dcbd235c8705dee96164c10e0))
+
 ## [3.32.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.32.2...v3.32.3) (2026-09-15)
 
 
