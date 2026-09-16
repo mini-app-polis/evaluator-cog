@@ -16,6 +16,41 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from evaluator_cog.adapters import queue as q
+from evaluator_cog.flows.conformance import EvaluationResult
+
+
+def _evaluated(repo: str = "watcher-cog", *, services=("watcher-cog",)):
+    """What a real handler hands back. A bare MagicMock will not do: the
+    consumer now counts the services a run covered, and a mock counts as
+    anything you ask it to."""
+    result = EvaluationResult(repo=repo)
+    result.evaluated.extend(services)
+    return result
+
+
+@pytest.fixture(autouse=True)
+def _no_notifications(monkeypatch):
+    """Catch run reports instead of posting them.
+
+    Stubbed at ``_deliver`` rather than at ``RunReport.send``, so the
+    severity-and-notable gate above it still runs. That gate is the thing
+    under test in the reporting cases: a SUCCESS with ``notable=False`` is
+    suppressed and never reaches here, which is exactly the behaviour that
+    kept per-repository runs silent.
+    """
+    # Delivery resolves a base URL before it builds a message, and an
+    # unset one short-circuits the whole path with a warning — which
+    # reads as "the report was not sent" and would make these tests pass
+    # for the wrong reason once the stub is in place.
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://api.test")
+    sent = []
+
+    def _capture(message, **_kwargs) -> bool:
+        sent.append(message)
+        return True
+
+    monkeypatch.setattr("mini_app_polis.pipeline_status._deliver", _capture)
+    return sent
 
 
 def _body(kind: str = q.TYPE_REPOSITORY, version: int = q.MESSAGE_VERSION, **payload):
@@ -29,7 +64,7 @@ def _body(kind: str = q.TYPE_REPOSITORY, version: int = q.MESSAGE_VERSION, **pay
 
 def test_a_repository_message_becomes_one_evaluation() -> None:
     with (
-        patch.object(q, "handler") as handler,
+        patch.object(q, "handler", return_value=_evaluated()) as handler,
         patch.object(q, "_assert_findings_were_delivered"),
         patch.object(q, "_get_standards_version", return_value="7.0.0"),
     ):
@@ -53,7 +88,7 @@ def test_an_absent_run_id_is_minted_from_the_catalog_version_now() -> None:
     is resolved where the grading happens.
     """
     with (
-        patch.object(q, "handler") as handler,
+        patch.object(q, "handler", return_value=_evaluated()) as handler,
         patch.object(q, "_assert_findings_were_delivered"),
         patch.object(q, "_get_standards_version", return_value="7.1.0"),
     ):
@@ -65,7 +100,7 @@ def test_an_absent_run_id_is_minted_from_the_catalog_version_now() -> None:
 def test_a_supplied_run_id_is_used_unchanged() -> None:
     """A fleet pass keeps one run id across every repository in it."""
     with (
-        patch.object(q, "handler") as handler,
+        patch.object(q, "handler", return_value=_evaluated()) as handler,
         patch.object(q, "_assert_findings_were_delivered"),
         patch.object(q, "_get_standards_version", side_effect=AssertionError),
     ):
@@ -128,7 +163,7 @@ def test_a_run_that_delivered_nothing_raises_so_it_is_retried() -> None:
     from evaluator_cog.flows.conformance import FindingDeliveryError
 
     with (
-        patch.object(q, "handler"),
+        patch.object(q, "handler", return_value=_evaluated()),
         patch.object(q, "_get_standards_version", return_value="7.0.0"),
         patch.object(
             q,
@@ -247,3 +282,78 @@ def test_it_refuses_to_start_without_a_queue(monkeypatch) -> None:
     monkeypatch.delenv("EVALUATION_QUEUE_URL", raising=False)
     with patch("sentry_sdk.init"), pytest.raises(SystemExit):
         q.main()
+
+
+# ── saying the run happened ──────────────────────────────────────────────
+
+
+def test_a_repository_run_reports_its_outcome(_no_notifications) -> None:
+    """The gap this closes.
+
+    Only sweeps reported. A single repository's evaluation ran, posted its
+    findings and said nothing, so a release that triggered one had no
+    signal distinguishing "evaluated, clean" from "the job never ran" —
+    and for five evaluations eaten by the stub Lambda, those two looked
+    identical from the outside.
+    """
+    with (
+        patch.object(q, "handler", return_value=_evaluated()),
+        patch.object(q, "_assert_findings_were_delivered"),
+        patch.object(q, "_get_standards_version", return_value="7.0.0"),
+    ):
+        q.process_message(_body())
+
+    assert len(_no_notifications) == 1
+
+
+def test_a_clean_run_with_no_findings_still_reports(_no_notifications) -> None:
+    """A SUCCESS is suppressed unless the caller marks it notable, so this
+    is the case that silently did nothing before. Asserted separately from
+    the WARN path because they travel different branches of that gate."""
+    with (
+        patch.object(q, "handler", return_value=_evaluated()),
+        patch.object(q, "_assert_findings_were_delivered"),
+        patch.object(q, "_get_standards_version", return_value="7.0.0"),
+    ):
+        q.process_message(_body())
+
+    assert len(_no_notifications) == 1
+
+
+def test_a_run_that_delivered_nothing_reports_once_not_twice(
+    _no_notifications,
+) -> None:
+    """The delivery assertion raises before the outcome report is built, so
+    the failure path stays a single message. Two messages for one event is
+    how a channel earns being ignored."""
+    from evaluator_cog.flows.conformance import FindingDeliveryError
+
+    with (
+        patch.object(q, "handler", return_value=_evaluated()),
+        patch.object(q, "_get_standards_version", return_value="7.0.0"),
+        patch.object(
+            q,
+            "_assert_findings_were_delivered",
+            side_effect=FindingDeliveryError("nothing landed"),
+        ),
+        pytest.raises(FindingDeliveryError),
+    ):
+        q.process_message(_body())
+
+    assert _no_notifications == []
+
+
+def test_a_sweep_does_not_gain_a_second_report() -> None:
+    """``RunReport.send`` is once-per-instance, so the sweep's own summary
+    is spent by whatever sends first. Reporting from the consumer's
+    repository branch — and not from ``handler``, which the sweep calls per
+    repository — is what keeps the sweep's one message intact. Revert that
+    placement and this fails."""
+    with (
+        patch.object(q, "run_fleet_sweep") as sweep,
+        patch.object(q, "_report_run") as report,
+    ):
+        q.process_message(_body(kind=q.TYPE_SWEEP, mode="deterministic"))
+
+    assert sweep.called
+    assert not report.called
