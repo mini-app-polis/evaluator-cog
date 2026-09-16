@@ -53,7 +53,6 @@ from evaluator_cog.flows.conformance import (
     _get_standards_version,
     flow_name_for_mode,
     handler,
-    run_fleet_sweep,
     run_introspection,
 )
 
@@ -70,7 +69,6 @@ log = logger_mod.get_logger()
 #: therefore a producer-bug detector, not a router.
 MESSAGE_VERSION = 1
 TYPE_REPOSITORY = "evaluation.repository"
-TYPE_SWEEP = "evaluation.sweep"
 TYPE_INTROSPECTION = "evaluation.introspection"
 
 #: Long polling. Short polling bills empty receives and adds latency.
@@ -236,24 +234,6 @@ def process_message(body: str) -> None:
         _report_run(event, result, ctx=ctx)
         return
 
-    if kind == TYPE_SWEEP:
-        mode = str(payload.get("mode") or "deterministic")
-        if mode not in {"deterministic", "llm"}:
-            raise UnprocessableMessage(f"unknown sweep mode {mode!r}")
-        result = run_fleet_sweep(
-            mode=mode,
-            run_id=str(payload.get("run_id") or "") or None,
-            log=log,
-            ctx=ctx,
-        )
-        log.info(
-            "consumer: sweep %d repos, evaluated=%d not_evaluated=%d",
-            result.repos,
-            len(result.evaluated),
-            len(result.not_evaluated),
-        )
-        return
-
     if kind == TYPE_INTROSPECTION:
         run_id = str(payload.get("run_id") or "")
         if not run_id:
@@ -282,8 +262,9 @@ def _report_run(
     """Say how one repository's evaluation went.
 
     Here rather than in ``handler``, and the placement is load-bearing:
-    ``handler`` is also what ``run_fleet_sweep`` calls for each repository
-    it visits, and ``RunReport.send`` is once-per-instance. Reporting from
+    ``handler`` is called once per repository and a fleet pass is N of
+    them, so a report built there would be one per repository rather than
+    one per job — and ``RunReport.send`` is once-per-instance. Reporting from
     inside the handler would spend the sweep's single report on its first
     repository and silence the sweep's own summary — twelve messages where
     there should be one, and the one that mattered missing.

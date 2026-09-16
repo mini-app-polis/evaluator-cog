@@ -131,4 +131,12 @@ resource "aws_lambda_event_source_mapping" "jobs" {
   batch_size = 1
 
   function_response_types = ["ReportBatchItemFailures"]
+
+  # The throttle that exists. reserved_concurrent_executions on the
+  # function is the one this account cannot set; this one is per mapping
+  # and needs no quota. See var.max_concurrency for why a fleet pass needs
+  # a ceiling at all now that it is N concurrent jobs rather than a loop.
+  scaling_config {
+    maximum_concurrency = var.max_concurrency
+  }
 }

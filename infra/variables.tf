@@ -171,3 +171,33 @@ variable "worker_consumes_queue" {
   type        = bool
   default     = false
 }
+
+variable "max_concurrency" {
+  description = <<-DESC
+    How many workers the queue may run at once.
+
+    Not reserved_concurrency, which is the other knob above and is
+    unavailable: AWS refuses to reserve for a function if that would leave
+    the account under 100 unreserved, and this account is below that. This
+    one lives on the event source mapping instead, needs no quota, and is
+    the throttle that actually exists today.
+
+    It matters because a fleet pass is now N concurrent jobs rather than
+    one serial loop. Each clones a repository and posts its findings back
+    through Cloudflare to a single Railway container, so an unthrottled
+    pass is the self-inflicted load test the fleet's own notes warn about,
+    aimed at the API that every other service also depends on.
+
+    Four is a starting point, not a measurement: it keeps a pass roughly
+    four times faster than the old serial sweep while leaving the API most
+    of its headroom. Raise it once a pass has been watched under load. AWS
+    requires at least 2.
+  DESC
+  type        = number
+  default     = 4
+
+  validation {
+    condition     = var.max_concurrency >= 2
+    error_message = "SQS event source mappings require maximum_concurrency >= 2."
+  }
+}

@@ -15,13 +15,10 @@ from evaluator_cog.engine.deterministic import CheckResult
 from evaluator_cog.engine.evaluator_config import EvaluatorConfig
 from evaluator_cog.flows.conformance import (
     RunContext,
-    _declared_branch,
-    _declared_org,
     _fetch_full_rule_catalog,
     _fetch_standards_for_service,
     _run_standalone_deterministic,
     run_conformance_check,
-    run_fleet_sweep,
 )
 
 #: The sweep takes its logger rather than resolving one. Tests that drive it
@@ -463,277 +460,12 @@ def test_run_standalone_deterministic_calls_load_evaluator_config(
     )
 
 
-def test_conformance_monorepo_service_failure_does_not_abort_flow(
-    monkeypatch,
-) -> None:
-    """PRIN-002: a single bad service record in a monorepo must not
-    crash the whole flow — the remaining siblings must still run.
-
-    Uses a minimal fake ecosystem with two monorepo apps. The first raises
-    during per-service setup; the second must still reach run_all_checks.
-    """
-    import evaluator_cog.flows.conformance as conf
-
-    ecosystem = {
-        "services": [
-            {
-                "id": "app-a",
-                "repo": "mono",
-                "status": "active",
-                "type": "api",
-                "language": "typescript",
-                "monorepo": "mono-1",
-                "monorepo_path": "apps/a",
-                "check_exceptions": "INVALID_NOT_A_LIST",
-            },
-            {
-                "id": "app-b",
-                "repo": "mono",
-                "status": "active",
-                "type": "api",
-                "language": "typescript",
-                "monorepo": "mono-1",
-                "monorepo_path": "apps/b",
-                "check_exceptions": [],
-            },
-        ],
-        "monorepos": [
-            {
-                "id": "mono-1",
-                "repo": "mono",
-                "apps": [
-                    {"service_id": "app-a", "path": "apps/a"},
-                    {"service_id": "app-b", "path": "apps/b"},
-                ],
-            }
-        ],
-    }
-
-    def fake_download_repo(
-        repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw
-    ):
-        root = Path(tmp_dir) / repo_name
-        (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
-        (root / "apps" / "b").mkdir(parents=True, exist_ok=True)
-        return root
-
-    monkeypatch.setenv("STANDARDS_VERSION", "9.9.9-test")
-
-    parse_calls: list = []
-    _original_parse = conf._parse_check_exceptions
-
-    def tracking_parse(raw):
-        parse_calls.append(raw)
-        if isinstance(raw, str) and raw == "INVALID_NOT_A_LIST":
-            raise ValueError("bad check_exceptions shape")
-        if not isinstance(raw, list):
-            raw = []
-        return _original_parse(raw)
-
-    run_all_calls: list = []
-
-    def fake_run_all_checks(*args, **kwargs):
-        run_all_calls.append(kwargs)
-        result = MagicMock()
-        result.findings = []
-        result.checked_rule_ids = set()
-        return result
-
-    with (
-        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
-        patch.object(conf, "_fetch_yaml", return_value=ecosystem),
-        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
-        patch.object(conf, "_download_repo", side_effect=fake_download_repo),
-        patch.object(conf, "_parse_check_exceptions", side_effect=tracking_parse),
-        patch.object(conf, "run_all_checks", side_effect=fake_run_all_checks),
-        # Return a real PostResult, not a bare MagicMock: the flow now
-        # tallies delivery outcomes and fails the run when nothing
-        # reached the API, so a double that does not answer "how many
-        # posted?" is not a faithful stand-in for the real function.
-        patch.object(conf, "post_findings", return_value=conf.PostResult()),
-        patch.object(conf, "_fetch_standards_for_service", return_value=[]),
-    ):
-        run_fleet_sweep(mode="deterministic", log=_LOG, ctx=RunContext.for_run())
-
-    assert len(run_all_calls) == 1
-
-
-def test_declared_branch_defaults_to_main() -> None:
-    """Only a registry entry that says otherwise reads a different ref."""
-    assert _declared_branch(None) == "main"
-    assert _declared_branch({"id": "watcher-cog"}) == "main"
-    assert _declared_branch({"id": "x", "branch": ""}) == "main"
-    assert _declared_branch({"id": "x", "branch": "  "}) == "main"
-
-
-def test_declared_branch_reads_the_registry() -> None:
-    """deejaytools-com develops on dev, ten commits ahead of main.
-
-    The run kept reading main and reported the repo for security
-    workflows it had on dev — findings no change to the repo could clear.
-    """
-    assert _declared_branch({"id": "deejaytools-com", "branch": "dev"}) == "dev"
-
-
-def test_declared_org_defaults_to_the_fleet_org() -> None:
-    """Almost every repo omits the field and resolves under mini-app-polis."""
-    assert _declared_org(None) == "mini-app-polis"
-    assert _declared_org({"id": "watcher-cog"}) == "mini-app-polis"
-    assert _declared_org({"id": "x", "org": ""}) == "mini-app-polis"
-    assert _declared_org({"id": "x", "org": "  "}) == "mini-app-polis"
-
-
-def test_declared_org_reads_the_registry() -> None:
-    """website-astro-wcs lives in a personal org, not the fleet org.
-
-    With the org hardcoded, its download 404'd on every run: registered,
-    carrying an evaluator.yaml, and never once evaluated.
-    """
-    assert (
-        _declared_org({"id": "website-astro-wcs", "org": "kaianolevine"})
-        == "kaianolevine"
-    )
-
-
 def _posted_findings(post_calls: list) -> list[dict]:
     """Flatten every finding handed to post_findings across all calls."""
     out: list[dict] = []
     for kwargs in post_calls:
         out.extend(kwargs.get("findings") or [])
     return out
-
-
-def test_undownloadable_repo_is_reported_not_silently_skipped(monkeypatch) -> None:
-    """A service that cannot be cloned must still produce a row.
-
-    It used to produce nothing at all: the flow logged "could not clone"
-    and moved on, so the service vanished from the report. A reader then
-    saw only the services that *did* evaluate — every one of them green —
-    and had no way to tell that one had never been looked at. Absence is
-    not a pass.
-    """
-    import evaluator_cog.flows.conformance as conf
-
-    ecosystem = {
-        "services": [
-            {
-                "id": "reachable",
-                "repo": "reachable",
-                "status": "active",
-                "type": "api-service",
-                "language": "python",
-            },
-            {
-                "id": "gone",
-                "repo": "gone",
-                "status": "active",
-                "type": "api-service",
-                "language": "python",
-            },
-        ]
-    }
-
-    def fake_download_repo(
-        repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw
-    ):
-        if repo_name == "gone":
-            return None
-        root = Path(tmp_dir) / repo_name
-        root.mkdir(parents=True, exist_ok=True)
-        return root
-
-    def fake_run_all_checks(*args, **kwargs):
-        result = MagicMock()
-        result.findings = []
-        result.checked_rule_ids = set()
-        return result
-
-    post_calls: list = []
-
-    def tracking_post(**kwargs):
-        post_calls.append(kwargs)
-        return conf.PostResult()
-
-    monkeypatch.setenv("STANDARDS_VERSION", "9.9.9-test")
-    with (
-        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
-        patch.object(conf, "_fetch_yaml", return_value=ecosystem),
-        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
-        patch.object(conf, "_download_repo", side_effect=fake_download_repo),
-        patch.object(conf, "run_all_checks", side_effect=fake_run_all_checks),
-        patch.object(conf, "post_findings", side_effect=tracking_post),
-        patch.object(conf, "_fetch_standards_for_service", return_value=[]),
-    ):
-        run_fleet_sweep(mode="deterministic", log=_LOG, ctx=RunContext.for_run())
-
-    findings = _posted_findings(post_calls)
-    gone = [f for f in findings if "gone" in f.get("finding", "")]
-    assert gone, "the unreachable service posted nothing at all"
-    assert gone[0]["severity"] == "ERROR"
-    assert "not evaluated" in gone[0]["finding"]
-
-    # The reachable one still reports normally — the new row must not
-    # replace or suppress the ordinary path.
-    assert any(
-        f.get("severity") == "SUCCESS" and "reachable" in f.get("finding", "")
-        for f in findings
-    )
-
-
-def test_failed_checks_are_reported_not_silently_skipped(monkeypatch) -> None:
-    """A service whose checks raise must produce a row saying so.
-
-    Same failure shape as an unreachable repo, one step later: the flow
-    caught the exception, logged it, and returned without posting, so a
-    crashing check made a service disappear rather than fail.
-    """
-    import evaluator_cog.flows.conformance as conf
-
-    ecosystem = {
-        "services": [
-            {
-                "id": "explodes",
-                "repo": "explodes",
-                "status": "active",
-                "type": "api-service",
-                "language": "python",
-            },
-        ]
-    }
-
-    def fake_download_repo(
-        repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw
-    ):
-        root = Path(tmp_dir) / repo_name
-        root.mkdir(parents=True, exist_ok=True)
-        return root
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("check exploded")
-
-    post_calls: list = []
-
-    def tracking_post(**kwargs):
-        post_calls.append(kwargs)
-        return conf.PostResult()
-
-    monkeypatch.setenv("STANDARDS_VERSION", "9.9.9-test")
-    with (
-        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
-        patch.object(conf, "_fetch_yaml", return_value=ecosystem),
-        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
-        patch.object(conf, "_download_repo", side_effect=fake_download_repo),
-        patch.object(conf, "run_all_checks", side_effect=boom),
-        patch.object(conf, "post_findings", side_effect=tracking_post),
-        patch.object(conf, "_fetch_standards_for_service", return_value=[]),
-    ):
-        run_fleet_sweep(mode="deterministic", log=_LOG, ctx=RunContext.for_run())
-
-    findings = _posted_findings(post_calls)
-    assert findings, "a raising check posted nothing at all"
-    assert findings[0]["severity"] == "ERROR"
-    assert "not evaluated" in findings[0]["finding"]
-    assert "RuntimeError" in findings[0]["finding"]
 
 
 def test_transient_download_failure_is_retried(monkeypatch) -> None:
@@ -844,6 +576,58 @@ def test_retry_delay_honours_retry_after(monkeypatch) -> None:
 # skips that copy had and the standalone path did not.
 
 
+def _run_mono_flow(monkeypatch, ecosystem: dict, *, run_all):
+    """Run one grouped monorepo job and return what was posted.
+
+    Built from the registry fixture rather than read out of it by the
+    evaluator, because the evaluator no longer reads a registry: the API
+    resolves the fleet and sends each repository its services already
+    grouped. This is that message, arriving.
+
+    The grouping is the thing under test either way. A monorepo has to
+    reach ``handler`` as one event carrying every app, or sibling
+    deduplication cannot see the siblings.
+    """
+    import evaluator_cog.flows.conformance as conf
+
+    def fake_download_repo(
+        repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw
+    ):
+        root = Path(tmp_dir) / repo_name
+        (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
+        return root
+
+    posted: list[dict] = []
+
+    def capture(**kwargs):
+        posted.append(kwargs)
+        return conf.PostResult(attempted=1, posted=1)
+
+    record = ecosystem["monorepos"][0]
+    event = conf.EvaluationEvent(
+        org="mini-app-polis",
+        repo=record["repo"],
+        ref="main",
+        services=tuple(ecosystem["services"]),
+        run_id="deterministic-9.9.9-test-abc",
+        mode="deterministic",
+        monorepo=record,
+    )
+
+    monkeypatch.setenv("STANDARDS_VERSION", "9.9.9-test")
+    with (
+        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
+        patch.object(conf, "_fetch_yaml", return_value=ecosystem),
+        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
+        patch.object(conf, "_download_repo", side_effect=fake_download_repo),
+        patch.object(conf, "run_all_checks", side_effect=run_all),
+        patch.object(conf, "post_findings", side_effect=capture),
+        patch.object(conf, "_fetch_standards_for_service", return_value=[]),
+    ):
+        conf.handler(event, log=_LOG, ctx=RunContext.for_run())
+    return posted
+
+
 def _mono_ecosystem(*, path_a: str = "apps/a") -> dict:
     return {
         "services": [
@@ -865,37 +649,6 @@ def _mono_ecosystem(*, path_a: str = "apps/a") -> dict:
             }
         ],
     }
-
-
-def _run_mono_flow(monkeypatch, ecosystem: dict, *, run_all):
-    """Run the flow over a one-app monorepo and return what was posted."""
-    import evaluator_cog.flows.conformance as conf
-
-    def fake_download_repo(
-        repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw
-    ):
-        root = Path(tmp_dir) / repo_name
-        (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
-        return root
-
-    posted: list[dict] = []
-
-    def capture(**kwargs):
-        posted.append(kwargs)
-        return conf.PostResult(attempted=1, posted=1)
-
-    monkeypatch.setenv("STANDARDS_VERSION", "9.9.9-test")
-    with (
-        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
-        patch.object(conf, "_fetch_yaml", return_value=ecosystem),
-        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
-        patch.object(conf, "_download_repo", side_effect=fake_download_repo),
-        patch.object(conf, "run_all_checks", side_effect=run_all),
-        patch.object(conf, "post_findings", side_effect=capture),
-        patch.object(conf, "_fetch_standards_for_service", return_value=[]),
-    ):
-        run_fleet_sweep(mode="deterministic", log=_LOG, ctx=RunContext.for_run())
-    return posted
 
 
 def test_monorepo_app_with_a_missing_path_is_reported(monkeypatch) -> None:
@@ -952,32 +705,6 @@ def test_monorepo_deterministic_findings_carry_the_deterministic_flow_name(
     service_posts = [c for c in posted if c.get("repo") == "app-a"]
     assert service_posts, "the app was never posted"
     assert all(c["flow_name"] == "deterministic-conformance" for c in service_posts)
-
-
-def test_a_sweep_regrades_against_the_catalog_current_when_it_starts() -> None:
-    """The accept-time catalog is dropped rather than reused.
-
-    /sweep mints the run id from a catalog fetch and hands the context to
-    a background task that may start well after. A sweep accepted while a
-    catalog release is in flight must grade against the version it runs
-    under, so the sweep discards whatever the route cached. An invoke
-    wants the opposite — one fetch for the whole request — which is why
-    the context caches by default and only the sweep clears it.
-    """
-    import evaluator_cog.flows.conformance as conf
-
-    ctx = conf.RunContext.for_run()
-    ctx.catalog = {"version": "stale-at-accept-time", "rules": []}
-
-    with (
-        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
-        patch.object(conf, "_fetch_catalog_schema", return_value={}),
-        patch.object(conf, "_fetch_full_rule_catalog", return_value={}),
-        patch.object(conf, "_fetch_yaml", return_value={}),
-    ):
-        conf.run_fleet_sweep(mode="deterministic", log=_LOG, ctx=ctx)
-
-    assert ctx.catalog is None, "the sweep graded against the accept-time catalog"
 
 
 def test_post_service_findings_substitutes_the_success_row() -> None:
@@ -1152,30 +879,3 @@ def test_handler_deduplicates_identical_sibling_findings() -> None:
     assert "also affects app-b" in by_repo["app-a"][0]["finding"]
     # The sibling's duplicate is not posted again; it gets the SUCCESS row.
     assert by_repo["app-b"][0]["severity"] == "SUCCESS"
-
-
-def test_fleet_events_groups_a_monorepo_into_one_event() -> None:
-    """The registry-to-events translation is the sweep's job, not the handler's."""
-    import evaluator_cog.flows.conformance as conf
-
-    ecosystem = {
-        "services": [
-            _svc("watcher-cog"),
-            _svc("app-a", repo="mono", monorepo="mono-1", monorepo_path="apps/a"),
-            _svc("app-b", repo="mono", monorepo="mono-1", monorepo_path="apps/b"),
-            _svc("watcher-cog"),  # duplicate row
-        ],
-        "monorepos": [{"id": "mono-1", "repo": "mono"}],
-    }
-
-    events = conf._fleet_events(
-        ecosystem, run_id="r-4", mode="deterministic", log=MagicMock()
-    )
-
-    by_repo = {e.repo: e for e in events}
-    assert set(by_repo) == {"watcher-cog", "mono"}
-    assert len(by_repo["mono"].services) == 2
-    assert by_repo["mono"].monorepo is not None
-    assert by_repo["watcher-cog"].monorepo is None
-    # The duplicate row produced no second event.
-    assert len(events) == 2
