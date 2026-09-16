@@ -488,41 +488,38 @@ def _run_with_tally(*, attempted: int, duplicates: int, details=("CD-021 …",))
     return captured
 
 
-def test_a_wholly_duplicate_run_is_a_note_not_a_warning() -> None:
-    """Every finding already stored means the job had been done under this
-    run id — a redelivered message or the release workflow's retry landing
-    twice. That is at-least-once delivery working, and raising the run to
-    WARN for it would make every redelivery look like a fault."""
-    report = _run_with_tally(attempted=7, duplicates=7)
+@pytest.mark.parametrize("duplicates", [7, 2])
+def test_suppressed_findings_never_raise_the_run(duplicates) -> None:
+    """Both sources of these are ordinary.
+
+    All seven means the job had already been done under this run id — a
+    redelivered message, or the release workflow's retry landing twice.
+    At-least-once delivery working as designed.
+
+    Two of seven means one repository failed a rule the same way twice —
+    CD-026 emits one finding per offending job, and identical text is one
+    thing to fix rather than two. Collapsing them is the point of the
+    fingerprint.
+
+    An earlier version raised the second case to WARN on the theory that
+    it meant a rule misbehaving. It does not, and the only thing the
+    severity bought was a channel full of warnings about deduplication
+    working.
+    """
+    report = _run_with_tally(attempted=7, duplicates=duplicates)
 
     assert report["severity"] == "SUCCESS"
 
 
-def test_a_partly_duplicate_run_is_worth_looking_at() -> None:
-    """Some stored and some suppressed under a freshly minted run id means
-    the same finding was computed twice in one evaluation — nothing else
-    could already hold that id. There is no within-service deduplication,
-    so it is a rule emitting twice."""
-    report = _run_with_tally(attempted=7, duplicates=2)
-
-    assert report["severity"] == "WARN"
-
-
-def test_the_suppressed_findings_are_named_not_just_counted() -> None:
-    """The write leaves no trace in the table — one row survives — so this
-    report is the only record of which rule stopped being reported."""
+def test_suppressed_findings_are_counted_and_not_named() -> None:
+    """RunReport renders examples only for flagged reasons, deliberately —
+    "naming every already-processed file is how the interesting line ends
+    up below the fold". The rule ids live in the consumer's log instead."""
     report = _run_with_tally(
         attempted=7, duplicates=2, details=("CD-021 for api was already stored",)
     )
 
-    assert "CD-021" in report["text"]
-
-
-def test_a_clean_run_records_no_duplicates_at_all() -> None:
-    report = _run_with_tally(attempted=7, duplicates=0)
-
-    assert report["severity"] == "SUCCESS"
-    assert "already_stored" not in report["text"]
+    assert "CD-021" not in report["text"]
 
 
 # ── the report is titled like the rows it describes ──────────────────────

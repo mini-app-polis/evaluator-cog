@@ -312,8 +312,13 @@ def _report_run(
     ctx.report.count("target", f"{event.repo}@{event.ref}")
     ctx.report.count("offered", ctx.tally.attempted)
     ctx.report.count("posted", ctx.tally.posted)
+    # Counted, not named. Both sources of a suppressed finding are
+    # ordinary — a redelivered message re-offering a run's whole set, or
+    # one repository failing a rule the same way twice, which CD-026 makes
+    # routine — so this is a number, not a flag. The rule ids are in the
+    # consumer's log if a run is ever worth chasing; putting them here
+    # would bury the line that matters under the deduplication working.
     ctx.report.count("duplicate", ctx.tally.duplicates)
-    _record_duplicates(ctx=ctx)
     # Notable whatever the tally, which is where this parts company with
     # the sweep. A release triggered this run and someone is waiting to
     # hear it happened, so a clean evaluation must still say so. Silence
@@ -321,40 +326,6 @@ def _report_run(
     # started" — the ambiguity that let a stub Lambda eat five
     # evaluations without anyone noticing.
     ctx.report.send(notable=True)
-
-
-def _record_duplicates(*, ctx: RunContext) -> None:
-    """Say which findings were suppressed, and how worried to be.
-
-    Two different things reach this counter and they deserve different
-    severities.
-
-    **Every finding suppressed** means the job had already been done under
-    this run id — a redelivered message, or the release workflow's retry
-    landing twice. At-least-once delivery working exactly as intended, so
-    it is a note: recorded, never raising the run to WARN. Flagging it
-    would make every redelivery look like a fault and train the channel to
-    be ignored.
-
-    **Some suppressed and some stored** is a different animal. The run id
-    was minted for this job, so nothing could already hold it — those
-    findings were computed twice *within one evaluation*. There is no
-    within-service deduplication (``_deduplicate_sibling_findings`` needs
-    more than one service and returns early), so that is a rule emitting
-    the same finding twice. Worth a human looking.
-
-    Named either way, because the suppressed write leaves no trace in the
-    table — only one row survives — so this report is the only place the
-    detail exists, and a count alone says nothing about which rule.
-    """
-    if ctx.report is None or not ctx.tally.duplicates:
-        return
-
-    detail = "; ".join(ctx.tally.duplicate_details) or "no detail recorded"
-    if ctx.tally.duplicates == ctx.tally.attempted:
-        ctx.report.note("already_stored", detail)
-    else:
-        ctx.report.issue("duplicate_findings", detail)
 
 
 def _report_introspection(*, ctx: RunContext) -> None:
@@ -375,7 +346,6 @@ def _report_introspection(*, ctx: RunContext) -> None:
     ctx.report.count("offered", ctx.tally.attempted)
     ctx.report.count("posted", ctx.tally.posted)
     ctx.report.count("duplicate", ctx.tally.duplicates)
-    _record_duplicates(ctx=ctx)
     ctx.report.send(notable=True)
 
 
