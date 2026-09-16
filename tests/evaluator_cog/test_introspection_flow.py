@@ -207,7 +207,7 @@ def test_the_unresolved_list_reaches_the_checks() -> None:
         patch.object(c, "_fetch_full_rule_catalog", return_value={"CD-026": {}}),
         patch.object(c, "_fetch_yaml", return_value={"services": []}),
         patch.object(c, "_unresolved_from_run", return_value=rebuilt),
-        patch.object(c, "_run_applies_to_absent_checks") as checks,
+        patch.object(c, "_run_applies_to_absent_checks", return_value=6) as checks,
     ):
         c.run_introspection(
             run_id="introspection-7.0.0-abc",
@@ -231,7 +231,7 @@ def test_a_pinned_version_is_used_instead_of_resolving_one() -> None:
         patch.object(c, "_fetch_full_rule_catalog", return_value={}),
         patch.object(c, "_fetch_yaml", return_value={"services": []}),
         patch.object(c, "_unresolved_from_run", return_value=[]),
-        patch.object(c, "_run_applies_to_absent_checks") as checks,
+        patch.object(c, "_run_applies_to_absent_checks", return_value=6) as checks,
     ):
         c.run_introspection(
             run_id="introspection-7.0.0-abc",
@@ -311,3 +311,46 @@ def test_an_unreachable_repo_is_not_recorded_as_missing() -> None:
 
     assert not c._NOT_FOUND_RE.search(reason)
     assert "could not be downloaded" in reason
+
+
+# ── the report says whose run it was, and what it did ────────────────────
+
+
+def _introspect(*, completed: int = 6):
+    ctx = c.RunContext.for_run("introspection")
+    with (
+        patch.object(c, "_get_standards_version", return_value="7.0.0"),
+        patch.object(c, "_fetch_full_rule_catalog", return_value={}),
+        patch.object(c, "_fetch_yaml", return_value={"services": []}),
+        patch.object(c, "_unresolved_from_run", return_value=[]),
+        patch.object(c, "_run_applies_to_absent_checks", return_value=completed),
+    ):
+        c.run_introspection(run_id="introspection-7.0.0-abc", log=MagicMock(), ctx=ctx)
+    return ctx
+
+
+def test_the_report_is_attributed_to_this_run() -> None:
+    """Without it RunReport falls back to get_run_id(), whose resolution
+    order is Prefect's — and with Prefect gone that always lands on
+    "local-run", joinable to nothing. The first pass shipped without this
+    and every introspection report said local-run."""
+    assert _introspect().report.run_id == "introspection-7.0.0-abc"
+
+
+def test_a_complete_pass_reports_what_it_ran() -> None:
+    """An empty tally renders "nothing to do" — over a pass that had just
+    posted a finding, which is the opposite of true."""
+    report = _introspect().report
+
+    assert report.processed == 6
+    assert "nothing to do" not in report.text()
+
+
+def test_a_partial_pass_says_so() -> None:
+    """A check that raises is logged and skipped and the run goes on, so
+    "five of six ran" and "six ran and found nothing" are otherwise the
+    same silence."""
+    report = _introspect(completed=5).report
+
+    assert report.severity == "WARN"
+    assert "check_failed" in report.text()
