@@ -357,3 +357,94 @@ def test_a_sweep_does_not_gain_a_second_report() -> None:
 
     assert sweep.called
     assert not report.called
+
+
+# ── what a fan-out message carries ───────────────────────────────────────
+
+
+def test_a_fan_out_message_keeps_its_monorepo_grouped() -> None:
+    """The property the whole fan-out depends on.
+
+    A monorepo is one job carrying every app in it. Flatten it into one
+    message per app and nothing raises — the apps are evaluated, findings
+    are posted, the run reports success. What is missing is sibling
+    deduplication, which is gated on a job carrying more than one service,
+    so the same finding lands once per app and reads as a deduplication
+    bug in the evaluator rather than a grouping bug in the dispatcher.
+    """
+    services = [
+        {"id": "shop-web", "repo": "storefront-monorepo"},
+        {"id": "shop-admin", "repo": "storefront-monorepo"},
+    ]
+    record = {"id": "storefront", "repo": "storefront-monorepo"}
+
+    with (
+        patch.object(q, "handler", return_value=_evaluated()) as handler,
+        patch.object(q, "_assert_findings_were_delivered"),
+    ):
+        q.process_message(
+            _body(
+                repo="storefront-monorepo",
+                ref="main",
+                mode="deterministic",
+                run_id="deterministic-7.0.0-abc",
+                services=services,
+                monorepo=record,
+            )
+        )
+
+    event = handler.call_args.args[0]
+    assert [s["id"] for s in event.services] == ["shop-web", "shop-admin"]
+    assert event.monorepo == record
+
+
+def test_a_release_message_still_synthesises_its_one_service() -> None:
+    """CI names a repository and nothing else. The old shape must keep
+    working unchanged — the sweep is still the proven path and every
+    release-triggered evaluation goes through here."""
+    with (
+        patch.object(q, "handler", return_value=_evaluated()) as handler,
+        patch.object(q, "_assert_findings_were_delivered"),
+        patch.object(q, "_get_standards_version", return_value="7.0.0"),
+    ):
+        q.process_message(_body())
+
+    event = handler.call_args.args[0]
+    assert event.services == ({"id": "watcher-cog", "repo": "watcher-cog"},)
+    assert event.monorepo is None
+
+
+def test_a_pinned_catalog_version_is_used_instead_of_resolving_one() -> None:
+    """N jobs each resolving their own version would let a catalog release
+    landing mid-pass grade some repositories against the old rules and some
+    against the new, inside a run id claiming one version for all of them.
+    _get_standards_version raises here to prove it is never consulted."""
+    with (
+        patch.object(q, "handler", return_value=_evaluated()) as handler,
+        patch.object(q, "_assert_findings_were_delivered"),
+        patch.object(q, "_get_standards_version", side_effect=AssertionError),
+    ):
+        q.process_message(
+            _body(
+                repo="watcher-cog",
+                run_id="deterministic-7.0.0-abc",
+                standards_version="7.0.0",
+            )
+        )
+
+    assert handler.call_args.args[0].standards_version == "7.0.0"
+
+
+@pytest.mark.parametrize(
+    ("payload", "why"),
+    [
+        ({"services": ["not-an-object"]}, "services must be a list of objects"),
+        ({"monorepo": "not-an-object"}, "monorepo must be an object"),
+    ],
+)
+def test_a_malformed_grouping_is_refused_not_guessed_at(payload, why) -> None:
+    """Dead-letter it rather than silently falling back to the synthesised
+    single service, which would evaluate a monorepo as one app and look
+    like a clean run."""
+    with pytest.raises(q.UnprocessableMessage, match=why):
+        q.process_message(_body(repo="watcher-cog", run_id="r-1", **payload))

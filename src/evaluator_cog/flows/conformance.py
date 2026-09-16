@@ -1576,6 +1576,19 @@ class EvaluationEvent:
     mode: str = "deterministic"
     #: The monorepo registry record, when this repository is one.
     monorepo: dict | None = None
+    #: The catalog version the dispatcher pinned, when it pinned one.
+    #:
+    #: Empty for a release-triggered evaluation, which resolves the
+    #: version itself and should: one repository graded against whatever
+    #: is published when it runs is correct.
+    #:
+    #: Set for one repository within a fan-out, where it is the opposite.
+    #: N messages each resolving their own version means a catalog release
+    #: landing mid-pass grades some repositories against the old rules and
+    #: some against the new, inside a run id that claims one version for
+    #: all of them. The dispatcher resolves it once so the pass is
+    #: internally consistent.
+    standards_version: str = ""
 
 
 @dataclass
@@ -1617,7 +1630,7 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
     if ctx.report is not None and not ctx.report.run_id:
         ctx.report.run_id = event.run_id
 
-    standards_version = _get_standards_version(ctx=ctx)
+    standards_version = event.standards_version or _get_standards_version(ctx=ctx)
     catalog_schema = _fetch_catalog_schema(ctx=ctx)
     rule_catalog = _fetch_full_rule_catalog(ctx=ctx)
     rule_applies_to = {
