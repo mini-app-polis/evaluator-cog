@@ -7,9 +7,15 @@
 # workflow cannot repoint the worker at a different API without someone
 # reviewing a .tf file.
 #
-# Manual for now, on purpose. The foundation ticket wants the pipeline
-# proven against the stub before the real worker exists. When step 5 lands,
-# add the release trigger.
+# Manual, and staying that way until the cutover.
+#
+# The mapping is still disabled (worker_consumes_queue), so a deploy here
+# changes what *would* run rather than what does — which is what makes it
+# safe to prove the package before flipping anything. Add the release
+# trigger in the same change that flips the mapping and stops the Railway
+# consumer, not before: a function nobody invokes deploying automatically
+# is noise, and one that is live deploying automatically before its
+# consumer is retired is two consumers on one queue.
 
 name: Deploy worker
 
@@ -30,22 +36,50 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Step 5 swaps this one step for the real package:
-      #   uv pip install --target build/ . && cp -r src/evaluator_cog build/
-      #   rm -rf build/boto3 build/botocore build/s3transfer build/jmespath
-      #
-      # That last line is not optional. Measured: 41.5 MB zipped against a
-      # 50 MB limit with boto3 in the package, 25.8 MB without — and the
-      # Lambda runtime ships boto3 already, so bundling it buys nothing and
-      # spends most of the remaining headroom. No registry and no image
-      # either way.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Build the function zip
         run: |
-          cd infra/stub
+          set -euo pipefail
+
+          # --target, not a venv: Lambda unpacks the zip onto sys.path and
+          # imports from its top level, so the package's own layout is the
+          # one the runtime sees. handler in infra/worker.tf names
+          # evaluator_cog.adapters.lambda_worker, which only resolves if
+          # evaluator_cog/ is at the root of this archive.
+          uv pip install --target build/ . --quiet
+
+          # Not optional, and not a size micro-optimisation. Measured:
+          # 41.5 MB zipped against a 50 MB limit with boto3 in the package,
+          # 25.8 MB without. The runtime ships boto3 already, so bundling
+          # it buys nothing and spends most of the remaining headroom on a
+          # copy that is then shadowed anyway.
+          rm -rf build/boto3 build/botocore build/s3transfer build/jmespath
+          rm -rf build/*.dist-info build/__pycache__
+
+          # Fail here rather than at the first invocation. An import error
+          # from a zip whose layout is wrong surfaces as a Lambda runtime
+          # error on a real message — which, with the mapping enabled,
+          # means the message retries three times and lands in the DLQ
+          # before anyone knows the deploy was bad.
+          test -f build/evaluator_cog/adapters/lambda_worker.py || {
+            echo "::error::lambda_worker is not at the package root of the zip"
+            exit 1
+          }
+
+          cd build
           zip -qr "$GITHUB_WORKSPACE/worker.zip" .
           cd "$GITHUB_WORKSPACE"
+
+          size=$(stat -c%s worker.zip)
+          echo "zip is $((size / 1024 / 1024)) MB of the 50 MB direct-upload limit"
+          if [ "$size" -gt 47000000 ]; then
+            echo "::error::the zip is within 3 MB of the 50 MB limit"
+            exit 1
+          fi
+
           echo "LOCAL_SHA=$(openssl dgst -sha256 -binary worker.zip | base64)" >> "$GITHUB_ENV"
-          ls -l worker.zip
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
