@@ -59,6 +59,13 @@ log = logger_mod.get_logger()
 
 #: Must match api-kaianolevine-com's evaluation_dispatch. A mismatch is a
 #: message this consumer refuses rather than misreads.
+#:
+#: This queue is evaluator-cog's alone — `infra/` names it from
+#: `name_prefix`, one prefix per cog. A shared fleet queue was considered
+#: and cannot work: SQS has no selective receive, so a consumer takes
+#: whatever it is handed, and an unrecognised type would send another
+#: cog's job to *this* cog's dead-letter queue. The type check below is
+#: therefore a producer-bug detector, not a router.
 MESSAGE_VERSION = 1
 TYPE_REPOSITORY = "evaluation.repository"
 TYPE_SWEEP = "evaluation.sweep"

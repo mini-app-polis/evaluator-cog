@@ -143,11 +143,18 @@ def test_unhandleable_messages_are_refused_not_guessed_at(body: str, why: str) -
         q.process_message(body)
 
 
-def test_a_message_type_from_another_cog_is_expected_not_exceptional() -> None:
-    """One queue serves the fleet from step 4 onward.
+def test_an_unrecognised_message_type_is_refused_not_guessed_at() -> None:
+    """A producer bug, not another cog's traffic.
 
-    This consumer must recognise a shape it does not handle and say so,
-    rather than crashing in a way that reads as its own bug.
+    This queue is evaluator-cog's alone — one prefix per cog in `infra/`.
+    A shared fleet queue was considered and cannot work, because SQS has no
+    selective receive: a consumer takes whatever it is handed, so an
+    unrecognised type would send another cog's job to this cog's
+    dead-letter queue.
+
+    So a type this consumer does not handle means something enqueued the
+    wrong shape. Dead-lettering it deliberately beats crashing in a way
+    that reads as this cog's own bug.
     """
     with pytest.raises(q.UnprocessableMessage, match="unknown message type"):
         q.process_message(_body(kind="transcription.run", something="else"))
