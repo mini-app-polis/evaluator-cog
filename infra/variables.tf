@@ -223,3 +223,21 @@ variable "max_concurrency" {
     error_message = "SQS event source mappings require maximum_concurrency >= 2."
   }
 }
+
+variable "create_api_producer" {
+  description = <<-DESC
+    Whether this state owns the API's sending identity.
+
+    True for the first cog, false for every one after — the same shape as
+    create_github_oidc_provider, and for the same reason. There is one
+    api-kaianolevine-com, so there should be one IAM user for it, holding
+    one access key. A producer per cog means the API carries five
+    credentials, five Doppler entries and five client configurations by
+    the fifth cog, all saying the same thing.
+
+    Its policy is a wildcard over `*-jobs`, so a new cog's queue is covered
+    the moment it exists without a cross-state reference back to here.
+  DESC
+  type        = bool
+  default     = true
+}

@@ -213,11 +213,77 @@ an older lock the assignment is a silent no-op, which is how it was first missed
 
 Each cog does all of this before the next one starts.
 
+### 0. Build the producer, in api-kaianolevine-com
+
+**Every producer goes through the API.** No cog enqueues for another cog,
+and nothing else holds a key. The API is the single sending identity for
+the fleet, which is why `create_api_producer` exists (below) and why its
+policy is a wildcard over `*-jobs`.
+
+This step is first, and the ordering is not stylistic. Convert a consumer
+before something sends to its queue and the cog goes silent: watcher-cog is
+still calling `create_flow_run` at a `prefect.serve()` that no longer
+listens, nothing errors, and the work simply stops happening. The producer
+must exist **before** the cutover, mirroring the rule on the other side.
+
+What to build, per cog:
+
+- A dispatch function in `services/`, alongside `evaluation_dispatch.py`.
+  It is the same shape every time: build the message, `asyncio.to_thread`
+  the blocking boto3 call, insist on a `MessageId`, and report to the
+  errors channel if it did not land.
+- The queue URL as a setting. One per cog — `<COG>_QUEUE_URL`.
+- The route or webhook that calls it.
+
+**The message envelope is fixed and both sides must agree:**
+
+```json
+{"type": "<cog>.<what>", "version": 1, "payload": { ... }}
+```
+
+`MESSAGE_VERSION` is checked by the consumer, which refuses a version it
+does not speak rather than misreading it — that is what makes a
+producer/consumer redeploy safe. The `type` discriminator is a
+producer-bug detector, not a router: one queue per cog means an
+unrecognised type is something enqueued wrongly, not another cog's
+traffic. `MessageAttributes` carries the type as well, so a metric filter
+or a console view can read it without parsing the body.
+
+**What is evaluator-specific and does not generalise:** `fleet_registry`,
+`dispatch_fleet`, the introspection endpoint and the fan-out. Those exist
+because the evaluator's unit of work is "a repository" and the fleet is a
+list of them. A transcription job has no equivalent.
+
+**deejay-cog, transcription-cog and wiki-curator-cog have no producer until
+watcher-cog is replaced.** Their trigger today is watcher calling
+`create_flow_run` with a pinned mode. See "Retiring watcher-cog" — the
+Drive webhook lands on the API, which enqueues to the right cog's queue.
+That work is a **prerequisite for the first of those three**, not a
+parallel track.
+
 ### 1. Convert the consumer
 
 Replace `prefect.serve()` with a queue consumer so the process stops asking
 whether there is work. The message is not deleted until the work is done — that
 single rule is what the queue buys.
+
+**Three `RunReport` traps, all of which cost time on the first cog.** They are
+in Constraints too; they are here because this is where they bite.
+
+- **Set `report.run_id` explicitly.** `get_run_id()` resolves the Prefect flow
+  run id and falls back to `"local-run"` — and with Prefect gone it always
+  falls back, so every run report is unattributable. Nothing raises. It was
+  found by reading a Discord message that said `run local-run` next to fifteen
+  that said otherwise.
+- **`send()` is once per instance.** The second call returns
+  `DeliveryReport(suppressed=1)`, so whichever caller sends first spends it.
+  That makes *placement* load-bearing: a report built inside the per-item
+  handler is one per item, and a job that also has its own summary loses it.
+  Put the per-job report in the adapter's message branch, not in the handler.
+- **Counter keys are keyword arguments.** `send()` ends with
+  `**self.counters`, so `count("repo", …)` collides with `post_run_finding`'s
+  own `repo` parameter and is a `TypeError` at send time — on a path a green
+  test suite never walks.
 
 Two of Prefect's jobs must be **replaced, not dropped**:
 
@@ -236,6 +302,13 @@ Copy `infra/` and set `name_prefix`. Two things to get right:
 - **`create_github_oidc_provider = false` for every cog after the first.** There
   is one OIDC provider per account; a second `terraform apply` fails on a
   resource that already exists.
+- **`create_api_producer = false` for every cog after the first.** There is
+  one API, so there should be one IAM user for it holding one access key.
+  Its policy is a wildcard over `*-jobs`, so a new cog's queue is covered
+  the moment it exists — no cross-state reference, and nothing to remember
+  to widen. Leave it default-true and by the fifth cog the API carries five
+  credentials, five Doppler entries and five client configurations all
+  saying the same thing.
 - **`worker_consumes_queue` stays `false` until the cutover.** The stub Lambda
   and a Railway consumer on one queue is two consumers, and the stub wins — it
   logs, probes the API, returns success, and SQS deletes the message. Queue
@@ -259,18 +332,21 @@ can `SendMessage` on its own queue can enqueue its own work and loop.
   and who deletes it afterwards" — but nothing calls it from a `lambda_handler`
   yet. The event source mapping is already configured with
   `ReportBatchItemFailures`, so the entrypoint must return that shape.
-- **A zip, not a container image.** Measured after dropping `prefect`: 25.8 MB
-  zipped against a 50 MB limit, 136 MB unzipped against 250 MB. An earlier draft
-  asserted the tree was past the zip limit; it is not. Skipping ECR removes a
-  registry, a build-and-push step and an entire class of "which image is
-  actually deployed" confusion.
-- **Exclude boto3 from the zip** — 41.5 MB with it, 25.8 without, against 50.
-  The runtime provides it.
+- **A zip, not a container image.** An earlier draft asserted the tree was past
+  the 50 MB direct-upload limit; it is not, and was not even before the strips
+  below. Skipping ECR removes a registry, a build-and-push step and an entire
+  class of "which image is actually deployed" confusion.
+- **Exclude boto3 from the zip.** The runtime provides it, and bundling a copy
+  that is then shadowed spends most of the headroom: 41.5 MB with it against a
+  50 MB limit.
 - **Strip the Google stack from the zip, not from common-utils.** Measured on
   the real package: 150 MB unzipped and 28.4 MB zipped with it, 42 MB and
   15.3 MB without. evaluator-cog imports none of it — no
   `mini_app_polis.google`, no `GoogleAPI`, no `googleapiclient` — and the
   library's lazy `__init__` means nothing reaches it transitively.
+
+  Measured end to end on evaluator-cog, both strips applied: **15.3 MB
+  zipped, 42 MB unzipped**, against limits of 50 MB and 250 MB.
 
   A `[google]` extra on common-utils is the right end state and the wrong
   move now: `google-api-python-client` is an unconditional dependency, so

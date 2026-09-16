@@ -33,8 +33,8 @@ output "deploy_role_arn" {
 }
 
 output "producer_user_name" {
-  description = "Mint its access key by hand and put it in Doppler — see producer.tf."
-  value       = aws_iam_user.producer.name
+  description = "Mint its access key by hand and put it in Doppler — see producer.tf. Empty on a cog that does not own the API's identity."
+  value       = one(aws_iam_user.producer[*].name)
 }
 
 output "alerts_topic_arn" {
