@@ -116,10 +116,16 @@ and a wrong answer costs one cog to unwind rather than four.
 What does **not** fit in a slice is the final step. Prefect cannot be retired
 until the last cog is off it, so that stays terminal.
 
-**Order:** evaluator-cog first (it is nearly there), then deejay-cog — its
+**Order:** evaluator-cog first (done), then deejay-cog — its
 `deejay_router(mode)` is already `handler(event)` and `DeejayMode` is already
-the message schema — then transcription-cog and wiki-curator-cog. watcher-cog is
-not in the list; it is replaced rather than converted.
+the message schema — then transcription-cog and wiki-curator-cog.
+
+watcher-cog is not in that list because it is replaced rather than converted,
+but one piece of it comes first: its trigger stops being
+`create_flow_run` and becomes a POST to the API, which is what gives the
+three downstream cogs a producer at all. That is a single call site, and it
+takes Prefect out of watcher-cog as a side effect. Its Drive polling is
+replaced later and blocks nothing.
 
 ---
 
@@ -254,12 +260,30 @@ or a console view can read it without parsing the body.
 because the evaluator's unit of work is "a repository" and the fleet is a
 list of them. A transcription job has no equivalent.
 
-**deejay-cog, transcription-cog and wiki-curator-cog have no producer until
-watcher-cog is replaced.** Their trigger today is watcher calling
-`create_flow_run` with a pinned mode. See "Retiring watcher-cog" — the
-Drive webhook lands on the API, which enqueues to the right cog's queue.
-That work is a **prerequisite for the first of those three**, not a
-parallel track.
+**watcher-cog calls the API in the middle step.** Their trigger today is
+watcher calling `create_flow_run` with a pinned mode, and the replacement
+for that is one HTTP POST — not the whole Drive-push rebuild.
+
+`prefect_trigger.fire(deployment_id, parameters=…)` becomes a POST to the
+API, which enqueues onto the named cog's queue. `deployment_id` was
+already a per-folder constant and `parameters` was already the payload, so
+the static map in watcher's `config.py` is the routing table more or less
+as it stands.
+
+Two things fall out, and the second is the reason to do this first:
+
+- The three cogs get a producer without waiting for anything.
+- **`prefect_trigger.py` is watcher-cog's only use of Prefect.** It serves
+  no deployments — it is a Drive poller with one `get_client()` call.
+  Replacing that module drops `prefect` from its `pyproject.toml`
+  entirely, ~70 transitive packages with it, and removes a whole cog from
+  the Prefect retirement without rewriting it.
+
+Watcher keeps polling Drive from a resident container after this, and
+keeps costing what a resident container costs. That is what "Retiring
+watcher-cog" finishes, and it is a separate piece of work with its own
+prerequisites — a WAF rule, persistent page-token state, a renewal job —
+none of which block a cog conversion.
 
 ### 1. Convert the consumer
 
@@ -383,8 +407,20 @@ deploy pipeline are its own.
 
 ## Retiring watcher-cog
 
-watcher-cog is **replaced, not converted**. It does two jobs that were bundled
-together, and only one of them is Prefect's:
+watcher-cog is **replaced, not converted** — but in two stages, and only the
+second is this section.
+
+**Stage one, which belongs with the first cog conversion:** swap
+`prefect_trigger.fire()` for a POST to the API. See step 0 of the per-cog
+slice. That gives the three downstream cogs a producer and takes Prefect
+out of watcher-cog altogether, while leaving its Drive polling exactly as
+it is.
+
+**Stage two is the rest of this section:** replacing that polling, which is
+what stops the resident container.
+
+It does two jobs that were bundled together, and only one of them is
+Prefect's:
 
 - **Noticing a Drive folder changed.** Four infinite loops, one per folder.
   Nothing about SQS replaces this.
