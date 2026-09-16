@@ -455,3 +455,95 @@ def test_a_malformed_grouping_is_refused_not_guessed_at(payload, why) -> None:
     like a clean run."""
     with pytest.raises(q.UnprocessableMessage, match=why):
         q.process_message(_body(repo="watcher-cog", run_id="r-1", **payload))
+
+
+# ── what a suppressed finding means ──────────────────────────────────────
+
+
+def _run_with_tally(*, attempted: int, duplicates: int, details=("CD-021 …",)):
+    """Drive one repository message with a pre-loaded delivery tally."""
+
+    def _handler(event, *, log, ctx):
+        ctx.tally.attempted = attempted
+        ctx.tally.posted = attempted - duplicates
+        ctx.tally.duplicates = duplicates
+        ctx.tally.duplicate_details.extend(details)
+        return _evaluated()
+
+    captured = {}
+
+    def _send(self, *, notable=False, **kw):
+        captured["severity"] = self.severity
+        captured["text"] = self.text()
+        return None
+
+    with (
+        patch.object(q, "handler", _handler),
+        patch.object(q, "_assert_findings_were_delivered"),
+        patch.object(q, "_get_standards_version", return_value="7.0.0"),
+        patch("mini_app_polis.pipeline_status.RunReport.send", _send),
+    ):
+        q.process_message(_body())
+
+    return captured
+
+
+@pytest.mark.parametrize("duplicates", [7, 2])
+def test_suppressed_findings_never_raise_the_run(duplicates) -> None:
+    """Both sources of these are ordinary.
+
+    All seven means the job had already been done under this run id — a
+    redelivered message, or the release workflow's retry landing twice.
+    At-least-once delivery working as designed.
+
+    Two of seven means one repository failed a rule the same way twice —
+    CD-026 emits one finding per offending job, and identical text is one
+    thing to fix rather than two. Collapsing them is the point of the
+    fingerprint.
+
+    An earlier version raised the second case to WARN on the theory that
+    it meant a rule misbehaving. It does not, and the only thing the
+    severity bought was a channel full of warnings about deduplication
+    working.
+    """
+    report = _run_with_tally(attempted=7, duplicates=duplicates)
+
+    assert report["severity"] == "SUCCESS"
+
+
+def test_suppressed_findings_are_counted_and_not_named() -> None:
+    """RunReport renders examples only for flagged reasons, deliberately —
+    "naming every already-processed file is how the interesting line ends
+    up below the fold". The rule ids live in the consumer's log instead."""
+    report = _run_with_tally(
+        attempted=7, duplicates=2, details=("CD-021 for api was already stored",)
+    )
+
+    assert "CD-021" not in report["text"]
+
+
+# ── the report is titled like the rows it describes ──────────────────────
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [("deterministic", "deterministic-conformance"), ("llm", "conformance-check")],
+)
+def test_the_run_report_is_filed_under_the_findings_flow_name(mode, expected) -> None:
+    """It was hardcoded to the llm name, so a deterministic run announced
+    itself as conformance-check while writing rows under
+    deterministic-conformance."""
+    seen = {}
+
+    def _handler(event, *, log, ctx):
+        seen["flow_name"] = ctx.report.flow_name
+        return _evaluated()
+
+    with (
+        patch.object(q, "handler", _handler),
+        patch.object(q, "_assert_findings_were_delivered"),
+        patch.object(q, "_get_standards_version", return_value="7.0.0"),
+    ):
+        q.process_message(_body(repo="watcher-cog", ref="main", mode=mode))
+
+    assert seen["flow_name"] == expected
