@@ -1,3 +1,15 @@
+# [3.38.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.37.0...v3.38.0) (2026-09-16)
+
+
+### Bug Fixes
+
+* **infra:** pin worker_consumes_queue so an apply cannot disable the mappin ([99b1125](https://github.com/mini-app-polis/evaluator-cog/commit/99b11250eb734d3fc0891b4652028b664adf17f9))
+
+
+### Features
+
+* **evaluations:** delete the Railway consumer, strip the Google stack from the Lambda package ([920a96d](https://github.com/mini-app-polis/evaluator-cog/commit/920a96da9e6a8b77720e3d2ecbaba6759b739a3a))
+
 # [3.37.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.36.1...v3.37.0) (2026-09-16)
 
 
