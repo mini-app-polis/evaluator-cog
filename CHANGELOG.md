@@ -1,3 +1,10 @@
+## [3.38.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.38.0...v3.38.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* updating CD-020 and CD-021 drift from migration ([7147b56](https://github.com/mini-app-polis/evaluator-cog/commit/7147b56a2c9cc021b68d07a883eacd60676bc478))
+
 # [3.38.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.37.0...v3.38.0) (2026-09-16)
 
 
