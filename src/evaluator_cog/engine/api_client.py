@@ -21,6 +21,8 @@ from typing import Any
 from mini_app_polis import logger as logger_mod
 from mini_app_polis.api import KaianoApiClient as CommonPythonApiClient
 
+from evaluator_cog import __version__ as _EVALUATOR_VERSION
+
 log = logger_mod.get_logger()
 
 
@@ -150,6 +152,10 @@ def post_findings(
             "finding": finding_text,
             "suggestion": f.get("suggestion") or None,
             "standards_version": standards_version,
+            # Which build wrote this. run_id cannot say: a fleet pass's id
+            # is minted by the API before any job reaches an evaluator, and
+            # standards_version names the catalog, not the code applying it.
+            "evaluator_version": _EVALUATOR_VERSION,
             "source": source,
             "violation_id": violation_id,
         }

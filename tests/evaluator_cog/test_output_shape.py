@@ -143,6 +143,9 @@ def test_post_payload_contains_all_required_contract_fields(monkeypatch) -> None
     assert payload["run_id"] == "conformance-3.0.1-test-uuid"
     assert payload["source"] == "conformance_llm"
     assert payload["standards_version"] == "3.0.1"
+    from evaluator_cog import __version__
+
+    assert payload["evaluator_version"] == __version__
     assert isinstance(payload["finding"], str)
     assert len(payload["finding"]) > 0
     assert "violation_id" in payload
