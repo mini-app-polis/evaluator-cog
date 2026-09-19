@@ -1,6 +1,6 @@
-"""Container and platform-descriptor rule checks (CD-017, CD-021..CD-024).
+"""Container and platform-descriptor rule checks (CD-017, CD-022..CD-024).
 
-These five rules all ask the same underlying question from different
+These rules all ask the same underlying question from different
 angles: *is this service's runtime defined in version control, or is it
 defined by whatever the deployment dashboard happens to hold today?* A
 ``railway.json`` that omits ``startCommand``, a ``Dockerfile`` the
@@ -18,11 +18,10 @@ it from three rules at once would triple the noise and obscure which
 rule is actually open. A repo with no Dockerfile should show exactly one
 container finding, not three.
 
-*CD-021 is a `gap`, not a requirement.* It is checkable so that the
-fleet-wide count of services without an explicit runtime image can be
-measured, and it emits a finding when one is absent because that finding
-*is* the measurement. Its severity is WARN and its wording records an
-observed gap rather than asserting a failure.
+*CD-021 has no check.* It is a `gap` scoped to no repo type while no
+service carries a Dockerfile: with the gap universal, a check could only
+restate it once per service per run. Its check_notes in the catalog
+record what to restore when the first image definition appears.
 """
 
 from __future__ import annotations
@@ -360,92 +359,6 @@ def check_cd_017(
     return findings
 
 
-def check_cd_021(repo_path: Path, monorepo_path: Path | None = None) -> list[Finding]:
-    """CD-021: deployable services define their runtime image explicitly.
-
-    This rule is catalogued as a ``gap``, not a requirement, and the
-    distinction changes what the check is for. It is not asserting that
-    every service must have a Dockerfile today; it exists so the number
-    of services still relying on platform build auto-detection can be
-    counted. The finding it emits *is* that measurement, which is why
-    the severity is WARN and the wording records an observed state
-    rather than pronouncing a failure.
-
-    Passing requires two things together. A ``Dockerfile`` must exist at
-    the repository root, *and* the platform descriptor must actually
-    select the dockerfile builder — either by setting ``build.builder``
-    to ``DOCKERFILE`` or by naming a ``dockerfilePath``. A Dockerfile
-    the platform never reads is not a runtime definition; the image that
-    actually ships still comes from auto-detection, and the committed
-    file is documentation at best.
-    """
-    CHECK_ID = "CD-021"
-    findings: list[Finding] = []
-
-    dockerfile = repo_path / "Dockerfile"
-    has_dockerfile = dockerfile.is_file()
-    if not has_dockerfile and monorepo_path is not None:
-        has_dockerfile = (monorepo_path / "Dockerfile").is_file()
-
-    descriptor, data, _error = _load_platform_descriptor(repo_path)
-    if descriptor is None and monorepo_path is not None:
-        # Same reason as CD-024: the image definition governing a
-        # monorepo service can live at the repo root, and "no descriptor"
-        # is not true of the service just because it is not beside it.
-        descriptor, data, _error = _load_platform_descriptor(monorepo_path)
-    builder_selected = False
-    if data is not None:
-        build = data.get("build")
-        if isinstance(build, dict):
-            builder = build.get("builder")
-            if isinstance(builder, str) and builder.strip().upper() == "DOCKERFILE":
-                builder_selected = True
-            dockerfile_path = build.get("dockerfilePath")
-            if isinstance(dockerfile_path, str) and dockerfile_path.strip():
-                builder_selected = True
-
-    if has_dockerfile and builder_selected:
-        return findings
-
-    if not has_dockerfile and descriptor is None:
-        observed = (
-            "no Dockerfile at the repository root and no railway.json / "
-            "railway.toml descriptor"
-        )
-    elif not has_dockerfile:
-        observed = (
-            f"no Dockerfile at the repository root (descriptor "
-            f"{_rel(descriptor, repo_path)} present)"
-            if descriptor is not None
-            else "no Dockerfile at the repository root"
-        )
-    elif descriptor is None:
-        observed = (
-            "a Dockerfile is present but there is no railway.json / "
-            "railway.toml to select the dockerfile builder"
-        )
-    else:
-        observed = (
-            f"a Dockerfile is present but {_rel(descriptor, repo_path)} does not "
-            f"select the dockerfile builder, so the platform still "
-            f"auto-detects the build"
-        )
-
-    findings.append(
-        _finding(
-            CHECK_ID,
-            "WARN",
-            _DIMENSION,
-            f"Runtime image gap recorded: {observed}. The image this service "
-            f"actually runs is therefore not defined in version control.",
-            "Add a Dockerfile at the repository root and set build.builder to "
-            '"DOCKERFILE" (or name a build.dockerfilePath) in railway.json so '
-            "the platform builds from the committed image definition.",
-        )
-    )
-    return findings
-
-
 def check_cd_022(repo_path: Path) -> list[Finding]:
     """CD-022: base images are pinned by digest, not by tag.
 
@@ -460,7 +373,7 @@ def check_cd_022(repo_path: Path) -> list[Finding]:
     *Absent Dockerfile means no subject.* Condition (1) returns ``[]``
     with no finding at all. A repository without an image definition has
     a CD-021 gap, not a CD-022 violation, and emitting one here would
-    make the CD-021 measurement harder to read rather than easier.
+    report that gap under the wrong rule.
 
     *Every unpinned FROM is reported with its line number.* The common
     real case is a multi-stage build that pins the builder stage and

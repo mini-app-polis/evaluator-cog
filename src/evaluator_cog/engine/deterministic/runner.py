@@ -44,7 +44,6 @@ from evaluator_cog.engine.deterministic.config import (
 )
 from evaluator_cog.engine.deterministic.containers import (
     check_cd_017,
-    check_cd_021,
     check_cd_022,
     check_cd_023,
     check_cd_024,
@@ -857,8 +856,8 @@ def run_all_checks(
 
     # cd_readiness — container and platform-descriptor rules.
     # CD-022 and CD-023 skip silently where no Dockerfile exists; the
-    # absence of an image definition is CD-021's finding, and reporting
-    # it from three rules would obscure which one is actually open.
+    # absence of an image definition is CD-021's gap, which has no check
+    # while no service carries a Dockerfile (see its catalog check_notes).
     def _cd_017_check(p: Path) -> list[Finding]:
         # The descriptor sits beside the service in a monorepo, so the
         # service's own directory is searched first and the repo root is
@@ -867,7 +866,6 @@ def run_all_checks(
         return check_cd_017(p, monorepo_path=monorepo_root)
 
     _run(_cd_017_check, "CD-017")
-    _run(lambda p: check_cd_021(p, monorepo_path=monorepo_root), "CD-021")
     _run(check_cd_022, "CD-022")
     _run(check_cd_023, "CD-023")
     _run(lambda p: check_cd_024(p, monorepo_path=monorepo_root), "CD-024")

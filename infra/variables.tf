@@ -148,52 +148,6 @@ variable "create_github_oidc_provider" {
   default     = true
 }
 
-variable "stub_fail" {
-  description = <<-DESC
-    Makes the stub raise on every invocation, so a message is retried
-    max_receive_count times and then lands in the dead-letter queue.
-    Foundation ticket step 6: a DLQ nobody has watched a message enter is
-    not yet a DLQ.
-
-    A variable rather than a console or CLI edit because a Lambda's
-    environment is a single map — setting one value with
-    update-function-configuration replaces the whole thing, and putting the
-    others back means typing secrets on a command line. Flip this, watch
-    the DLQ, flip it back.
-  DESC
-  type        = bool
-  default     = false
-}
-
-variable "worker_consumes_queue" {
-  description = <<-DESC
-    Whether the Lambda is attached to the queue as a consumer.
-
-    True for evaluator-cog since the cutover. It defaults to false because
-    that is the safe state for a cog whose worker is still the stub, and
-    the reason is worth keeping: SQS delivers a message to exactly one
-    consumer. A stub that logs its event, probes the API and returns
-    success is a competing consumer against whatever does the real work,
-    and it wins nearly every race because Lambda's pollers are more
-    aggressive than a container's long poll. The symptom is an empty queue,
-    an empty dead-letter queue, and no evaluation — a job consumed and
-    discarded, which looks identical to one that was never enqueued. That
-    cost five real evaluations before anyone noticed.
-
-    Flip it true in the same change that stops the cog's container
-    consumer. Never have both running.
-
-    **Pin it in terraform.tfvars once a cog has cut over.** The default is
-    false, so an apply that forgets `-var worker_consumes_queue=true`
-    disables the mapping — and nothing raises, because a queue with no
-    consumer is not an error. Jobs accumulate, releases look fine, and the
-    first sign is somebody noticing evaluations stopped. That happened on
-    the apply that added the concurrency ceiling.
-  DESC
-  type        = bool
-  default     = false
-}
-
 variable "max_concurrency" {
   description = <<-DESC
     How many workers the queue may run at once.
@@ -222,4 +176,22 @@ variable "max_concurrency" {
     condition     = var.max_concurrency >= 2
     error_message = "SQS event source mappings require maximum_concurrency >= 2."
   }
+}
+
+variable "create_api_producer" {
+  description = <<-DESC
+    Whether this state owns the API's sending identity.
+
+    True for the first cog, false for every one after — the same shape as
+    create_github_oidc_provider, and for the same reason. There is one
+    api-kaianolevine-com, so there should be one IAM user for it, holding
+    one access key. A producer per cog means the API carries five
+    credentials, five Doppler entries and five client configurations by
+    the fifth cog, all saying the same thing.
+
+    Its policy is a wildcard over `*-jobs`, so a new cog's queue is covered
+    the moment it exists without a cross-state reference back to here.
+  DESC
+  type        = bool
+  default     = true
 }

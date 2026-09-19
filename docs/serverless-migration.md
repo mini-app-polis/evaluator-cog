@@ -116,10 +116,16 @@ and a wrong answer costs one cog to unwind rather than four.
 What does **not** fit in a slice is the final step. Prefect cannot be retired
 until the last cog is off it, so that stays terminal.
 
-**Order:** evaluator-cog first (it is nearly there), then deejay-cog — its
+**Order:** evaluator-cog first (done), then deejay-cog — its
 `deejay_router(mode)` is already `handler(event)` and `DeejayMode` is already
-the message schema — then transcription-cog and wiki-curator-cog. watcher-cog is
-not in the list; it is replaced rather than converted.
+the message schema — then transcription-cog and wiki-curator-cog.
+
+watcher-cog is not in that list because it is replaced rather than converted,
+but one piece of it comes first: its trigger stops being
+`create_flow_run` and becomes a POST to the API, which is what gives the
+three downstream cogs a producer at all. That is a single call site, and it
+takes Prefect out of watcher-cog as a side effect. Its Drive polling is
+replaced later and blocks nothing.
 
 ---
 
@@ -213,11 +219,95 @@ an older lock the assignment is a silent no-op, which is how it was first missed
 
 Each cog does all of this before the next one starts.
 
+### 0. Build the producer, in api-kaianolevine-com
+
+**Every producer goes through the API.** No cog enqueues for another cog,
+and nothing else holds a key. The API is the single sending identity for
+the fleet, which is why `create_api_producer` exists (below) and why its
+policy is a wildcard over `*-jobs`.
+
+This step is first, and the ordering is not stylistic. Convert a consumer
+before something sends to its queue and the cog goes silent: watcher-cog is
+still calling `create_flow_run` at a `prefect.serve()` that no longer
+listens, nothing errors, and the work simply stops happening. The producer
+must exist **before** the cutover, mirroring the rule on the other side.
+
+What to build, per cog:
+
+- A dispatch function in `services/`, alongside `evaluation_dispatch.py`.
+  It is the same shape every time: build the message, `asyncio.to_thread`
+  the blocking boto3 call, insist on a `MessageId`, and report to the
+  errors channel if it did not land.
+- The queue URL as a setting. One per cog — `<COG>_QUEUE_URL`.
+- The route or webhook that calls it.
+
+**The message envelope is fixed and both sides must agree:**
+
+```json
+{"type": "<cog>.<what>", "version": 1, "payload": { ... }}
+```
+
+`MESSAGE_VERSION` is checked by the consumer, which refuses a version it
+does not speak rather than misreading it — that is what makes a
+producer/consumer redeploy safe. The `type` discriminator is a
+producer-bug detector, not a router: one queue per cog means an
+unrecognised type is something enqueued wrongly, not another cog's
+traffic. `MessageAttributes` carries the type as well, so a metric filter
+or a console view can read it without parsing the body.
+
+**What is evaluator-specific and does not generalise:** `fleet_registry`,
+`dispatch_fleet`, the introspection endpoint and the fan-out. Those exist
+because the evaluator's unit of work is "a repository" and the fleet is a
+list of them. A transcription job has no equivalent.
+
+**watcher-cog calls the API in the middle step.** Their trigger today is
+watcher calling `create_flow_run` with a pinned mode, and the replacement
+for that is one HTTP POST — not the whole Drive-push rebuild.
+
+`prefect_trigger.fire(deployment_id, parameters=…)` becomes a POST to the
+API, which enqueues onto the named cog's queue. `deployment_id` was
+already a per-folder constant and `parameters` was already the payload, so
+the static map in watcher's `config.py` is the routing table more or less
+as it stands.
+
+Two things fall out, and the second is the reason to do this first:
+
+- The three cogs get a producer without waiting for anything.
+- **`prefect_trigger.py` is watcher-cog's only use of Prefect.** It serves
+  no deployments — it is a Drive poller with one `get_client()` call.
+  Replacing that module drops `prefect` from its `pyproject.toml`
+  entirely, ~70 transitive packages with it, and removes a whole cog from
+  the Prefect retirement without rewriting it.
+
+Watcher keeps polling Drive from a resident container after this, and
+keeps costing what a resident container costs. That is what "Retiring
+watcher-cog" finishes, and it is a separate piece of work with its own
+prerequisites — a WAF rule, persistent page-token state, a renewal job —
+none of which block a cog conversion.
+
 ### 1. Convert the consumer
 
 Replace `prefect.serve()` with a queue consumer so the process stops asking
 whether there is work. The message is not deleted until the work is done — that
 single rule is what the queue buys.
+
+**Three `RunReport` traps, all of which cost time on the first cog.** They are
+in Constraints too; they are here because this is where they bite.
+
+- **Set `report.run_id` explicitly.** `get_run_id()` resolves the Prefect flow
+  run id and falls back to `"local-run"` — and with Prefect gone it always
+  falls back, so every run report is unattributable. Nothing raises. It was
+  found by reading a Discord message that said `run local-run` next to fifteen
+  that said otherwise.
+- **`send()` is once per instance.** The second call returns
+  `DeliveryReport(suppressed=1)`, so whichever caller sends first spends it.
+  That makes *placement* load-bearing: a report built inside the per-item
+  handler is one per item, and a job that also has its own summary loses it.
+  Put the per-job report in the adapter's message branch, not in the handler.
+- **Counter keys are keyword arguments.** `send()` ends with
+  `**self.counters`, so `count("repo", …)` collides with `post_run_finding`'s
+  own `repo` parameter and is a `TypeError` at send time — on a path a green
+  test suite never walks.
 
 Two of Prefect's jobs must be **replaced, not dropped**:
 
@@ -236,11 +326,29 @@ Copy `infra/` and set `name_prefix`. Two things to get right:
 - **`create_github_oidc_provider = false` for every cog after the first.** There
   is one OIDC provider per account; a second `terraform apply` fails on a
   resource that already exists.
-- **`worker_consumes_queue` stays `false` until the cutover.** The stub Lambda
-  and a Railway consumer on one queue is two consumers, and the stub wins — it
-  logs, probes the API, returns success, and SQS deletes the message. Queue
-  empty, DLQ empty, no evaluation, and it looks exactly like a job that was
-  never enqueued. This ate five real evaluations before anyone noticed.
+- **`create_api_producer = false` for every cog after the first.** There is
+  one API, so there should be one IAM user for it holding one access key.
+  Its policy is a wildcard over `*-jobs`, so a new cog's queue is covered
+  the moment it exists — no cross-state reference, and nothing to remember
+  to widen. Leave it default-true and by the fifth cog the API carries five
+  credentials, five Doppler entries and five client configurations all
+  saying the same thing.
+- **There is no stub worker and no flag that disables the consumer.** Both
+  existed, and both are gone. evaluator-cog stood its Lambda up beside a
+  Railway container that was already reading the same queue, so it needed a
+  stub to prove the wiring and a `worker_consumes_queue` toggle to keep the
+  stub from racing the container. The stub won those races — it logged,
+  probed the API, returned success, and SQS deleted the message. Queue
+  empty, DLQ empty, no evaluation, indistinguishable from a job never
+  enqueued. Five real evaluations went that way.
+
+  No cog after this one has that problem. They move from Prefect to SQS, so
+  the queue is created with exactly one reader and never has another, and
+  there is nothing for a stub to prove that this cog has not already
+  proven — see "Settled, and no longer a risk". The function is created
+  holding a placeholder that cannot import, so an invocation before the
+  first deploy dead-letters instead of succeeding, and the mapping is
+  simply on.
 
 Doppler names must be distinct per cog. The fleet shares one secrets store, so
 `AWS_ACCESS_KEY_ID` in two services is a collision; use
@@ -259,18 +367,21 @@ can `SendMessage` on its own queue can enqueue its own work and loop.
   and who deletes it afterwards" — but nothing calls it from a `lambda_handler`
   yet. The event source mapping is already configured with
   `ReportBatchItemFailures`, so the entrypoint must return that shape.
-- **A zip, not a container image.** Measured after dropping `prefect`: 25.8 MB
-  zipped against a 50 MB limit, 136 MB unzipped against 250 MB. An earlier draft
-  asserted the tree was past the zip limit; it is not. Skipping ECR removes a
-  registry, a build-and-push step and an entire class of "which image is
-  actually deployed" confusion.
-- **Exclude boto3 from the zip** — 41.5 MB with it, 25.8 without, against 50.
-  The runtime provides it.
+- **A zip, not a container image.** An earlier draft asserted the tree was past
+  the 50 MB direct-upload limit; it is not, and was not even before the strips
+  below. Skipping ECR removes a registry, a build-and-push step and an entire
+  class of "which image is actually deployed" confusion.
+- **Exclude boto3 from the zip.** The runtime provides it, and bundling a copy
+  that is then shadowed spends most of the headroom: 41.5 MB with it against a
+  50 MB limit.
 - **Strip the Google stack from the zip, not from common-utils.** Measured on
   the real package: 150 MB unzipped and 28.4 MB zipped with it, 42 MB and
   15.3 MB without. evaluator-cog imports none of it — no
   `mini_app_polis.google`, no `GoogleAPI`, no `googleapiclient` — and the
   library's lazy `__init__` means nothing reaches it transitively.
+
+  Measured end to end on evaluator-cog, both strips applied: **15.3 MB
+  zipped, 42 MB unzipped**, against limits of 50 MB and 250 MB.
 
   A `[google]` extra on common-utils is the right end state and the wrong
   move now: `google-api-python-client` is an unconditional dependency, so
@@ -288,9 +399,12 @@ can `SendMessage` on its own queue can enqueue its own work and loop.
   owns the function's configuration and CI owns only its code. Note
   `lambda:GetFunctionConfiguration` is a **separate IAM action** from
   `GetFunction`, and `aws lambda wait function-updated` polls the former.
-- **Flip `worker_consumes_queue` to true and stop the Railway consumer in the
-  same change.** Two consumers is never a valid intermediate state — it is a
-  cutover, not an overlap.
+- **Retire the old trigger in the same change that points the new one at the
+  API.** For these cogs the queue's consumer is never in question; what
+  overlaps is the *trigger*, a Prefect schedule or a watcher call still
+  firing while the API also enqueues. That duplicates work rather than
+  losing it, which is the mild version — but it is still a cutover, not an
+  overlap. Prefer a gap: stopping the old path first only delays events.
 - Timeout above the slowest observed job with headroom: one repository is ~13s,
   a 16-repo fleet pass is ~46s. Currently 300s, which means a poison message
   takes ~17 minutes to reach the DLQ — shorten it if failures should escalate
@@ -307,8 +421,20 @@ deploy pipeline are its own.
 
 ## Retiring watcher-cog
 
-watcher-cog is **replaced, not converted**. It does two jobs that were bundled
-together, and only one of them is Prefect's:
+watcher-cog is **replaced, not converted** — but in two stages, and only the
+second is this section.
+
+**Stage one, which belongs with the first cog conversion:** swap
+`prefect_trigger.fire()` for a POST to the API. See step 0 of the per-cog
+slice. That gives the three downstream cogs a producer and takes Prefect
+out of watcher-cog altogether, while leaving its Drive polling exactly as
+it is.
+
+**Stage two is the rest of this section:** replacing that polling, which is
+what stops the resident container.
+
+It does two jobs that were bundled together, and only one of them is
+Prefect's:
 
 - **Noticing a Drive folder changed.** Four infinite loops, one per folder.
   Nothing about SQS replaces this.
@@ -345,7 +471,8 @@ queue**. Constraints, confirmed against Google's documentation:
 Cloudflare does not challenge *AWS* egress — that was measured. Google's webhook
 senders are a different source range and have not been tested. A challenge page
 is a non-2xx, Drive reads that as failed delivery, and the symptom is a folder
-that silently stops triggering. Same shape as the stub-Lambda bug.
+that silently stops triggering — a failure that looks like nothing
+happening, which is the shape worth fearing.
 
 ---
 
@@ -518,12 +645,15 @@ nothing Prefect offers has a subject. This is cleanup, not a decision.
   first spends it. This is why the per-repository outcome report lives in the
   consumer's message branch and not in `handler()`, which a fleet pass also
   calls.
-- **`worker_consumes_queue` must be pinned in `terraform.tfvars`, not passed
-  on the command line.** It defaults to false, so any apply that forgets the
-  flag disables the mapping. Nothing raises — a queue with no consumer is
-  not an error — so jobs accumulate, releases stay green, and the first sign
-  is somebody noticing evaluations stopped. It happened on the apply that
-  added the concurrency ceiling, hours after the cutover.
+- **A false-by-default flag on a live path is a loaded gun.**
+  `worker_consumes_queue` defaulted to false and was passed with `-var`; an
+  apply that forgot it disabled the mapping. Nothing raised — a queue with
+  no consumer is not an error — so jobs accumulated, releases stayed green,
+  and the first sign was somebody noticing evaluations had stopped. It
+  happened on the apply that added the concurrency ceiling, hours after the
+  cutover. Pinning it in `terraform.tfvars` fixed the immediate hazard; the
+  variable has since been deleted, which fixes it properly. When a switch
+  has exactly one correct setting, it should not be a switch.
 - **A build-time strip is not a dependency.** The Lambda zip drops the Google
   stack because nothing imports it. That stays true only while it stays true,
   which is why the deploy build imports every module before uploading. An
@@ -533,12 +663,16 @@ nothing Prefect offers has a subject. This is cleanup, not a decision.
 
 ### Settled, and no longer a risk
 
-- **Cloudflare does not challenge AWS egress.** The stub Lambda's probe got 200
+Each of these is a property of the account, the network or this Terraform —
+all shared. A later cog inherits them and does not re-measure them.
+
+- **Cloudflare does not challenge AWS egress.** A probe from Lambda got 200
   and JSON from `api.kaianolevine.com`, not a challenge page. No WAF rule is
   needed *for AWS*. This was the constraint flagged as most likely to bite.
   Google's Drive webhook range is a separate question and is not covered by this
   measurement — see "Retiring watcher-cog".
 - **The zip limit is not a problem.** 25.8 MB against 50. An earlier draft
   asserted otherwise.
-- **The DLQ works.** Watched end to end with `stub_fail`, three receives, ~17
-  minutes.
+- **The DLQ works.** Watched end to end with a deliberately failing
+  function: three receives, ~17 minutes, then the message in the DLQ and the
+  `evaluator-dlq-not-empty` alarm firing.

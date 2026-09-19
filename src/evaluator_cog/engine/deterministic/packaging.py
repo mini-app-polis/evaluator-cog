@@ -5,9 +5,10 @@ what actually runs or ships. CD-016 is about the process the platform
 starts: a Prefect ``serve()`` loop that registers deployments at boot and
 dies silently when Prefect Cloud is briefly unreachable, unless it is
 wrapped in the shared ``serve_with_retry`` helper. CD-020 is about the
-lockfile: a release that bumps the version in ``pyproject.toml`` without
-relocking leaves ``uv.lock`` naming the previous version, and every
-subsequent install resolves against a stale graph.
+lockfile: a ``uv.lock`` that records the project's own version goes stale
+the moment a release bumps it, and every subsequent install resolves
+against a graph nobody released. The file-sourced version scheme (PY-017)
+keeps the version out of the lock, so a release never touches it.
 
 Neither check raises. Every file read, parse and subprocess call is
 guarded, and an unreadable or unparseable input degrades to "cannot
@@ -680,113 +681,99 @@ def _locked_version(repo_path: Path, package_name: str) -> str:
     return "unknown"
 
 
-def _releaserc_plugin_config(data: Any, plugin: str) -> tuple[bool, dict[str, Any]]:
-    """(present, config) for one semantic-release plugin.
+def _project_lock_entry(
+    lock_data: dict[str, Any], project_name: str
+) -> dict[str, Any] | None:
+    """The ``[[package]]`` entry ``uv.lock`` holds for the project itself.
 
-    Plugins appear either as a bare string or as a ``[name, config]``
-    pair, and only the pair form carries the settings this rule reads.
+    Matched on the PEP 503 name *and* a source that is the project
+    directory, so a dependency that happens to share the name is never
+    mistaken for the root.
     """
-    if not isinstance(data, dict):
-        return False, {}
-    plugins = data.get("plugins")
-    if not isinstance(plugins, list):
-        return False, {}
-    for entry in plugins:
-        if isinstance(entry, str) and entry == plugin:
-            return True, {}
-        if isinstance(entry, list) and entry and entry[0] == plugin:
-            config = entry[1] if len(entry) > 1 and isinstance(entry[1], dict) else {}
-            return True, config
-    return False, {}
+    packages = lock_data.get("package")
+    if not isinstance(packages, list):
+        return None
+    wanted = _canonical_name(project_name)
+    for entry in packages:
+        if not isinstance(entry, dict):
+            continue
+        if _canonical_name(str(entry.get("name", ""))) != wanted:
+            continue
+        source = entry.get("source")
+        if isinstance(source, dict) and "." in (
+            source.get("editable"),
+            source.get("virtual"),
+        ):
+            return entry
+    return None
 
 
-def _check_release_relocks(repo_path: Path) -> list[Finding]:
-    """CD-020 (1): the release pipeline relocks *and* commits the lockfile."""
-    findings: list[Finding] = []
-    releaserc = repo_path / ".releaserc.json"
-    remediation = (
-        'Add "uv lock" to the @semantic-release/exec prepareCmd (after the '
-        'version bump) and add "uv.lock" to the @semantic-release/git assets '
-        "array, so each release relocks and commits the lockfile together."
-    )
+def _check_lock_omits_project_version(
+    repo_path: Path, data: dict[str, Any] | None
+) -> list[Finding]:
+    """CD-020 (1): a release cannot stale the lock.
 
-    if not releaserc.is_file():
-        findings.append(
-            _finding(
-                "CD-020",
-                "ERROR",
-                _DIMENSION,
-                (
-                    ".releaserc.json is absent, so the release cannot relock "
-                    "the project or commit uv.lock; every version bump will "
-                    "leave the lockfile naming the previous version."
-                ),
-                remediation,
-            )
+    Under the file-sourced version scheme (PY-017) ``[project]`` declares
+    ``dynamic = ["version"]``, uv records no version for the project
+    itself, and a release writes the version file without touching
+    ``uv.lock``. A lock whose root entry *does* carry a version goes a
+    version behind the moment a release succeeds.
+
+    ``.releaserc.json`` is deliberately not read. This clause used to
+    require the release to relock and commit ``uv.lock`` — the exact
+    mechanism PY-017 removed — which failed every conforming repository.
+    PY-017 owns the release config; this reads the lock.
+    """
+    project = data.get("project") if isinstance(data, dict) else None
+    if not isinstance(project, dict):
+        return []
+    name = project.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return []
+
+    lock_data, _ = _load_toml(repo_path / "uv.lock")
+    if not isinstance(lock_data, dict):
+        return []
+    entry = _project_lock_entry(lock_data, name)
+    if entry is None:
+        # No root entry is clause (2)'s concern, not this one's.
+        return []
+    locked = entry.get("version")
+    if not isinstance(locked, str) or not locked.strip():
+        return []
+
+    static = project.get("version")
+    dynamic = project.get("dynamic")
+    if isinstance(static, str) and static.strip():
+        declared = f'pyproject.toml declares a static version = "{static}"'
+    elif isinstance(dynamic, list) and "version" in dynamic:
+        declared = (
+            'pyproject.toml declares dynamic = ["version"], so the entry '
+            "predates the switch and the lock was never regenerated"
         )
-        return findings
+    else:
+        declared = "pyproject.toml declares no version source"
 
-    data, error = _load_json(releaserc)
-    if data is None:
-        findings.append(
-            _finding(
-                "CD-020",
-                "ERROR",
-                _DIMENSION,
-                (
-                    f".releaserc.json does not parse as JSON ({error}), so the "
-                    f"relock step and the uv.lock release asset cannot be "
-                    f"confirmed."
-                ),
-                remediation,
-            )
-        )
-        return findings
-
-    _, exec_config = _releaserc_plugin_config(data, "@semantic-release/exec")
-    prepare_cmd = exec_config.get("prepareCmd")
-    prepare_cmd = prepare_cmd if isinstance(prepare_cmd, str) else ""
-    relocks = bool(re.search(r"\buv\s+lock\b", prepare_cmd))
-
-    _, git_config = _releaserc_plugin_config(data, "@semantic-release/git")
-    assets = git_config.get("assets")
-    assets = assets if isinstance(assets, list) else []
-    commits_lock = any(
-        isinstance(asset, str) and Path(asset).name == "uv.lock" for asset in assets
-    )
-
-    if relocks and commits_lock:
-        return findings
-
-    missing: list[str] = []
-    if not relocks:
-        shown = repr(prepare_cmd) if prepare_cmd else "absent"
-        missing.append(
-            f"@semantic-release/exec prepareCmd does not run 'uv lock' ({shown})"
-        )
-    if not commits_lock:
-        shown = repr(assets) if assets else "absent"
-        missing.append(
-            f"@semantic-release/git assets does not include 'uv.lock' ({shown})"
-        )
-
-    findings.append(
+    return [
         _finding(
             "CD-020",
             "ERROR",
             _DIMENSION,
             (
-                ".releaserc.json: "
-                + "; ".join(missing)
-                + ". Both steps are needed: relocking without committing "
-                "uv.lock throws the new lock away, and committing without "
-                "relocking ships the old one, so a repository with only one of "
-                "them re-drifts on its next release."
+                f"uv.lock records {name} {locked} for the project itself "
+                f"({declared}). A release writes the new version without "
+                f"touching uv.lock, so this lock goes a version behind the "
+                f"moment each release succeeds."
             ),
-            remediation,
+            (
+                'Source the version from a committed file (dynamic = ["version"] '
+                "with [tool.hatch.version] path, per PY-017), remove any static "
+                "[project] version, and run 'uv lock' so the project entry no "
+                "longer records a version. Do not add uv.lock to the release "
+                "commit."
+            ),
         )
-    )
-    return findings
+    ]
 
 
 def _check_lock_is_current(repo_path: Path) -> list[Finding]:
@@ -844,15 +831,17 @@ def _check_lock_is_current(repo_path: Path) -> list[Finding]:
     project = data.get("project") if isinstance(data, dict) else None
     project = project if isinstance(project, dict) else {}
     name = str(project.get("name") or repo_path.name)
-    declared = str(project.get("version") or "unknown")
+    declared = project.get("version")
     locked = _locked_version(repo_path, name)
 
-    gap = (
-        f"pyproject.toml declares {name} {declared} while uv.lock records {locked}"
-        if declared != locked
-        else f"pyproject.toml and uv.lock agree on {name} {declared}, but the "
-        f"resolved dependency graph is stale"
-    )
+    # Under a dynamic version neither file records the project's version,
+    # so there is no pair to report and the stale graph is the whole gap.
+    if isinstance(declared, str) and declared and locked not in (declared, "unknown"):
+        gap = (
+            f"pyproject.toml declares {name} {declared} while uv.lock records {locked}"
+        )
+    else:
+        gap = "the resolved dependency graph no longer matches the declaration"
     findings.append(
         _finding(
             "CD-020",
@@ -865,9 +854,8 @@ def _check_lock_is_current(repo_path: Path) -> list[Finding]:
                 f"declared dependencies."
             ),
             (
-                "Run 'uv lock' and commit the regenerated uv.lock, then make "
-                "the release pipeline relock automatically so the lockfile "
-                "cannot drift from the version it locks again."
+                "Run 'uv lock' and commit the regenerated uv.lock with the "
+                "change that altered the dependencies."
             ),
         )
     )
@@ -999,23 +987,21 @@ def _check_source_refs_are_tags(sources: dict[str, Any]) -> list[Finding]:
 def check_cd_020(repo_path: Path) -> list[Finding]:
     """CD-020: the lockfile is released with the version it locks.
 
-    The failure this rule exists for is quiet. semantic-release bumps the
-    version in ``pyproject.toml`` and commits; ``uv.lock`` still records
-    the previous version and the previous dependency graph; the built
-    image installs from the lock and runs code nobody released. Nothing
-    fails loudly, so the drift is only visible to a check.
+    The failure this rule exists for is quiet. A release bumps the
+    project's version; a ``uv.lock`` that records that version still
+    names the previous one; the built image installs from the lock and
+    runs code nobody released. Nothing fails loudly, so the drift is only
+    visible to a check.
 
     Four independent conditions, each reported separately so a repository
     learns exactly which of them is still open:
 
-    (1) ``.releaserc.json`` must both relock and commit the lock — the
-        ``@semantic-release/exec`` ``prepareCmd`` running ``uv lock``, and
-        ``uv.lock`` listed in the ``@semantic-release/git`` assets. Either
-        one alone lets the drift come back at the next release, which is
-        why one finding names both halves.
+    (1) ``uv.lock`` must not record the project's own version, so a
+        release cannot stale it. The file-sourced dynamic version (PY-017)
+        is what keeps it out; ``.releaserc.json`` is PY-017's to check.
     (2) ``uv lock --check`` must pass against the checked-out tree, with
-        the finding naming the declared and locked versions rather than
-        just asserting a gap.
+        the finding naming the declared and locked versions where both
+        exist rather than just asserting a gap.
     (3) A dependency carrying a version specifier must not name a version
         different from the ``[tool.uv.sources]`` ref that actually
         installs it. A bare name is correct and is not flagged.
@@ -1033,10 +1019,11 @@ def check_cd_020(repo_path: Path) -> list[Finding]:
     if not (repo_path / "uv.lock").is_file():
         return findings
 
-    findings.extend(_check_release_relocks(repo_path))
+    data, _ = _load_toml(repo_path / "pyproject.toml")
+
+    findings.extend(_check_lock_omits_project_version(repo_path, data))
     findings.extend(_check_lock_is_current(repo_path))
 
-    data, _ = _load_toml(repo_path / "pyproject.toml")
     if not isinstance(data, dict):
         return findings
 
