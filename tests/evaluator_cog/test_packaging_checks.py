@@ -70,7 +70,7 @@ def _pyproject(
     return (
         "[project]\n"
         'name = "demo-cog"\n'
-        'version = "1.2.3"\n'
+        'dynamic = ["version"]\n'
         "dependencies = [\n"
         f"{dep}"
         '    "prefect>=3.0,<4.0",\n'
@@ -326,18 +326,35 @@ def _releaserc(*, prepare_cmd: str | None, assets: list[str] | None) -> str:
     return json.dumps({"branches": ["main"], "plugins": plugins})
 
 
-def _uv_managed_repo(repo: Path, *, pyproject: str | None = None) -> None:
-    _write(
-        repo,
-        "uv.lock",
-        'version = 1\n\n[[package]]\nname = "demo-cog"\nversion = "1.2.3"\n',
+def _lock(*, root_version: str | None = None) -> str:
+    """A uv.lock whose root entry is the project, as uv writes it.
+
+    Under the file-sourced dynamic version (PY-017) uv records no
+    version for the project itself; ``root_version`` models a lock that
+    does.
+    """
+    version_line = f'version = "{root_version}"\n' if root_version else ""
+    return (
+        "version = 1\n\n"
+        "[[package]]\n"
+        'name = "demo-cog"\n'
+        f"{version_line}"
+        'source = { editable = "." }\n'
     )
+
+
+def _uv_managed_repo(repo: Path, *, pyproject: str | None = None) -> None:
+    """A repo on the PY-017 scheme: version file written, uv.lock untouched."""
+    _write(repo, "uv.lock", _lock())
     _write(
         repo,
         ".releaserc.json",
         _releaserc(
-            prepare_cmd="uv version ${nextRelease.version} && uv lock",
-            assets=["CHANGELOG.md", "pyproject.toml", "uv.lock"],
+            prepare_cmd=(
+                'printf \'__version__ = "%s"\\n\' "${nextRelease.version}" '
+                "> src/demo_cog/_version.py"
+            ),
+            assets=["CHANGELOG.md", "src/demo_cog/_version.py"],
         ),
     )
     _write(repo, "pyproject.toml", pyproject if pyproject is not None else _pyproject())
@@ -369,69 +386,64 @@ def test_cd020_passes_on_compliant_repo(
     assert check_cd_020(tmp_path) == []
 
 
-# --- CD-020 (1): the release relocks and commits the lock --------------------
+# --- CD-020 (1): a release cannot stale the lock -----------------------------
 
 
-def test_cd020_flags_absent_releaserc(
+def test_cd020_does_not_read_releaserc(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The regression: a PY-017 release config never relocks, and must pass.
+
+    Clause (1) used to require `uv lock` in prepareCmd and uv.lock in the
+    git assets, which PY-017 forbids — so every conforming repo failed.
+    """
     _disable_uv(monkeypatch)
     _uv_managed_repo(tmp_path)
     (tmp_path / ".releaserc.json").unlink()
+    assert check_cd_020(tmp_path) == []
+
+
+def test_cd020_flags_lock_recording_a_static_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _disable_uv(monkeypatch)
+    static = _pyproject().replace('dynamic = ["version"]', 'version = "1.2.3"')
+    _uv_managed_repo(tmp_path, pyproject=static)
+    _write(tmp_path, "uv.lock", _lock(root_version="1.2.3"))
     findings = check_cd_020(tmp_path)
     assert len(findings) == 1
-    assert ".releaserc.json is absent" in findings[0]["finding"]
+    assert "demo-cog 1.2.3" in findings[0]["finding"]
+    assert "static version" in findings[0]["finding"]
     assert findings[0]["severity"] == "ERROR"
     assert findings[0]["dimension"] == "cd_readiness"
-    assert len(findings[0]["suggestion"]) >= 40
+    assert "PY-017" in findings[0]["suggestion"]
 
 
-def test_cd020_flags_prepare_cmd_without_uv_lock(
+def test_cd020_flags_version_left_in_lock_after_switch_to_dynamic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _disable_uv(monkeypatch)
+    _uv_managed_repo(tmp_path)
+    _write(tmp_path, "uv.lock", _lock(root_version="1.2.3"))
+    findings = check_cd_020(tmp_path)
+    assert len(findings) == 1
+    assert "predates the switch" in findings[0]["finding"]
+
+
+def test_cd020_ignores_versioned_entry_that_is_not_the_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the entry sourced from the project directory is the root."""
     _disable_uv(monkeypatch)
     _uv_managed_repo(tmp_path)
     _write(
         tmp_path,
-        ".releaserc.json",
-        _releaserc(
-            prepare_cmd="uv version ${nextRelease.version}",
-            assets=["CHANGELOG.md", "uv.lock"],
-        ),
+        "uv.lock",
+        "version = 1\n\n[[package]]\n"
+        'name = "demo-cog"\nversion = "0.9.0"\n'
+        'source = { registry = "https://pypi.org/simple" }\n',
     )
-    findings = check_cd_020(tmp_path)
-    assert len(findings) == 1
-    assert "prepareCmd" in findings[0]["finding"]
-    assert "re-drifts" in findings[0]["finding"]
-
-
-def test_cd020_flags_git_assets_without_uv_lock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _disable_uv(monkeypatch)
-    _uv_managed_repo(tmp_path)
-    _write(
-        tmp_path,
-        ".releaserc.json",
-        _releaserc(
-            prepare_cmd="uv version ${nextRelease.version} && uv lock",
-            assets=["CHANGELOG.md", "pyproject.toml"],
-        ),
-    )
-    findings = check_cd_020(tmp_path)
-    assert len(findings) == 1
-    assert "assets" in findings[0]["finding"]
-
-
-def test_cd020_flags_unparseable_releaserc(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _disable_uv(monkeypatch)
-    _uv_managed_repo(tmp_path)
-    _write(tmp_path, ".releaserc.json", "{not json,")
-    findings = check_cd_020(tmp_path)
-    assert len(findings) == 1
-    assert "does not parse as JSON" in findings[0]["finding"]
+    assert check_cd_020(tmp_path) == []
 
 
 # --- CD-020 (2): uv lock --check, and its guards ------------------------------
@@ -461,20 +473,35 @@ class _Result:
 def test_cd020_flags_stale_lock_and_names_both_versions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _uv_managed_repo(tmp_path)
-    _write(
-        tmp_path,
-        "uv.lock",
-        'version = 1\n\n[[package]]\nname = "demo-cog"\nversion = "1.2.2"\n',
+    """A static-version repo: clause (1) and clause (2) both fire."""
+    static = _pyproject().replace('dynamic = ["version"]', 'version = "1.2.3"')
+    _uv_managed_repo(tmp_path, pyproject=static)
+    _write(tmp_path, "uv.lock", _lock(root_version="1.2.2"))
+    monkeypatch.setattr(packaging.shutil, "which", lambda _name: "/usr/bin/uv")
+    monkeypatch.setattr(
+        packaging.subprocess, "run", lambda *_a, **_k: _Result(returncode=1)
     )
+    findings = check_cd_020(tmp_path)
+    stale = [f for f in findings if "out of date" in f["finding"]]
+    assert len(findings) == 2
+    assert len(stale) == 1
+    assert "1.2.3" in stale[0]["finding"]
+    assert "1.2.2" in stale[0]["finding"]
+
+
+def test_cd020_stale_lock_under_dynamic_version_names_the_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Neither file records the version, so there is no pair to report."""
+    _uv_managed_repo(tmp_path)
     monkeypatch.setattr(packaging.shutil, "which", lambda _name: "/usr/bin/uv")
     monkeypatch.setattr(
         packaging.subprocess, "run", lambda *_a, **_k: _Result(returncode=1)
     )
     findings = check_cd_020(tmp_path)
     assert len(findings) == 1
-    assert "1.2.3" in findings[0]["finding"]
-    assert "1.2.2" in findings[0]["finding"]
+    assert "dependency graph" in findings[0]["finding"]
+    assert "unknown" not in findings[0]["finding"]
 
 
 def test_cd020_skips_lock_check_when_uv_binary_absent(

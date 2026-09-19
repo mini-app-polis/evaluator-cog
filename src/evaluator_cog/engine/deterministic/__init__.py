@@ -46,7 +46,6 @@ from evaluator_cog.engine.deterministic.config import (
 )
 from evaluator_cog.engine.deterministic.containers import (
     check_cd_017,
-    check_cd_021,
     check_cd_022,
     check_cd_023,
     check_cd_024,
@@ -183,7 +182,6 @@ __all__ = [
     "check_cd_017",
     "check_cd_019",
     "check_cd_020",
-    "check_cd_021",
     "check_cd_022",
     "check_cd_023",
     "check_cd_024",

@@ -1,4 +1,4 @@
-"""Deterministic container / platform-descriptor checks: CD-017, CD-021..CD-024."""
+"""Deterministic container / platform-descriptor checks: CD-017, CD-022..CD-024."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 
 from evaluator_cog.engine.deterministic.containers import (
     check_cd_017,
-    check_cd_021,
     check_cd_022,
     check_cd_023,
     check_cd_024,
@@ -193,59 +192,6 @@ def test_cd017_falls_back_to_repo_root_for_monorepo_service(tmp_path: Path) -> N
     service = tmp_path / "services" / "api"
     service.mkdir(parents=True)
     assert check_cd_017(tmp_path, monorepo_path=service) == []
-
-
-# --- CD-021 ------------------------------------------------------------------
-
-
-def test_cd021_passes_with_dockerfile_and_dockerfile_builder(tmp_path: Path) -> None:
-    _write(tmp_path, "Dockerfile", "FROM python@sha256:" + "a" * 64 + "\n")
-    _railway(tmp_path, {"build": {"builder": "DOCKERFILE"}})
-    assert check_cd_021(tmp_path) == []
-
-
-def test_cd021_passes_when_builder_selected_via_dockerfile_path(tmp_path: Path) -> None:
-    _write(tmp_path, "Dockerfile", "FROM scratch\n")
-    _railway(tmp_path, {"build": {"dockerfilePath": "Dockerfile"}})
-    assert check_cd_021(tmp_path) == []
-
-
-def test_cd021_passes_with_railway_toml_descriptor(tmp_path: Path) -> None:
-    _write(tmp_path, "Dockerfile", "FROM scratch\n")
-    _write(tmp_path, "railway.toml", '[build]\nbuilder = "dockerfile"\n')
-    assert check_cd_021(tmp_path) == []
-
-
-def test_cd021_records_gap_when_dockerfile_absent(tmp_path: Path) -> None:
-    _railway(tmp_path, {"build": {"builder": "NIXPACKS"}})
-    findings = check_cd_021(tmp_path)
-    assert len(findings) == 1
-    assert findings[0]["rule_id"] == "CD-021"
-    assert findings[0]["severity"] == "WARN"
-    assert "gap recorded" in findings[0]["finding"]
-    assert "no Dockerfile" in findings[0]["finding"]
-
-
-def test_cd021_records_gap_when_nothing_present_at_all(tmp_path: Path) -> None:
-    findings = check_cd_021(tmp_path)
-    assert len(findings) == 1
-    assert "no railway.json" in findings[0]["finding"]
-
-
-def test_cd021_records_gap_when_platform_ignores_the_dockerfile(tmp_path: Path) -> None:
-    """A Dockerfile the platform does not select is not a runtime definition."""
-    _write(tmp_path, "Dockerfile", "FROM scratch\n")
-    _railway(tmp_path, {"build": {"builder": "NIXPACKS"}})
-    findings = check_cd_021(tmp_path)
-    assert len(findings) == 1
-    assert "does not select the dockerfile builder" in findings[0]["finding"]
-
-
-def test_cd021_records_gap_when_dockerfile_has_no_descriptor(tmp_path: Path) -> None:
-    _write(tmp_path, "Dockerfile", "FROM scratch\n")
-    findings = check_cd_021(tmp_path)
-    assert len(findings) == 1
-    assert "no railway.json" in findings[0]["finding"]
 
 
 # --- CD-022 ------------------------------------------------------------------
