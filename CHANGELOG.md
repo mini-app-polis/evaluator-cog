@@ -1,3 +1,10 @@
+# [3.39.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.38.1...v3.39.0) (2026-09-19)
+
+
+### Features
+
+* **api:** send evaluator_version with every finding ([ec8f4b1](https://github.com/mini-app-polis/evaluator-cog/commit/ec8f4b1ca14f3d15eef6eaff9f3ac4893ac610dc))
+
 ## [3.38.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.38.0...v3.38.1) (2026-09-19)
 
 
