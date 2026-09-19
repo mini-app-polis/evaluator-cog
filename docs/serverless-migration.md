@@ -589,6 +589,14 @@ was disabled, because a deploy changed what *would* run. Once the function
 is what actually evaluates, manual deploys mean the deployed code drifts
 behind main silently.
 
+Call the deploy from the CI workflow as a job after `release`; do not
+trigger it with `on: release`. semantic-release publishes with
+`GITHUB_TOKEN`, and GitHub starts no workflows from that token's events, so
+a release trigger never fires. evaluator-cog shipped that way, and kept
+running manually-deployed code across releases until a finding's wording
+gave it away. Anything that must run on the new code —
+the fleet sweep here — then `needs:` the deploy job instead of sleeping.
+
 **What is a template now.** The fan-out and registry in the API, the Lambda
 entrypoint's `batchItemFailures` handling, the deploy workflow's layout and
 import guards, and `infra/` with `name_prefix`. None of these are design
