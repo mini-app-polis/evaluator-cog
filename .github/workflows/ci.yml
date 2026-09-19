@@ -46,6 +46,8 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+    outputs:
+      tag: ${{ steps.released.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -75,23 +77,39 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx semantic-release
+      # semantic-release tags the release commit it leaves at HEAD. No tag
+      # there means the push carried nothing releasable, and nothing new
+      # needs deploying.
+      - name: Record the release tag
+        id: released
+        run: echo "tag=$(git tag --points-at HEAD --list 'v*' | head -n1)" >> "$GITHUB_OUTPUT"
+
+  # The worker is deployed here rather than by deploy-worker.yml's own
+  # trigger: a release published with GITHUB_TOKEN starts no workflows.
+  deploy:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/deploy-worker.yml
+    with:
+      ref: ${{ needs.release.outputs.tag }}
 
   # A fleet sweep, not a single repository. A new evaluator can reach a
   # different verdict on every repo in the fleet, so all of them are stale
   # at once — and the three checks that scope to no repository (EVAL-003,
   # MONO-003, EVAL-007) have nowhere else to run.
   #
-  # wait-seconds is not caution. This release redeploys the evaluator that
-  # is about to be asked; Railway takes longer to swap the container than
-  # curl's retries cover, so asking immediately reaches the process that is
-  # going away. The sweep must run on the evaluator this release built,
-  # which is the entire reason for the trigger.
+  # The sweep must run on the evaluator this release built, which is the
+  # entire reason for the trigger — so it waits on the deploy job, which
+  # does not finish until AWS reports the new code's checksum. A fixed
+  # sleep was the Railway-era answer and outlived Railway: with no deploy
+  # actually running, it only delayed a sweep of the old code.
   evaluate:
-    needs: release
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: deploy
     uses: mini-app-polis/.github/.github/workflows/evaluate.yml@v3
     with:
       scope: fleet
-      wait-seconds: 120
     secrets:
       api-key: ${{ secrets.CI_VALIDATOR_API_KEY }}

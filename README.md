@@ -163,11 +163,12 @@ Add the `evaluate` job to `ci.yml`, after `release`:
 new evaluator invalidates every repository's last result at once, where every
 other release invalidates one.
 
-evaluator-cog also passes `wait-seconds: 120`, and the reason changed with the
-runtime. It used to be that the release redeployed the container the request
-was about to reach. Now the release triggers `deploy-worker.yml` in parallel
-with `evaluate`, so without the wait a fleet pass can be consumed by the
-Lambda code the release is in the middle of replacing.
+In evaluator-cog the sweep runs after the `deploy` job, which calls
+`deploy-worker.yml` on the release tag and finishes only once AWS reports the
+new code's checksum. So a fleet pass is always consumed by the evaluator the
+release built. `deploy-worker.yml` cannot trigger itself on `release:
+published`: semantic-release publishes with `GITHUB_TOKEN`, and GitHub starts
+no workflows from that token's events.
 
 The contract is fire-and-forget. CI posts, reads a 202, and exits; the
 evaluation runs after the runner is gone. What CI reports is whether the
