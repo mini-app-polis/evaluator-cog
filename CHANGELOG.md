@@ -1,3 +1,10 @@
+## [3.39.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.0...v3.39.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **ci:** deploy the worker from ci.yml so releases reach Lambda ([ed98635](https://github.com/mini-app-polis/evaluator-cog/commit/ed9863556232402397f590ed22af38a7f1961add))
+
 # [3.39.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.38.1...v3.39.0) (2026-09-19)
 
 
