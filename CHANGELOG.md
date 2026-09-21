@@ -1,3 +1,10 @@
+## [3.40.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.40.0...v3.40.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **http:** retry the catalog, ecosystem.yaml and Anthropic calls ([f130678](https://github.com/mini-app-polis/evaluator-cog/commit/f1306783309724db007bb1944fd63bcd60f2345c))
+
 # [3.40.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.3...v3.40.0) (2026-09-21)
 
 
