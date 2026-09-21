@@ -20,7 +20,12 @@ from evaluator_cog.engine.deterministic._shared import (
 #: about the repository rather than about the change, and nothing waits for
 #: the answer. Fifteen repos would otherwise carry the same exemption, which
 #: is the shape of a rule that has fallen behind its architecture.
-_CANONICAL_CI_JOBS = frozenset({"security", "test", "release", "evaluate"})
+#:
+#: ``deploy`` joined when the cogs moved to Lambda: it ships what ``release``
+#: versioned, through the shared lambda-deploy.yml, and a stage that must run
+#: on the new code says ``needs: deploy``. This repo and deejay-cog both had
+#: the job, and this check flagged both on every release.
+_CANONICAL_CI_JOBS = frozenset({"security", "test", "release", "deploy", "evaluate"})
 
 
 def _ci_workflow(repo_path: Path) -> dict | None:
@@ -90,7 +95,7 @@ def check_release_gated_on_security(repo_path: Path) -> list[Finding]:
 
 
 def check_canonical_ci_job_names(repo_path: Path) -> list[Finding]:
-    """CD-026: ci.yml jobs are named security, test and release."""
+    """CD-026: ci.yml jobs are named security, test, release, deploy, evaluate."""
     CHECK_ID = "CD-026"
     findings: list[Finding] = []
     workflow = _ci_workflow(repo_path)
@@ -108,7 +113,7 @@ def check_canonical_ci_job_names(repo_path: Path) -> list[Finding]:
                     "WARN",
                     "structural_conformance",
                     f"ci.yml job `{name}` is outside the canonical set "
-                    f"(security, test, release, evaluate).",
+                    f"(security, test, release, deploy, evaluate).",
                     f"Rename `{name}` to `test` if it is the work job, and "
                     f"update any `needs:` that reference it.",
                 )

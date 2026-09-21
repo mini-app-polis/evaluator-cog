@@ -107,9 +107,11 @@ terraform plan
    AWS_FUNCTION_NAME   = $(terraform output -raw function_name)
    ```
 
-   Then run the **Deploy worker** workflow by hand. It fails if the
-   checksum AWS reports is not the artifact that run built, so a green run
-   is evidence and not an assumption.
+   Deploys run from the `deploy` job in `ci.yml` after each release, through
+   the shared `lambda-deploy.yml` in mini-app-polis/.github. To redeploy
+   without a release, re-run the `deploy` job of the release's CI run. It
+   fails unless the checksum AWS reports is the artifact that run built, so a
+   green run is evidence and not an assumption.
 6. **Verify failure handling.** Only needed once per account, and it is
    done — see **Verified**. The redrive policy, the DLQ and the
    `evaluator-dlq-not-empty` alarm are the same Terraform in every cog, so
@@ -155,10 +157,12 @@ visible in the DLQ if something is.
 
 ### 2. Deploy the code
 
-Run the *Deploy worker* workflow. It fails the build if the entrypoint is
-not at the package root, fails if any module cannot import from the built
-package, prints the zip size against the 50 MB limit, and fails if the
-checksum AWS reports is not the one it built.
+Release, or re-run the `deploy` job of the last release's CI run. The
+shared `lambda-deploy.yml` builds wheels for the function's architecture
+and runtime, fails if any library needs a newer glibc than the runtime has,
+imports every module and probes the handler inside Lambda's own image,
+refuses a function whose architecture differs, and fails if the checksum
+AWS reports is not the one it built.
 
 ### 3. Probe the function before any real traffic
 
