@@ -1,3 +1,10 @@
+# [3.41.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.40.1...v3.41.0) (2026-09-21)
+
+
+### Features
+
+* **reporting:** stamp processor and standards versions on discord run reports ([0430c70](https://github.com/mini-app-polis/evaluator-cog/commit/0430c70ba60695c47831fd01733a0462184f7972))
+
 ## [3.40.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.40.0...v3.40.1) (2026-09-21)
 
 
