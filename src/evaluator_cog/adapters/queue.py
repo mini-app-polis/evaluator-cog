@@ -51,6 +51,7 @@ from evaluator_cog.flows.conformance import (
     flow_name_for_mode,
     handler,
     run_introspection,
+    stamp_versions,
 )
 
 log = logger_mod.get_logger()
@@ -303,7 +304,9 @@ def _report_failure(what: str, exc: BaseException) -> None:
         post_run_finding(
             "conformance-check",
             "ERROR",
-            f"{what} failed: {type(exc).__name__}: {exc}",
+            # Processor only: the job may have died resolving the catalog,
+            # and a version it did not resolve is not stamped as one.
+            stamp_versions(f"{what} failed: {type(exc).__name__}: {exc}"),
             repo=_REPO,
             source="queue_consumer",
         )

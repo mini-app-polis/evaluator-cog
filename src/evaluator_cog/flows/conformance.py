@@ -58,6 +58,7 @@ import yaml
 from mini_app_polis import logger as logger_mod
 from mini_app_polis.pipeline_status import RunReport
 
+from evaluator_cog._version import __version__
 from evaluator_cog.engine.api_client import PostResult, post_findings
 from evaluator_cog.engine.deterministic import run_all_checks
 from evaluator_cog.engine.evaluator_config import EvaluatorConfig, load_evaluator_config
@@ -122,6 +123,52 @@ _NOT_FOUND_RE = re.compile(
 #: This cog, as the notification channel and the version stamp know it.
 #: Must match [project] name in pyproject.toml.
 _REPO = "evaluator-cog"
+
+
+def stamp_versions(text: str, standards_version: str = "") -> str:
+    """Append the running code's version, and the catalog's, to ``text``.
+
+    ``(processor=3.40.1, standards=4.2.0)`` on a line of its own. The
+    library would stamp ``processor`` itself, but it reads the installed
+    distribution's metadata and the Lambda deploy strips every
+    ``*.dist-info`` from the zip — there the lookup fails and, by design,
+    nothing is stamped. ``_version.py`` is source, ships in the zip and is
+    built from the release tag, so it is the version that is running. The
+    library skips its own stamp when the text already carries one.
+
+    ``standards`` is omitted when not known — a job that died before the
+    catalog resolved — rather than guessed. Empty text is left alone: the
+    library skips an empty report, and a version alone is not a message.
+    Any counters the library appends land after the stamp, so the last
+    line of a message is its metadata.
+    """
+    if not text or "(processor=" in text:
+        return text
+    parts = [f"processor={__version__}"]
+    if standards_version:
+        parts.append(f"standards={standards_version}")
+    return f"{text}\n({', '.join(parts)})"
+
+
+@dataclass
+class VersionedRunReport(RunReport):
+    """A :class:`RunReport` that says which code, and which catalog, ran.
+
+    ``standards_version`` is set by whatever resolves the catalog version
+    the run grades against — :func:`handler`, :func:`run_introspection` —
+    via :func:`_record_standards_version`.
+    """
+
+    standards_version: str = ""
+
+    def text(self) -> str:
+        return stamp_versions(super().text(), self.standards_version)
+
+
+def _record_standards_version(standards_version: str, *, ctx: RunContext) -> None:
+    """Put the catalog version this run grades against on its report."""
+    if isinstance(ctx.report, VersionedRunReport):
+        ctx.report.standards_version = standards_version
 
 
 @dataclass
@@ -203,7 +250,7 @@ class RunContext:
         writing rows under "deterministic-conformance", and correlating
         the notification with the rows meant knowing that.
         """
-        return cls(report=RunReport(flow_name=flow_name, repo=_REPO))
+        return cls(report=VersionedRunReport(flow_name=flow_name, repo=_REPO))
 
 
 def _report_issue(
@@ -1624,6 +1671,7 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
         ctx.report.run_id = event.run_id
 
     standards_version = event.standards_version or _get_standards_version(ctx=ctx)
+    _record_standards_version(standards_version, ctx=ctx)
     catalog_schema = _fetch_catalog_schema(ctx=ctx)
     rule_catalog = _fetch_full_rule_catalog(ctx=ctx)
     rule_applies_to = {
@@ -1931,6 +1979,7 @@ def run_introspection(
         ctx.report.run_id = run_id
 
     standards_version = standards_version or _get_standards_version(ctx=ctx)
+    _record_standards_version(standards_version, ctx=ctx)
     rule_catalog = _fetch_full_rule_catalog(ctx=ctx)
     ecosystem = _fetch_yaml(_ECOSYSTEM_YAML_URL)
 
