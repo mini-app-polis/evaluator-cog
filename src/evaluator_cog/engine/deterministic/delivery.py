@@ -11,6 +11,11 @@ from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
 )
+from evaluator_cog.engine.deterministic._terraform import (
+    dead_letter_queue_names,
+    infra_resources,
+    of_type,
+)
 
 #: CD-026's canonical job names.
 #:
@@ -682,6 +687,21 @@ def check_migration_in_ci(
     return findings
 
 
+def _dlq_alarm_notifies(repo_path: Path) -> bool:
+    """True when infra/ alarms on a dead-letter queue and the alarm has an action."""
+    resources = infra_resources(repo_path)
+    if not resources:
+        return False
+    dlqs = dead_letter_queue_names(resources)
+    for alarm in of_type(resources, "aws_cloudwatch_metric_alarm"):
+        actions = (alarm.attr("alarm_actions") or "").replace(" ", "")
+        if actions in ("", "[]"):
+            continue
+        if any(f"aws_sqs_queue.{name}." in alarm.body for name in dlqs):
+            return True
+    return False
+
+
 def check_three_layer_observability(
     repo_path: Path,
     cog_subtype: str | None = None,
@@ -715,8 +735,26 @@ def check_three_layer_observability(
         with suppress(Exception):
             package_json_text = package_json.read_text()
 
-    # Layer 1: Healthchecks — only required for worker-style services.
-    if cog_subtype in ("pipeline", "trigger"):
+    # Layer 1 for a queue-driven pipeline cog: an alarm on the dead-letter
+    # queue that notifies someone. There is no process to be alive between
+    # jobs, so a liveness ping has nothing to report; a job that failed
+    # every retry is the event a person has to hear about.
+    if cog_subtype == "pipeline" and not _dlq_alarm_notifies(repo_path):
+        findings.append(
+            _finding(
+                "CD-010",
+                "ERROR",
+                "cd_readiness",
+                "Layer 1 missing: no aws_cloudwatch_metric_alarm on the "
+                "dead-letter queue with alarm_actions in infra/*.tf.",
+                "Alarm on the DLQ's ApproximateNumberOfMessagesVisible and "
+                "point alarm_actions at an SNS topic someone is subscribed "
+                "to. Copy deejay-cog's infra/account.tf.",
+            )
+        )
+
+    # Layer 1: Healthchecks — the always-on trigger worker.
+    if cog_subtype == "trigger":
         env_has_healthchecks = (
             "HEALTHCHECKS_URL" in env_text or "HEALTHCHECKS_URL_" in env_text
         )

@@ -101,22 +101,16 @@ from evaluator_cog.engine.deterministic.meta import (
 from evaluator_cog.engine.deterministic.operations import (
     check_ops_002,
 )
-from evaluator_cog.engine.deterministic.packaging import (
-    check_cd_016,
-    check_cd_020,
-)
+from evaluator_cog.engine.deterministic.packaging import check_cd_020
 from evaluator_cog.engine.deterministic.pipeline import (
-    check_evaluation_step,
     check_final_evaluation_task,
-    check_hardcoded_retry_delay,
     check_healthchecks_integration,
     check_no_retired_trigger_patterns,
-    check_prefect_cloud_observability,
-    check_prefect_present,
-    check_prefect_run_logger,
-    check_prefect_serve_pattern,
+    check_pipe_016,
+    check_pipe_017,
+    check_pipe_018,
+    check_pipe_019,
     check_retry_logic,
-    check_shared_resource_concurrency,
 )
 from evaluator_cog.engine.deterministic.python import (
     check_common_python_utils_dep,
@@ -586,32 +580,21 @@ def run_all_checks(
             _run(check_shadcn, "FE-004")
             _run(check_react_hook_form_zod, "FE-005")
 
+    # Runtime rules — pipeline cogs are Lambda functions behind their own
+    # queue, trigger cogs start work through the API (ADR-009). These
+    # replace PIPE-001, PIPE-004, PIPE-006, PIPE-009, PIPE-012, CD-005,
+    # CD-015 and CD-016, which described Prefect on Railway.
     if is_pipeline_cog:
-        _run(check_retry_logic, "PIPE-007")
         _run(check_no_retired_trigger_patterns, "PIPE-008")
-        _run(check_evaluation_step, "PIPE-009")
-        _run(check_prefect_serve_pattern, "CD-015")
         _run(check_db_writes_use_upserts, "PIPE-002")
         _run(check_inputs_not_deleted, "PIPE-005")
-
-    # PIPE-001 applies to both pipeline-cogs and trigger-cogs — Prefect is
-    # required on both, with slightly different usage patterns (see the
-    # check function for the pipeline-vs-trigger branch).
+        _run(check_pipe_016, "PIPE-016")
+        _run(check_pipe_017, "PIPE-017")
+        _run(check_pipe_018, "PIPE-018")
+    if is_trigger_cog:
+        _run(check_pipe_019, "PIPE-019")
     if is_pipeline_cog or is_trigger_cog:
-        _cog_subtype = "trigger" if is_trigger_cog else "pipeline"
-
-        def _pipe_001_check(p: Path) -> list[Finding]:
-            return check_prefect_present(p, cog_subtype=_cog_subtype)
-
-        _run(_pipe_001_check, "PIPE-001")
-
-        # CD-005 also covers pipeline-cogs and trigger-cogs. It overlaps with
-        # PIPE-001's condition 1 by design (see the rule body) — a repo missing
-        # prefect entirely will produce two findings, which is correct.
-        def _cd_005_check(p: Path) -> list[Finding]:
-            return check_prefect_cloud_observability(p, cog_subtype=_cog_subtype)
-
-        _run(_cd_005_check, "CD-005")
+        _run(check_retry_logic, "PIPE-007")
 
     # API-001 / API-002 apply to api-service repos regardless of language.
     if is_api_service:
@@ -736,18 +719,14 @@ def run_all_checks(
     ):
         _run(check_fetch_error_handling, "FE-006")
 
-    # Pipeline rules — PIPE-004, PIPE-006, PIPE-011, PIPE-012.
-    # PIPE-003 is LLM-routed per ecosystem-standards v3.8.0.
+    # PIPE-011. PIPE-003 is LLM-routed per ecosystem-standards v3.8.0.
     if is_pipeline_cog or is_trigger_cog:
         _cog_st_pipe = "trigger" if is_trigger_cog else "pipeline"
 
         def _pipe_011_check(p: Path) -> list[Finding]:
             return check_final_evaluation_task(p, cog_subtype=_cog_st_pipe)
 
-        _run(check_shared_resource_concurrency, "PIPE-004")
-        _run(check_prefect_run_logger, "PIPE-006")
         _run(_pipe_011_check, "PIPE-011")
-        _run(check_hardcoded_retry_delay, "PIPE-012")
 
     # Python — PY-004, PY-015
     if language == "python" and (is_pipeline_cog or is_api_service or is_library):
@@ -868,11 +847,16 @@ def run_all_checks(
     _run(_cd_017_check, "CD-017")
     _run(check_cd_022, "CD-022")
     _run(check_cd_023, "CD-023")
-    _run(lambda p: check_cd_024(p, monorepo_path=monorepo_root), "CD-024")
+    # CD-024 reads a pipeline cog's limits from infra/*.tf and everything
+    # else's from its Railway descriptor, so it needs the resolved type.
+    _run(
+        lambda p: check_cd_024(
+            p, monorepo_path=monorepo_root, repo_type=_repo_type_for_checks
+        ),
+        "CD-024",
+    )
 
-    # cd_readiness — packaging. CD-016 carries its own applicability
-    # gate (a repo with no serve() call has no subject) inside the check.
-    _run(check_cd_016, "CD-016")
+    # cd_readiness — packaging.
     _run(check_cd_020, "CD-020")
 
     # structural_conformance — the identity contract. CD-019 splits into

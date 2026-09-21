@@ -35,6 +35,7 @@ from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
 )
+from evaluator_cog.engine.deterministic._terraform import infra_resources, of_type
 
 _DIMENSION = "cd_readiness"
 
@@ -492,8 +493,55 @@ def check_cd_023(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_cd_024(repo_path: Path, monorepo_path: Path | None = None) -> list[Finding]:
+def _check_cd_024_lambda(repo_path: Path) -> list[Finding]:
+    """CD-024 for a pipeline cog: the function's memory and timeout are set.
+
+    A Lambda has no CPU knob — CPU is allocated in proportion to memory —
+    and its ceiling on a runaway is the timeout, so those are the two
+    limits a function states. Left unset they are 128 MB and 3 seconds,
+    defaults nobody chose.
+    """
+    functions = of_type(infra_resources(repo_path) or [], "aws_lambda_function")
+    if not functions:
+        return [
+            _finding(
+                "CD-024",
+                "WARN",
+                _DIMENSION,
+                "infra/*.tf declares no aws_lambda_function, so no memory or "
+                "timeout ceiling is stated.",
+                "Declare the worker function in infra/ with explicit "
+                "memory_size and timeout (PIPE-016).",
+            )
+        ]
+    findings: list[Finding] = []
+    for fn in functions:
+        missing = [k for k in ("memory_size", "timeout") if not fn.attr(k)]
+        if missing:
+            findings.append(
+                _finding(
+                    "CD-024",
+                    "WARN",
+                    _DIMENSION,
+                    f"aws_lambda_function.{fn.name} in {fn.file} does not set "
+                    f"{' or '.join(missing)}.",
+                    "Set memory_size and timeout explicitly; the defaults "
+                    "(128 MB, 3 s) were chosen by no one.",
+                )
+            )
+    return findings
+
+
+def check_cd_024(
+    repo_path: Path,
+    monorepo_path: Path | None = None,
+    repo_type: str = "",
+) -> list[Finding]:
     """CD-024: deployable services declare memory and CPU limits.
+
+    Pipeline cogs run on Lambda (ADR-009) and state theirs in infra/*.tf;
+    see ``_check_cd_024_lambda``. Everything else is read from its Railway
+    descriptor, below.
 
     An unbounded service is a noisy neighbour: a leak or a runaway query
     consumes whatever the host has rather than being killed and
@@ -513,6 +561,9 @@ def check_cd_024(repo_path: Path, monorepo_path: Path | None = None) -> list[Fin
     a service with no platform descriptor has by definition declared no
     limits.
     """
+    if repo_type == "pipeline-cog":
+        return _check_cd_024_lambda(repo_path)
+
     CHECK_ID = "CD-024"
     findings: list[Finding] = []
 

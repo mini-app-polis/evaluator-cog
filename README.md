@@ -110,7 +110,6 @@ jobs each clone a repository.
 | AUTH-004 | New. Needs to verify the guard delegates to `identity.policy` and audits both branches |
 | CD-019 | Replaces retired CD-012. The existing CD-012 check gives inverted advice and must be removed, not adapted |
 | CD-020 | New. Needs `.releaserc.json` parsing, `uv lock --check`, and a pyproject `dependencies` vs `[tool.uv.sources]` comparison |
-| CD-016, CD-017 | Pre-existing gap — no check registered |
 | CD-004 | Needs GitHub API (verify pinned action tags exist); rate-limited |
 | EVAL-002, EVAL-006 | Need runtime SQL queries against `pipeline_evaluations` table |
 

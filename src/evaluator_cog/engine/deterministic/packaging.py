@@ -1,16 +1,16 @@
-"""Packaging, entry-point and lockfile-discipline rule checks (CD-016, CD-020).
+"""Lockfile-discipline rule check (CD-020).
 
-Both rules here police the seam between what a repository *declares* and
-what actually runs or ships. CD-016 is about the process the platform
-starts: a Prefect ``serve()`` loop that registers deployments at boot and
-dies silently when Prefect Cloud is briefly unreachable, unless it is
-wrapped in the shared ``serve_with_retry`` helper. CD-020 is about the
-lockfile: a ``uv.lock`` that records the project's own version goes stale
-the moment a release bumps it, and every subsequent install resolves
+CD-020 polices the seam between what a repository *declares* and what
+actually ships: a ``uv.lock`` that records the project's own version goes
+stale the moment a release bumps it, and every subsequent install resolves
 against a graph nobody released. The file-sourced version scheme (PY-017)
 keeps the version out of the lock, so a release never touches it.
 
-Neither check raises. Every file read, parse and subprocess call is
+CD-016 (serve() wrapped in serve_with_retry) lived here until Prefect was
+retired (ecosystem-standards ADR-009); pipeline cogs have no startup
+registration to protect.
+
+The check never raises. Every file read, parse and subprocess call is
 guarded, and an unreadable or unparseable input degrades to "cannot
 confirm" rather than to a traceback, because these functions run inside a
 batch conformance sweep where one bad repository must not stop the run.
@@ -18,32 +18,19 @@ batch conformance sweep where one bad repository must not stop the run.
 
 from __future__ import annotations
 
-import ast
-import json
 import re
-import shlex
 import shutil
 import subprocess
 import tomllib
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from evaluator_cog.engine.deterministic._shared import (
-    PYTHON_SHARED_LIBRARY_NAMES,
     Finding,
     _finding,
-    _is_checker_self_source,
 )
 
 _DIMENSION = "cd_readiness"
-
-# The shared resilience helper CD-016 requires, and the module it must be
-# imported from. A locally-defined shim with the same name does not
-# satisfy the rule: the point of the standard is that every cog inherits
-# the same backoff policy from one place.
-_SERVE_HELPER = "serve_with_retry"
-_SERVE_HELPER_MODULE = "mini_app_polis.serve_resilience"
 
 # `uv lock --check` resolves against the configured indexes and can block
 # on a slow or unreachable network. The conformance sweep is a batch job,
@@ -51,36 +38,8 @@ _SERVE_HELPER_MODULE = "mini_app_polis.serve_resilience"
 # not determine", never as a violation.
 _UV_LOCK_CHECK_TIMEOUT_S = 60.0
 
-# Directories that never hold the deployed entry point and whose contents
-# would make the CD-016 applicability gate fire on fixtures rather than on
-# production code.
-_SKIP_DIRS = frozenset(
-    {
-        "__pycache__",
-        ".git",
-        ".venv",
-        "venv",
-        "node_modules",
-        "build",
-        "dist",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        "tests",
-        "test",
-    }
-)
-
 
 # --- shared local helpers ----------------------------------------------------
-
-
-def _rel(path: Path, repo_path: Path) -> str:
-    """Repo-relative display path, falling back to the absolute path."""
-    try:
-        return str(path.relative_to(repo_path))
-    except ValueError:
-        return str(path)
 
 
 def _read_text(path: Path) -> str | None:
@@ -88,16 +47,6 @@ def _read_text(path: Path) -> str | None:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-
-
-def _load_json(path: Path) -> tuple[Any | None, str | None]:
-    text = _read_text(path)
-    if text is None:
-        return None, "unreadable"
-    try:
-        return json.loads(text), None
-    except json.JSONDecodeError as exc:
-        return None, str(exc)
 
 
 def _load_toml(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -110,489 +59,7 @@ def _load_toml(path: Path) -> tuple[dict[str, Any] | None, str | None]:
         return None, str(exc)
 
 
-def _iter_python_sources(repo_path: Path) -> Iterator[Path]:
-    """Yield the repository's production Python files.
-
-    ``src/`` is authoritative when it exists — that is the layout PY-005
-    mandates — plus any top-level scripts beside it, since a few cogs keep
-    a thin ``main.py`` at the root. When there is no ``src/`` the whole
-    tree is walked with vendor, cache and test directories pruned.
-
-    Tests are deliberately excluded. A test fixture that constructs a
-    ``serve()`` call is not a serve entry point, and letting one satisfy
-    the CD-016 applicability gate would resurrect exactly the false ERROR
-    the gate exists to prevent.
-    """
-    roots: list[Path] = []
-    src = repo_path / "src"
-    if src.is_dir():
-        roots.append(src)
-        for child in repo_path.iterdir():
-            if child.is_file() and child.suffix == ".py":
-                yield child
-    else:
-        roots.append(repo_path)
-
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for py in sorted(root.rglob("*.py")):
-            parts = set(py.relative_to(root).parts[:-1])
-            if parts & _SKIP_DIRS or any(p.startswith(".") for p in parts):
-                continue
-            if _is_checker_self_source(py):
-                # evaluator-cog scanning itself: the deterministic
-                # checkers name these call shapes in their own detection
-                # logic, and a self-scan would report the detector.
-                continue
-            yield py
-
-
-def _parse_python(path: Path) -> ast.Module | None:
-    text = _read_text(path)
-    if text is None:
-        return None
-    try:
-        return ast.parse(text)
-    except (SyntaxError, ValueError):
-        return None
-
-
 # --- CD-016: serve() registration wrapped in serve_with_retry ---------------
-
-
-def _names_imported_from_prefect_serve(tree: ast.Module) -> set[str]:
-    """Local names bound to Prefect's ``serve`` by a from-import."""
-    bound: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        module = node.module or ""
-        if module != "prefect" and not module.startswith("prefect."):
-            continue
-        for alias in node.names:
-            if alias.name == "serve":
-                bound.add(alias.asname or alias.name)
-    return bound
-
-
-def _direct_serve_calls(tree: ast.Module) -> list[str]:
-    """Describe every direct Prefect ``serve()`` call in one module.
-
-    Three call shapes register deployments without the shared helper:
-    ``prefect.serve(...)``, ``<flow>.serve(...)``, and a bare
-    ``serve(...)`` where the name came from ``from prefect import serve``.
-    Detection is by AST rather than by substring so that the token
-    ``serve(`` inside a comment, a docstring or a checker's own pattern
-    string is never mistaken for a call.
-    """
-    bare_names = _names_imported_from_prefect_serve(tree)
-    shapes: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if isinstance(func, ast.Attribute) and func.attr == "serve":
-            prefix = ""
-            if isinstance(func.value, ast.Name):
-                prefix = f"{func.value.id}."
-            elif isinstance(func.value, ast.Attribute):
-                prefix = f"{func.value.attr}."
-            shapes.append(f"{prefix}serve()")
-        elif isinstance(func, ast.Name) and func.id in bare_names:
-            shapes.append(f"{func.id}()")
-    return shapes
-
-
-def _helper_calls(tree: ast.Module) -> list[ast.Call]:
-    """Every ``serve_with_retry(...)`` call, qualified or bare."""
-    calls: list[ast.Call] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if (isinstance(func, ast.Name) and func.id == _SERVE_HELPER) or (
-            isinstance(func, ast.Attribute) and func.attr == _SERVE_HELPER
-        ):
-            calls.append(node)
-    return calls
-
-
-def _imports_helper_from_shared_library(tree: ast.Module) -> bool:
-    """True for ``from mini_app_polis.serve_resilience import serve_with_retry``.
-
-    Also accepts ``import mini_app_polis.serve_resilience`` (the helper is
-    then reached as an attribute), because that resolves to the same
-    shared implementation.
-    """
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            if node.module == _SERVE_HELPER_MODULE and any(
-                alias.name == _SERVE_HELPER for alias in node.names
-            ):
-                return True
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == _SERVE_HELPER_MODULE:
-                    return True
-    return False
-
-
-def _repo_kwarg_present(call: ast.Call) -> bool:
-    """True if the call passes ``repo=`` — or a ``**kwargs`` that may hold it.
-
-    A ``**`` unpacking is accepted rather than flagged: its contents are
-    not statically knowable, and an ERROR-severity false positive is the
-    more expensive mistake.
-    """
-    for kw in call.keywords:
-        if kw.arg == "repo":
-            return True
-        if kw.arg is None:
-            return True
-    return False
-
-
-def _module_paths_for_dotted(repo_path: Path, dotted: str) -> list[Path]:
-    """Candidate files for a dotted module name, src-layout first."""
-    parts = [p for p in dotted.split(".") if p]
-    if not parts:
-        return []
-    candidates: list[Path] = []
-    for prefix in (repo_path / "src", repo_path):
-        base = prefix.joinpath(*parts)
-        candidates.append(base.with_suffix(".py"))
-        candidates.append(base / "__main__.py")
-        candidates.append(base / "__init__.py")
-    return candidates
-
-
-def _start_command_candidates(repo_path: Path, command: str) -> list[Path]:
-    """Files a Railway ``startCommand`` could be launching.
-
-    Handles the two shapes in ecosystem use: ``python -m pkg.main`` and a
-    direct ``python path/to/main.py``, each optionally behind a wrapper
-    such as ``uv run``.
-    """
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        tokens = command.split()
-
-    candidates: list[Path] = []
-    for index, token in enumerate(tokens):
-        if token == "-m" and index + 1 < len(tokens):
-            candidates.extend(_module_paths_for_dotted(repo_path, tokens[index + 1]))
-        elif token.endswith(".py"):
-            candidates.append(repo_path / token)
-    return candidates
-
-
-def _src_package_dir(repo_path: Path) -> Path | None:
-    src = repo_path / "src"
-    if not src.is_dir():
-        return None
-    for child in sorted(src.iterdir()):
-        if child.is_dir() and child.name not in _SKIP_DIRS:
-            return child
-    return None
-
-
-def _resolve_entry_point(repo_path: Path) -> tuple[Path | None, list[str], str]:
-    """Locate the module the platform actually starts.
-
-    Returns ``(resolved_path, candidates_tried, source_description)``.
-
-    ``railway.json``'s ``deploy.startCommand`` is consulted first because
-    CD-017 makes that field mandatory, so it is normally present and it is
-    the only statement of the entry point that the deploy itself honours.
-    ``src/<pkg>/main.py`` is the fallback for a repository whose descriptor
-    is missing or silent about the start command — which CD-017, not this
-    rule, is there to flag.
-
-    Each candidate carries the description of where it came from, so a
-    finding can say which statement of the entry point it inspected
-    instead of leaving the reader to guess.
-    """
-    tried: list[tuple[Path, str]] = []
-
-    data, _ = _load_json(repo_path / "railway.json")
-    if isinstance(data, dict):
-        deploy = data.get("deploy")
-        if isinstance(deploy, dict):
-            command = deploy.get("startCommand")
-            if isinstance(command, str) and command.strip():
-                described = f"railway.json deploy.startCommand ({command.strip()})"
-                tried.extend(
-                    (candidate, described)
-                    for candidate in _start_command_candidates(repo_path, command)
-                )
-
-    package_dir = _src_package_dir(repo_path)
-    if package_dir is not None:
-        tried.append((package_dir / "main.py", "the src/<pkg>/main.py convention"))
-    tried.append((repo_path / "main.py", "the src/<pkg>/main.py convention"))
-
-    labels = [_rel(path, repo_path) for path, _ in tried]
-    for candidate, described in tried:
-        if candidate.is_file():
-            return candidate, labels, described
-    fallback_source = tried[0][1] if tried else "the src/<pkg>/main.py convention"
-    return None, labels, fallback_source
-
-
-def _declares_common_python_utils(repo_path: Path) -> bool | None:
-    """True/False if pyproject.toml declares the dependency; None if unreadable."""
-    pyproject = repo_path / "pyproject.toml"
-    if not pyproject.is_file():
-        return None
-    data, _ = _load_toml(pyproject)
-    if data is None:
-        return None
-
-    project = data.get("project")
-    project = project if isinstance(project, dict) else {}
-    requirements: list[str] = []
-    deps = project.get("dependencies")
-    if isinstance(deps, list):
-        requirements.extend(str(item) for item in deps)
-    optional = project.get("optional-dependencies")
-    if isinstance(optional, dict):
-        for group in optional.values():
-            if isinstance(group, list):
-                requirements.extend(str(item) for item in group)
-    dependency_groups = data.get("dependency-groups")
-    if isinstance(dependency_groups, dict):
-        for group in dependency_groups.values():
-            if isinstance(group, list):
-                requirements.extend(str(item) for item in group)
-
-    accepted = {_canonical_name(name) for name in PYTHON_SHARED_LIBRARY_NAMES}
-    return any(
-        _canonical_name(_requirement_name(req)) in accepted for req in requirements
-    )
-
-
-def check_cd_016(repo_path: Path) -> list[Finding]:
-    """CD-016: the serve() startup registration is wrapped in serve_with_retry.
-
-    A cog registers its flows once, at boot, by calling Prefect's
-    ``serve()``. If Prefect Cloud is unreachable for the few seconds the
-    container takes to start — a routine occurrence during a Cloud
-    deploy — the call raises, the process exits, and Railway's restart
-    policy retries into the same window. ``serve_with_retry`` from
-    ``mini_app_polis.serve_resilience`` wraps that registration in shared
-    backoff, so the check confirms the entry point uses it rather than
-    calling ``serve()`` directly.
-
-    **Step (0) is an applicability gate and is the load-bearing part of
-    this rule.** The catalog lists ``trigger-cog`` in ``applies_to``
-    because some trigger cogs do register Prefect flows — but a
-    trigger-cog running a plain asyncio loop with no ``@flow`` has nothing
-    to register and no ``serve()`` call anywhere. Such a repository is
-    correct, and the rule simply has no subject in it. So before anything
-    else the whole production source tree is scanned for any of
-    ``prefect.serve(``, ``<flow>.serve(``, a bare ``serve(`` bound by
-    ``from prefect import serve``, or ``serve_with_retry(``; if none of
-    those calls exists the function returns ``[]`` and emits nothing.
-    Without the gate this check would report a false ERROR against every
-    correct non-serving cog in the fleet.
-
-    The scan is AST-based on purpose. Substring matching would let a
-    ``serve(`` inside a comment, a docstring or a documentation example
-    open the gate, which reintroduces the same false positive by a
-    different route.
-
-    Then, in the entry point resolved from ``railway.json`` (falling back
-    to ``src/<pkg>/main.py``):
-
-    (1) the module must call ``serve_with_retry(...)`` and must import it
-        from ``mini_app_polis.serve_resilience`` — a same-named local shim
-        does not inherit the shared backoff policy;
-    (2) that call must pass ``repo=``, because the helper cannot infer the
-        cog identity and the retry findings it emits are unattributable
-        without it;
-    (3) ``common-python-utils`` must be a declared dependency, or the
-        import cannot resolve at runtime no matter how the code reads.
-
-    Scope filtering by repo type is the dispatcher's job, not this
-    function's. The gate above is a different thing: check_notes asks for
-    it explicitly because it depends on repository content, which only
-    this function can see.
-    """
-    CHECK_ID = "CD-016"
-    findings: list[Finding] = []
-
-    # (0) Applicability gate.
-    serves_anywhere = False
-    for py in _iter_python_sources(repo_path):
-        tree = _parse_python(py)
-        if tree is None:
-            continue
-        if _direct_serve_calls(tree) or _helper_calls(tree):
-            serves_anywhere = True
-            break
-    if not serves_anywhere:
-        return findings
-
-    # (1) Resolve the entry point and inspect the registration call.
-    entry, tried, source = _resolve_entry_point(repo_path)
-    if entry is None:
-        findings.append(
-            _finding(
-                CHECK_ID,
-                "ERROR",
-                _DIMENSION,
-                (
-                    f"This repository registers Prefect deployments but its "
-                    f"entry point could not be located from {source}; none of "
-                    f"{', '.join(tried) or '(no candidates)'} exists, so the "
-                    f"{_SERVE_HELPER} wrapping cannot be verified."
-                ),
-                (
-                    "Point railway.json deploy.startCommand at the module that "
-                    "registers the flows (for example 'python -m <pkg>.main'), "
-                    "or move that module to src/<pkg>/main.py so the deployed "
-                    "entry point is discoverable from the repository."
-                ),
-            )
-        )
-        return findings
-
-    entry_rel = _rel(entry, repo_path)
-    tree = _parse_python(entry)
-    if tree is None:
-        findings.append(
-            _finding(
-                CHECK_ID,
-                "ERROR",
-                _DIMENSION,
-                (
-                    f"Entry point {entry_rel} (resolved from {source}) could not "
-                    f"be read or parsed as Python, so its serve() registration "
-                    f"cannot be confirmed to use {_SERVE_HELPER}."
-                ),
-                (
-                    f"Fix the syntax of {entry_rel} so the deployed entry point "
-                    f"parses, then confirm it registers flows through "
-                    f"{_SERVE_HELPER} imported from {_SERVE_HELPER_MODULE}."
-                ),
-            )
-        )
-        return findings
-
-    direct = _direct_serve_calls(tree)
-    helper_calls = _helper_calls(tree)
-
-    if not helper_calls:
-        instead = (
-            f"it calls {', '.join(sorted(set(direct)))} directly"
-            if direct
-            else "and no serve registration call was found in it either"
-        )
-        findings.append(
-            _finding(
-                CHECK_ID,
-                "ERROR",
-                _DIMENSION,
-                (
-                    f"Entry point {entry_rel} (resolved from {source}) does not "
-                    f"call {_SERVE_HELPER}() — {instead}. An unwrapped "
-                    f"registration exits the process when Prefect Cloud is "
-                    f"briefly unreachable at boot."
-                ),
-                (
-                    f"Import {_SERVE_HELPER} from {_SERVE_HELPER_MODULE} in "
-                    f"{entry_rel} and register the deployments through it, "
-                    f"passing repo= so retry findings are attributable."
-                ),
-            )
-        )
-    else:
-        if direct:
-            findings.append(
-                _finding(
-                    CHECK_ID,
-                    "ERROR",
-                    _DIMENSION,
-                    (
-                        f"Entry point {entry_rel} calls {_SERVE_HELPER}() but "
-                        f"also registers deployments directly via "
-                        f"{', '.join(sorted(set(direct)))}; the direct call is "
-                        f"still unprotected against a boot-time Prefect Cloud "
-                        f"outage."
-                    ),
-                    (
-                        f"Route every deployment registration in {entry_rel} "
-                        f"through {_SERVE_HELPER} and remove the direct "
-                        f"serve() call."
-                    ),
-                )
-            )
-        if not _imports_helper_from_shared_library(tree):
-            findings.append(
-                _finding(
-                    CHECK_ID,
-                    "ERROR",
-                    _DIMENSION,
-                    (
-                        f"Entry point {entry_rel} calls {_SERVE_HELPER}() but "
-                        f"does not import it from {_SERVE_HELPER_MODULE} — a "
-                        f"same-named local helper does not inherit the shared "
-                        f"backoff policy the standard is there to guarantee."
-                    ),
-                    (
-                        f"Replace the local helper with "
-                        f"'from {_SERVE_HELPER_MODULE} import {_SERVE_HELPER}' "
-                        f"in {entry_rel} so every cog retries identically."
-                    ),
-                )
-            )
-
-        # (2) repo= keyword.
-        if not any(_repo_kwarg_present(call) for call in helper_calls):
-            findings.append(
-                _finding(
-                    CHECK_ID,
-                    "ERROR",
-                    _DIMENSION,
-                    (
-                        f"{_SERVE_HELPER}() in {entry_rel} is called without a "
-                        f"repo= keyword; the shared helper cannot infer the cog "
-                        f"identity, so any finding it emits on retry exhaustion "
-                        f"is unattributable."
-                    ),
-                    (
-                        f'Pass repo="{repo_path.name}" to the '
-                        f"{_SERVE_HELPER}() call in {entry_rel} so retry and "
-                        f"failure findings name the cog that produced them."
-                    ),
-                )
-            )
-
-    # (3) The import has to be able to resolve.
-    declares = _declares_common_python_utils(repo_path)
-    if declares is False:
-        findings.append(
-            _finding(
-                CHECK_ID,
-                "ERROR",
-                _DIMENSION,
-                (
-                    f"common-python-utils is not declared as a dependency in "
-                    f"pyproject.toml, so 'from {_SERVE_HELPER_MODULE} import "
-                    f"{_SERVE_HELPER}' cannot resolve at runtime."
-                ),
-                (
-                    "Add common-python-utils to [project].dependencies (with a "
-                    "[tool.uv.sources] git entry pinned to a version tag) so "
-                    "the shared serve helper is installable in the deployed "
-                    "image."
-                ),
-            )
-        )
-
-    return findings
 
 
 # --- CD-020: the lockfile is released with the version it locks -------------

@@ -202,39 +202,6 @@ def test_is_checker_self_source_helper_positive_and_negative_cases() -> None:
 # --- PIPE-002 / PIPE-005 ------------------------------------------------------
 
 
-def test_pipe004_skips_checker_self_source_literals(tmp_path: Path) -> None:
-    from evaluator_cog.engine.deterministic import check_shared_resource_concurrency
-
-    _write(
-        tmp_path,
-        "src/pkg/engine/deterministic/checker.py",
-        "from prefect import flow\n"
-        "@flow\n"
-        "def fake_checker_flow():\n"
-        '    marker = "session.add("\n'
-        "    return marker\n",
-    )
-    assert check_shared_resource_concurrency(tmp_path) == []
-
-
-def test_pipe004_still_flags_real_flow_missing_concurrency_guard(
-    tmp_path: Path,
-) -> None:
-    from evaluator_cog.engine.deterministic import check_shared_resource_concurrency
-
-    _write(
-        tmp_path,
-        "src/pkg/flows/entry.py",
-        "from prefect import flow\n"
-        "@flow\n"
-        "def write_flow(session):\n"
-        "    session.add({'x': 1})\n"
-        "    session.commit()\n",
-    )
-    findings = check_shared_resource_concurrency(tmp_path)
-    assert any(f["rule_id"] == "PIPE-004" for f in findings)
-
-
 def test_pipe002_flags_session_add_without_upsert_helpers(tmp_path: Path) -> None:
     _write(tmp_path, "src/db.py", "def save(session, row):\n    session.add(row)\n")
     f = check_db_writes_use_upserts(tmp_path)
@@ -801,133 +768,7 @@ def test_test_011_still_flags_bare_patch_without_verification(
 # --- PIPE-006 -----------------------------------------------------------------
 
 
-def test_pipe_006_accepts_repo_local_wrapper(tmp_path: Path) -> None:
-    """PIPE-006: flows calling a repo-local logger wrapper are accepted."""
-    from evaluator_cog.engine.deterministic import check_prefect_run_logger
-
-    src = tmp_path / "src" / "mycog"
-    src.mkdir(parents=True)
-    (src / "helpers.py").write_text(
-        "import logging\n"
-        "from prefect import get_run_logger\n"
-        "\n"
-        "_log = logging.getLogger(__name__)\n"
-        "\n"
-        "def get_prefect_logger():\n"
-        "    try:\n"
-        "        return get_run_logger()\n"
-        "    except Exception:\n"
-        "        return _log\n"
-    )
-    (src / "flow_mod.py").write_text(
-        "from prefect import flow\n"
-        "from .helpers import get_prefect_logger\n"
-        "\n"
-        "@flow\n"
-        "def my_flow():\n"
-        "    logger = get_prefect_logger()\n"
-        "    logger.info('hello')\n"
-    )
-    assert check_prefect_run_logger(tmp_path) == []
-
-
-def test_pipe_006_flags_flow_with_no_logger(tmp_path: Path) -> None:
-    """PIPE-006: flows with no logger acquisition still flagged."""
-    from evaluator_cog.engine.deterministic import check_prefect_run_logger
-
-    src = tmp_path / "src" / "mycog"
-    src.mkdir(parents=True)
-    (src / "flow_mod.py").write_text(
-        "from prefect import flow\n\n@flow\ndef my_flow():\n    print('hello')\n"
-    )
-    assert len(check_prefect_run_logger(tmp_path)) == 1
-
-
-def test_pipe_006_does_not_accept_logger_function_without_run_logger(
-    tmp_path: Path,
-) -> None:
-    """PIPE-006: get_logger without get_run_logger is not a wrapper."""
-    from evaluator_cog.engine.deterministic import check_prefect_run_logger
-
-    src = tmp_path / "src" / "mycog"
-    src.mkdir(parents=True)
-    (src / "helpers.py").write_text(
-        "import logging\n\ndef get_logger():\n    return logging.getLogger(__name__)\n"
-    )
-    (src / "flow_mod.py").write_text(
-        "from prefect import flow\n"
-        "from .helpers import get_logger\n"
-        "\n"
-        "@flow\n"
-        "def my_flow():\n"
-        "    logger = get_logger()\n"
-        "    logger.info('hello')\n"
-    )
-    assert len(check_prefect_run_logger(tmp_path)) == 1
-
-
 # --- CD-015 -------------------------------------------------------------------
-
-
-def test_cd_015_accepts_from_prefect_import_serve(tmp_path: Path) -> None:
-    """CD-015: `from prefect import serve` then `serve(...)` is accepted."""
-    from evaluator_cog.engine.deterministic import check_prefect_serve_pattern
-
-    src = tmp_path / "src" / "mycog"
-    src.mkdir(parents=True)
-    (src / "main.py").write_text(
-        "from prefect import serve\n"
-        "from .flow_mod import my_flow\n"
-        "\n"
-        "def main():\n"
-        "    serve(my_flow.to_deployment(name='x'))\n"
-    )
-    warn_findings = [
-        f for f in check_prefect_serve_pattern(tmp_path) if f.get("severity") == "WARN"
-    ]
-    assert warn_findings == []
-
-
-def test_cd_015_still_warns_when_no_serve(tmp_path: Path) -> None:
-    """CD-015: repo with no serve() call at all is still flagged."""
-    from evaluator_cog.engine.deterministic import check_prefect_serve_pattern
-
-    src = tmp_path / "src" / "mycog"
-    src.mkdir(parents=True)
-    (src / "main.py").write_text("def main(): pass\n")
-    warn_findings = [
-        f for f in check_prefect_serve_pattern(tmp_path) if f.get("severity") == "WARN"
-    ]
-    assert len(warn_findings) == 1
-
-
-def test_cd_015_still_catches_work_pool(tmp_path: Path) -> None:
-    """CD-015: flow.deploy() and work_pool_name still flagged as incompatible."""
-    from evaluator_cog.engine.deterministic import check_prefect_serve_pattern
-
-    src = tmp_path / "src" / "mycog"
-    src.mkdir(parents=True)
-    (src / "main.py").write_text(
-        "def main():\n    flow.deploy(work_pool_name='default')\n"
-    )
-    errors = [
-        f for f in check_prefect_serve_pattern(tmp_path) if f.get("severity") == "ERROR"
-    ]
-    assert len(errors) >= 1
-
-
-def test_cd_015_skips_checker_self_source_literals(tmp_path: Path) -> None:
-    from evaluator_cog.engine.deterministic import check_prefect_serve_pattern
-
-    _write(
-        tmp_path,
-        "src/pkg/engine/deterministic/foo.py",
-        "MARKERS = ['flow.deploy(', 'work_pool_name']\n",
-    )
-    findings = check_prefect_serve_pattern(tmp_path)
-    assert not any(
-        f["rule_id"] == "CD-015" and f["severity"] == "ERROR" for f in findings
-    )
 
 
 # --- API-008 ------------------------------------------------------------------
@@ -1084,7 +925,7 @@ def test_cd010_layer1_passes_per_service_env_without_hostname(tmp_path: Path) ->
         "sentry_sdk.init()\n",
     )
     findings = check_three_layer_observability(
-        tmp_path, cog_subtype="pipeline", language="python"
+        tmp_path, cog_subtype="trigger", language="python"
     )
     assert not any("Layer 1" in f["finding"] for f in findings)
 
