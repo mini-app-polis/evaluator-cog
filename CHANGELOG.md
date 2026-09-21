@@ -1,3 +1,10 @@
+## [3.39.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.1...v3.39.2) (2026-09-21)
+
+
+### Bug Fixes
+
+* **deploy:** build for arm64 Lambda through the shared workflow ([3379a4a](https://github.com/mini-app-polis/evaluator-cog/commit/3379a4ad1076e51acdb9f37c97a90a62351d09ce))
+
 ## [3.39.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.0...v3.39.1) (2026-09-19)
 
 
