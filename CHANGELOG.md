@@ -1,3 +1,10 @@
+## [3.39.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.2...v3.39.3) (2026-09-21)
+
+
+### Bug Fixes
+
+* latest common ([ec49baf](https://github.com/mini-app-polis/evaluator-cog/commit/ec49bafeb0e7a5ecacf61f82c97f3957dbec3c0b))
+
 ## [3.39.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.1...v3.39.2) (2026-09-21)
 
 
