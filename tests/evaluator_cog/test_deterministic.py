@@ -1125,6 +1125,37 @@ def test_check_pytest_coverage_in_ci_flags_missing(tmp_path: Path) -> None:
     assert any(f["rule_id"] == "TEST-006" for f in findings)
 
 
+_SHARED_TEST_CI = (
+    "on:\n  push:\njobs:\n  test:\n"
+    "    uses: mini-app-polis/.github/.github/workflows/python-test.yml@v3\n"
+)
+
+
+def test_check_pytest_coverage_accepts_the_shared_test_workflow(
+    tmp_path: Path,
+) -> None:
+    """Coverage runs inside python-test.yml; ci.yml need not say --cov.
+
+    deejay-cog and evaluator-cog were flagged on their first release after
+    moving their test stage into the shared workflow.
+    """
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(_SHARED_TEST_CI)
+    assert check_pytest_coverage_in_ci(tmp_path) == []
+
+
+def test_check_pytest_coverage_flags_the_shared_workflow_with_coverage_off(
+    tmp_path: Path,
+) -> None:
+    """Overriding pytest-args without --cov is the one way to turn it off."""
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        _SHARED_TEST_CI + "    with:\n      pytest-args: -q\n"
+    )
+    findings = check_pytest_coverage_in_ci(tmp_path)
+    assert [f["rule_id"] for f in findings] == ["TEST-006"]
+
+
 def test_check_pytest_config_flags_missing(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
     findings = check_pytest_config(tmp_path)

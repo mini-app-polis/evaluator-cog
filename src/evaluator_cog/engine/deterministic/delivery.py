@@ -121,22 +121,56 @@ def check_canonical_ci_job_names(repo_path: Path) -> list[Finding]:
     return findings
 
 
+#: The fleet's shared test stage. It runs pytest with ``--cov=src`` unless a
+#: caller overrides ``pytest-args``, so delegating to it measures coverage
+#: without ci.yml ever containing the string this check used to look for.
+_SHARED_TEST_WORKFLOW = "workflows/python-test.yml"
+
+
+def _delegates_coverage(repo_path: Path) -> bool:
+    """True when a ci.yml job calls the shared test workflow with coverage on.
+
+    Coverage stays on unless the caller passes ``pytest-args`` without
+    ``--cov`` — that is the one way to turn it off through the delegation,
+    so it is the one thing checked.
+    """
+    workflow = _ci_workflow(repo_path)
+    jobs = workflow.get("jobs") if workflow else None
+    if not isinstance(jobs, dict):
+        return False
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        if _SHARED_TEST_WORKFLOW not in str(job.get("uses") or ""):
+            continue
+        args = (job.get("with") or {}).get("pytest-args")
+        if args is None or "--cov" in str(args):
+            return True
+    return False
+
+
 def check_pytest_coverage_in_ci(repo_path: Path) -> list[Finding]:
-    """TEST-006: pytest coverage measured in CI."""
+    """TEST-006: pytest coverage measured in CI, inline or by delegation."""
     CHECK_ID = "TEST-006"
     findings = []
     ci = repo_path / ".github" / "workflows" / "ci.yml"
     if not ci.exists():
         return findings
     content = ci.read_text()
-    if "pytest --cov" not in content and "pytest-cov" not in content:
+    if (
+        "pytest --cov" not in content
+        and "pytest-cov" not in content
+        and not _delegates_coverage(repo_path)
+    ):
         findings.append(
             _finding(
                 "TEST-006",
                 "WARN",
                 "testing_coverage",
-                "Coverage not measured in CI — pytest --cov not found in ci.yml.",
-                "Add --cov flag to pytest invocation in CI.",
+                "Coverage not measured in CI — pytest --cov not found in ci.yml, "
+                "and no job calls the shared python-test.yml with coverage on.",
+                "Call mini-app-polis/.github's python-test.yml as the `test` job, "
+                "or add --cov to the pytest invocation in CI.",
             )
         )
     return findings
