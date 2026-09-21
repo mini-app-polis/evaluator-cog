@@ -15,30 +15,17 @@ traits:
 # releases. The event source mapping invokes the function. pipeline_eval.py
 # remains a library module called in-process by other cogs.
 #
-# The type is still pipeline-cog because what this repo *is* has not
-# changed — it consumes a source of truth, evaluates, and files findings.
-# What changed is how a run starts. Several rules under this type assume
-# Prefect is the only answer to that, and they are exempted individually
-# below rather than by relabelling the repo; the right fix is in the
-# standards, and this repo is the proof of concept that motivates it.
+# That is what pipeline-cog means now (ecosystem-standards ADR-009), so the
+# Prefect-era exemptions this file used to carry are gone with the rules
+# they exempted from.
 
 exemptions:
-  - rule: CD-015
-    reason: >
-      CD-015 asserts a prefect.serve() registration exists and has no
-      applicability gate, so it WARNs on any cog that does not register
-      flows. evaluator-cog registers none and serves nothing: there is no
-      resident process at all. The entry point is
-      adapters/lambda_worker.lambda_handler, invoked by an SQS event source
-      mapping. CD-016 already models this correctly — it gates on whether
-      the repo serves anything before checking how — and CD-015 needs the
-      same gate.
   - rule: PIPE-015
     reason: >
-      The canonical pattern PIPE-015 describes is a Drive event picked up
-      by watcher-cog and turned into a Prefect flow run. There is no input
-      artifact here to watch: the event that should evaluate a repository
-      is that repository cutting a release, and CI posts it to
+      The canonical pattern PIPE-015 describes starts from a Drive event
+      picked up by watcher-cog. There is no input artifact here to watch:
+      the event that should evaluate a repository is that repository
+      cutting a release, and CI posts it to
       api-kaianolevine-com, which enqueues it. That is event-driven — more
       so than the daily cron this exemption used to describe — but it is
       not the shape PIPE-015 checks for.
@@ -53,34 +40,6 @@ exemptions:
       rather than per invocation so a warm container initialises once. The
       LLM conformance pass cannot read source content directly and
       incorrectly flags this as absent.
-  - rule: PIPE-004
-    reason: >
-      There is no in-process concurrency guard because there is no longer
-      any in-process state to guard. PIPE-004 expects
-      prefect.concurrency('...', occupy=1), which is unavailable outside a
-      Prefect runtime; the threading.Lock that replaced it went with the
-      HTTP adapter, and the module globals it was protecting — the catalog,
-      the delivery tally, the run report — are now per-run on RunContext,
-      threaded as a required argument so a call site that forgets it is a
-      TypeError.
-      What limits concurrency now is the platform: maximum_concurrency on
-      the event source mapping (infra/worker.tf), which is a fleet-wide
-      ceiling rather than a per-process lock and is the thing
-      prefect.concurrency was actually standing in for.
-
-deferrals:
-  # CD-012 was retired in ecosystem-standards (ADR-008) and replaced by
-  # CD-019, AUTH-003 and AUTH-004. This repo's deterministic checks still
-  # register CD-012 and AUTH-001 and need to be rewritten to the new rules —
-  # tracked as work on the check registry, not as a deferral here.
-  - rule: PIPE-006
-    reason: >
-      The dual get_run_logger()/stdlib fallback pattern applies to @flow entry
-      points, and this repo no longer has one — conformance.py imports nothing
-      from prefect, and pipeline_eval.py is a library module called in-process
-      by other cogs. Both use the shared mini_app_polis logger directly, which
-      is correct for code with no Prefect run context to resolve.
-    until: null
 
 # TEST-001/002/004 covered by pipeline-cog type scoping (evaluator has no
 # normalization/deduplication of external data — its output is evaluation findings).

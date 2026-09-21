@@ -708,6 +708,13 @@ nothing Prefect offers has a subject. This is cleanup, not a decision.
   to write the exemption five times. Note evaluator-cog's own
   `engine/deterministic/` still *grades other repos* on these — those checks
   change meaning here rather than disappearing.
+  *Done after the second slice:* ecosystem-standards ADR-009 redefines
+  `pipeline-cog` as a Lambda behind its own queue. PIPE-001, PIPE-004,
+  PIPE-006, PIPE-009, PIPE-012, CD-005, CD-015 and CD-016 are retired, their
+  checks deleted here; PIPE-016–019 grade the new runtime from `infra/*.tf`,
+  PIPE-007 asks for call-site retries without Prefect, and CD-010 and CD-024
+  read a pipeline cog's alarm and limits from `infra/`. PIPE-015 is rescoped
+  to the API → queue path.
 - **Docs:** `evaluator-cog/docs/PREFECT_AUTOMATION.md`.
 - **The `prefect` dependency** in each converted cog's `pyproject.toml`.
 - **The Prefect Cloud account itself** — a cost line and a dependency.

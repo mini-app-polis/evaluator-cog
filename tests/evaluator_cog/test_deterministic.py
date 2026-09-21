@@ -21,7 +21,6 @@ from evaluator_cog.engine.deterministic import (
     check_env_example_settings_parity,
     check_eval_003,
     check_eval_007,
-    check_evaluation_step,
     check_failed_prefix,
     check_healthchecks_integration,
     check_mono_003,
@@ -35,7 +34,6 @@ from evaluator_cog.engine.deterministic import (
     check_no_setup_py,
     check_pnpm_lockfile,
     check_pre_commit,
-    check_prefect_serve_pattern,
     check_pyproject,
     check_pytest_config,
     check_pytest_coverage_in_ci,
@@ -47,7 +45,6 @@ from evaluator_cog.engine.deterministic import (
     check_releaserc,
     check_releaserc_assets,
     check_respx_for_http_mocking,
-    check_retry_logic,
     check_settings_field_consistency,
     check_shadcn,
     check_shared_library_used,
@@ -782,40 +779,6 @@ def test_check_tailwind_and_shadcn_and_forms() -> None:
     assert check_react_hook_form_zod(passing) == []
 
 
-def test_check_retry_logic_flags_task_without_retries() -> None:
-    repo = _make_repo(
-        {
-            "src/my_pkg/flow.py": "from prefect import task\nimport httpx\n@task\ndef x():\n    return httpx.get('https://x')\n"
-        }
-    )
-    findings = check_retry_logic(repo)
-    assert any(f["rule_id"] == "PIPE-007" for f in findings)
-
-
-def test_check_retry_logic_passes_with_retries() -> None:
-    repo = _make_repo(
-        {
-            "src/my_pkg/flow.py": "from prefect import task\nimport httpx\n@task(retries=2)\ndef x():\n    return httpx.get('https://x')\n"
-        }
-    )
-    assert check_retry_logic(repo) == []
-
-
-def test_check_evaluation_step_flags_missing() -> None:
-    repo = _make_repo({"src/my_pkg/flow.py": "def run():\n    return 1\n"})
-    findings = check_evaluation_step(repo)
-    assert any(f["rule_id"] == "PIPE-009" for f in findings)
-
-
-def test_check_evaluation_step_passes_when_signal_present() -> None:
-    repo = _make_repo(
-        {
-            "src/my_pkg/flow.py": "def run():\n    url='/v1/evaluations'\n    return url\n"
-        }
-    )
-    assert check_evaluation_step(repo) == []
-
-
 def test_check_shared_library_python_flags_missing() -> None:
     repo = _make_repo({"pyproject.toml": "[project]\nname='x'\n"})
     findings = check_shared_library_used(repo, language="python")
@@ -998,24 +961,6 @@ def test_checked_rule_ids_includes_pyproject_subrules() -> None:
 
 
 # ── CD-015: Prefect serve() ───────────────────────────────────────────────────
-
-
-def test_check_prefect_serve_flags_work_pool(tmp_path: Path) -> None:
-    (tmp_path / "src" / "my_cog").mkdir(parents=True)
-    (tmp_path / "src" / "my_cog" / "main.py").write_text(
-        "flow.deploy(name='x', work_pool_name='my-pool')\n"
-    )
-    findings = check_prefect_serve_pattern(tmp_path)
-    assert any(f["rule_id"] == "CD-015" for f in findings)
-
-
-def test_check_prefect_serve_passes_when_serve_present(tmp_path: Path) -> None:
-    (tmp_path / "src" / "my_cog").mkdir(parents=True)
-    (tmp_path / "src" / "my_cog" / "main.py").write_text(
-        "from prefect import flow\n@flow\ndef my_flow(): pass\nprefect.serve(my_flow)\n"
-    )
-    findings = check_prefect_serve_pattern(tmp_path)
-    assert not any(f["severity"] == "ERROR" for f in findings)
 
 
 # ── VER-008: .releaserc.json assets ──────────────────────────────────────────
@@ -1395,22 +1340,6 @@ def test_trigger_cog_skips_pipe008(tmp_path: Path) -> None:
     assert "PIPE-008" not in rule_ids, "PIPE-008 must not fire on trigger cogs"
 
 
-def test_trigger_cog_skips_pipe009_evaluation_step(tmp_path: Path) -> None:
-    """PIPE-009 (evaluation step) must not fire on trigger cogs."""
-    src = tmp_path / "src" / "watcher_cog"
-    src.mkdir(parents=True)
-    (src / "main.py").write_text("# trigger cog — no pipeline\n")
-
-    result = run_all_checks(
-        tmp_path,
-        language="python",
-        dod_type="new_cog",
-        cog_subtype="trigger",
-    )
-    rule_ids = [f["rule_id"] for f in result.findings]
-    assert "PIPE-009" not in rule_ids, "PIPE-009 must not fire on trigger cogs"
-
-
 def test_retired_pattern_in_tests_not_flagged(tmp_path: Path) -> None:
     """Retired trigger patterns in tests/ must not trigger PIPE-008."""
     src = tmp_path / "src" / "my_cog"
@@ -1590,7 +1519,7 @@ def test_evaluator_config_trigger_cog_skips_pipeline_rules(tmp_path: Path) -> No
         language="python",
         evaluator_config=cfg,
     )
-    pipe = {"PIPE-008", "PIPE-009", "PIPE-011"}
+    pipe = {"PIPE-008", "PIPE-011", "PIPE-016", "PIPE-017", "PIPE-018"}
     hit = {f["rule_id"] for f in result.findings} & pipe
     assert not hit, f"pipeline rules should not fire for trigger-cog: {hit}"
 
@@ -2213,58 +2142,6 @@ def test_type_to_dod_mapping(
     expected: str | None,
 ) -> None:
     assert _type_to_dod(repo_type, language) == expected
-
-
-def test_cd015_accepts_serve_with_retry(tmp_path: Path) -> None:
-    """Clause (c) of the rule, which the check never implemented.
-
-    CD-016 requires registration through serve_with_retry; CD-015 was
-    only looking for prefect.serve. A cog that took CD-016's advice
-    collected a CD-015 WARN for it — the two rules contradicted each
-    other in practice.
-    """
-    src = tmp_path / "src/pkg"
-    src.mkdir(parents=True)
-    (src / "main.py").write_text(
-        "from mini_app_polis.serve_resilience import serve_with_retry\n"
-        "\n"
-        "def main():\n"
-        "    serve_with_retry(thing, repo='pkg')\n"
-    )
-    assert check_prefect_serve_pattern(tmp_path) == []
-
-
-def test_cd015_does_not_pass_on_a_comment_about_serve(tmp_path: Path) -> None:
-    """A docstring explaining why the repo does NOT call it is not a call.
-
-    evaluator-cog and deejay-cog were both passing on the string
-    "prefect.serve(" appearing in prose, while a repo that registered
-    correctly through serve_with_retry failed.
-    """
-    src = tmp_path / "src/pkg"
-    src.mkdir(parents=True)
-    (src / "main.py").write_text(
-        '"""This cog does not use prefect.serve() — it fires runs via\n'
-        "get_client() instead. See prefect.serve( for the shape we avoid.\n"
-        '"""\n'
-        "\n"
-        "def main():\n"
-        "    return None\n"
-    )
-    findings = check_prefect_serve_pattern(tmp_path)
-    assert len(findings) == 1
-    assert findings[0]["rule_id"] == "CD-015"
-
-
-def test_cd015_bare_serve_needs_the_prefect_import(tmp_path: Path) -> None:
-    """A bare serve() only counts where serve came from prefect."""
-    src = tmp_path / "src/pkg"
-    src.mkdir(parents=True)
-    (src / "other.py").write_text("from prefect import serve\n")
-    (src / "main.py").write_text(
-        "from .helpers import serve\n\ndef main():\n    serve(thing)\n"
-    )
-    assert check_prefect_serve_pattern(tmp_path) != []
 
 
 # --------------------------------------------------------------------------
