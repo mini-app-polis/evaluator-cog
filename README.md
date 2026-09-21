@@ -163,10 +163,10 @@ Add the `evaluate` job to `ci.yml`, after `release`:
 new evaluator invalidates every repository's last result at once, where every
 other release invalidates one.
 
-In evaluator-cog the sweep runs after the `deploy` job, which calls
-`deploy-worker.yml` on the release tag and finishes only once AWS reports the
-new code's checksum. So a fleet pass is always consumed by the evaluator the
-release built. `deploy-worker.yml` cannot trigger itself on `release:
+In evaluator-cog the sweep runs after the `deploy` job, which calls the
+shared `lambda-deploy.yml` on the release tag and finishes only once AWS
+reports the new code's checksum. So a fleet pass is always consumed by the
+evaluator the release built. The deploy cannot trigger itself on `release:
 published`: semantic-release publishes with `GITHUB_TOKEN`, and GitHub starts
 no workflows from that token's events.
 

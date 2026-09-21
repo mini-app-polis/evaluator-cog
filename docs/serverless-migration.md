@@ -597,11 +597,25 @@ running manually-deployed code across releases until a finding's wording
 gave it away. Anything that must run on the new code —
 the fleet sweep here — then `needs:` the deploy job instead of sleeping.
 
-**What is a template now.** The fan-out and registry in the API, the Lambda
-entrypoint's `batchItemFailures` handling, the deploy workflow's layout and
-import guards, and `infra/` with `name_prefix`. None of these are design
-problems for the next cog. Set `create_github_oidc_provider = false` on
-every cog after the first.
+**What is a template now.** The Lambda entrypoint's `batchItemFailures`
+handling and `infra/` with `name_prefix` are copied. The producer and the
+build are not copied any more — they are shared:
+
+- **The API side is `services/job_queue.py`.** A cog's dispatcher builds
+  its message and names its cog; the queue URL is derived from the cog and
+  the API's environment (`<cog>-jobs` in production, `<cog>-dev-jobs`
+  elsewhere), so there is no `<COG>_QUEUE_URL` to configure.
+- **Test and deploy are `python-test.yml` and `lambda-deploy.yml` in
+  mini-app-polis/.github**, called from `ci.yml` with the handler,
+  architecture and runtime from `infra/worker.tf`. The copied
+  `deploy-worker.yml` chose wheels for the GitHub runner and checked imports
+  on the runner: deejay-cog's first deploy passed that check and failed at
+  import on Lambda, and this cog had been shipping x86_64 builds of
+  pydantic-core and cryptography to its arm64 function without tripping it.
+
+In `infra/`, `create_github_oidc_provider`, `create_api_producer` and
+`create_account_budget` are all false for every cog after the first —
+deejay-cog's copy defaults them so, and is the better copy to start from.
 
 ## Retire Prefect
 

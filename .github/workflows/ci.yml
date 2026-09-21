@@ -16,28 +16,16 @@ jobs:
   # mini-app-polis/.github so the pinned tool versions and the gating
   # decisions are in one place; see that repo's README for the inputs.
   security:
-    uses: mini-app-polis/.github/.github/workflows/security.yml@v2
+    uses: mini-app-polis/.github/.github/workflows/security.yml@v3
     with:
       language: python
       package-manager: uv
 
+  # Lock check, lint, format and tests, from the shared workflow so every
+  # cog's `test` stage is the same stage. See mini-app-polis/.github.
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-      - run: uv python install 3.11
-      # CD-020. `uv sync` without --locked silently re-resolves when the
-      # lockfile and pyproject.toml disagree, so a stale lock passes CI and
-      # then fails the deploy, where `uv sync --locked` refuses the drift.
-      # Checked here because this is where the failure is cheap to fix.
-      - name: Verify the lockfile matches pyproject
-        run: uv lock --check
+    uses: mini-app-polis/.github/.github/workflows/python-test.yml@v3
 
-      - run: uv sync --all-extras
-      - run: uv run ruff check
-      - run: uv run ruff format --check
-      - run: uv run pytest --cov=src --cov-report=term-missing
   release:
     needs: [test, security]
     runs-on: ubuntu-latest
@@ -84,7 +72,7 @@ jobs:
         id: released
         run: echo "tag=$(git tag --points-at HEAD --list 'v*' | head -n1)" >> "$GITHUB_OUTPUT"
 
-  # The worker is deployed here rather than by deploy-worker.yml's own
+  # The worker is deployed here, as a job, rather than by a workflow's own
   # trigger: a release published with GITHUB_TOKEN starts no workflows.
   deploy:
     needs: release
@@ -92,9 +80,24 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    uses: ./.github/workflows/deploy-worker.yml
+    uses: mini-app-polis/.github/.github/workflows/lambda-deploy.yml@v3
     with:
       ref: ${{ needs.release.outputs.tag }}
+      # These three match infra/worker.tf; the deploy refuses a function
+      # whose architecture differs.
+      handler: evaluator_cog.adapters.lambda_worker.lambda_handler
+      architecture: arm64
+      python-version: "3.11"
+      # The Google client stack, which evaluator-cog never imports but
+      # common-utils depends on unconditionally. The deploy imports every
+      # module in Lambda's image, so a strip that removes something used
+      # fails the build rather than a message.
+      strip: >-
+        googleapiclient google gspread google_auth_httplib2.py httplib2
+        oauth2client pyasn1 pyasn1_modules rsa uritemplate
+      role-arn: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      region: ${{ vars.AWS_REGION }}
+      function-name: ${{ vars.AWS_FUNCTION_NAME }}
 
   # A fleet sweep, not a single repository. A new evaluator can reach a
   # different verdict on every repo in the fleet, so all of them are stale

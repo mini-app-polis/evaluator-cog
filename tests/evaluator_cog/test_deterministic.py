@@ -2426,6 +2426,23 @@ def test_cd_026_accepts_an_evaluate_job(tmp_path) -> None:
     assert check_canonical_ci_job_names(_repo_with_ci(tmp_path, with_evaluate)) == []
 
 
+def test_cd_026_accepts_a_deploy_job(tmp_path) -> None:
+    """`deploy` is the stage between release and evaluate for a Lambda cog.
+
+    evaluator-cog and deejay-cog both carry it, calling the shared
+    lambda-deploy.yml, and this check used to flag both on every release.
+    """
+    with_deploy = _GATED + (
+        "  deploy:\n"
+        "    needs: release\n"
+        "    uses: org/.github/.github/workflows/lambda-deploy.yml@v3\n"
+        "  evaluate:\n"
+        "    needs: deploy\n"
+        "    uses: org/.github/.github/workflows/evaluate.yml@v3\n"
+    )
+    assert check_canonical_ci_job_names(_repo_with_ci(tmp_path, with_deploy)) == []
+
+
 def test_cd_026_flags_a_non_canonical_work_job(tmp_path) -> None:
     findings = check_canonical_ci_job_names(
         _repo_with_ci(tmp_path, _GATED.replace("  test:", "  build:"))
