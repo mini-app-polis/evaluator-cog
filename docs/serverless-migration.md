@@ -11,11 +11,12 @@ being used for, and the final step is the cleanup. See "What Prefect is doing
 today" before starting, because two of its jobs need deliberate replacements
 rather than deletion.
 
-**evaluator-cog is done.** It runs on Lambda behind an SQS event source
-mapping, holds no resident process, and has no Prefect. The Railway service
-is gone. What that slice left behind is in "After the first slice" at the
-end — read it before starting the next cog, because most of it is a
-template and one item is a live credential.
+**evaluator-cog and deejay-cog are done.** Both run on Lambda behind an SQS
+event source mapping, hold no resident process, and have no Prefect.
+What each slice left behind is in "After the first slice" and "After the
+second slice" at the end — read both before starting the next cog. The
+second supersedes parts of the first: the producer, the build and the
+Terraform workflow are shared or scripted now, not copied.
 
 **One cog at a time, all the way to Lambda.** The plan originally moved the
 whole fleet onto queues and then moved every worker to Lambda in one wave. It no
@@ -116,7 +117,7 @@ and a wrong answer costs one cog to unwind rather than four.
 What does **not** fit in a slice is the final step. Prefect cannot be retired
 until the last cog is off it, so that stays terminal.
 
-**Order:** evaluator-cog first (done), then deejay-cog — its
+**Order:** evaluator-cog first (done), then deejay-cog (done) — its
 `deejay_router(mode)` is already `handler(event)` and `DeejayMode` is already
 the message schema — then transcription-cog and wiki-curator-cog.
 
@@ -238,7 +239,9 @@ What to build, per cog:
   It is the same shape every time: build the message, `asyncio.to_thread`
   the blocking boto3 call, insist on a `MessageId`, and report to the
   errors channel if it did not land.
-- The queue URL as a setting. One per cog — `<COG>_QUEUE_URL`.
+- Nothing to configure for the queue. `services/job_queue.py` derives it
+  from the cog name and the API's environment — see "After the second
+  slice".
 - The route or webhook that calls it.
 
 **The message envelope is fixed and both sides must agree:**
@@ -275,9 +278,13 @@ Two things fall out, and the second is the reason to do this first:
 - The three cogs get a producer without waiting for anything.
 - **`prefect_trigger.py` is watcher-cog's only use of Prefect.** It serves
   no deployments — it is a Drive poller with one `get_client()` call.
-  Replacing that module drops `prefect` from its `pyproject.toml`
-  entirely, ~70 transitive packages with it, and removes a whole cog from
-  the Prefect retirement without rewriting it.
+  Replacing it drops `prefect` from its `pyproject.toml` entirely, ~70
+  transitive packages with it — **but only once every cog it triggers has
+  an API route.** This section first said the deejay change would do that;
+  it does not, because `wcs-notes` and `voice-notes` still fire
+  transcription-cog's Prefect deployment. `WatcherConfig` takes exactly one
+  of `api_path` or `deployment_id`, and Prefect leaves watcher with
+  transcription-cog.
 
 Watcher keeps polling Drive from a resident container after this, and
 keeps costing what a resident container costs. That is what "Retiring
@@ -616,6 +623,70 @@ build are not copied any more — they are shared:
 In `infra/`, `create_github_oidc_provider`, `create_api_producer` and
 `create_account_budget` are all false for every cog after the first —
 deejay-cog's copy defaults them so, and is the better copy to start from.
+
+## After the second slice
+
+What deejay-cog's migration left behind. Most of it was learned by
+breaking something on the day, so each item says what broke.
+
+**Start from deejay-cog's `infra/`, not this repo's.** Account-level
+resources default off, variables validate their shape, and Terraform runs
+through `infra/tf`. A new cog changes `name_prefix`, the `SECRETS` list in
+`tf`, the environment block in `worker.tf`, and the handler.
+
+**Terraform runs through `./tf`, never bare.** It reads the cog's secrets
+from Doppler (`doppler setup` once per directory), normalises the Google
+key, refuses a `terraform.tfvars` that would override a secret, and never
+lets Terraform prompt. The first apply shipped `terraform.tfvars.example`'s
+placeholders — an API key of `...` and a 36-byte stub for the Google JSON —
+and the function failed every run while its failure report 401'd on the
+same key. The hand routes tried next lost the value to the clipboard and to
+an `unset` pasted in the same block. evaluator-cog should adopt `tf` the
+next time its infra is touched.
+
+**Queues are derived, not configured.** `job_queue.queue_name(cog)` is
+`<cog>-jobs` in production and `<cog>-dev-jobs` anywhere else, resolved
+through `current_environment()` so an alias like `prod` cannot misroute.
+The development API had been holding production's `evaluator-jobs` URL, so
+dev-triggered evaluations ran in production. A dev stack, when wanted, is
+the same `infra/` applied with `name_prefix = "<cog>-dev"`; the producer's
+`*-jobs` wildcard already covers it.
+
+**The watcher's API trigger is gated to production**, like its Prefect
+trigger. A development watcher polls production's Drive folders, so
+anything it fires is a second trigger for production's uploads — whatever
+the API it reaches does with it. It reports "Would trigger" instead.
+
+**Build for the runtime, test in the runtime.** The shared
+`lambda-deploy.yml` installs wheels for `<arch>-manylinux_2_17` (python3.11
+is Amazon Linux 2, glibc 2.26), fails if any library needs newer glibc, and
+imports every module and probes the handler inside
+`public.ecr.aws/lambda/python:<version>`. deejay-cog's first zip was built
+for the Ubuntu runner, passed an import check run on the runner, and failed
+at import on Lambda with `GLIBC_2.28 not found`.
+
+**Pass a run id everywhere.** The worker passes the SQS message id into the
+flow's `RunReport`; watcher passes the trigger's message id with its
+"Triggered" report, so both carry the same id. Anything left to
+`get_run_id()` arrives as `local-run`.
+
+**INFO logging on Lambda needed a common-utils fix.** The runtime installs
+a root handler at WARNING before any import, so `logging.basicConfig` in
+`mini_app_polis.logger` was a no-op and every INFO line a cog wrote was
+dropped, while httpx's — explicitly levelled — still printed. The shared
+logger now carries `LOGGING_LEVEL` itself. Cogs pick it up on their next
+lock update.
+
+**Retries that were never retries.** deejay-cog's three `@task(retries=2)`
+all decorated functions that catch every exception, so Prefect never
+retried them. Check that before porting a retry to `tenacity`: the count of
+`retries=` is not the count of retries that ever happened.
+
+**Serialisation needs the Lambda quota.** deejay's sweep must run one at a
+time; the event source mapping's floor is two. The quota increase to 1,000
+was requested on 2026-09-21; once approved, set `reserved_concurrency = 1`
+and `max_receive_count = 5` (throttled deliveries count as receives), with
+`worker_timeout_seconds = 300` — a one-file run measured 14–15 s.
 
 ## Retire Prefect
 
