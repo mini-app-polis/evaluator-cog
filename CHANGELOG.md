@@ -1,3 +1,10 @@
+# [3.40.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.3...v3.40.0) (2026-09-21)
+
+
+### Features
+
+* **checks:** grade pipeline cogs on the queue/Lambda runtime ([5bb1e14](https://github.com/mini-app-polis/evaluator-cog/commit/5bb1e14d9d2c3e92640eb5f6588745f43b83d42c))
+
 ## [3.39.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.2...v3.39.3) (2026-09-21)
 
 
