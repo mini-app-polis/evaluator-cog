@@ -331,7 +331,7 @@ def _fetch_yaml(url: str) -> dict:
     """Fetch and parse a YAML file from a URL. Never raises — returns {} on failure."""
     timeout = float(os.environ.get("EVALUATOR_HTTP_TIMEOUT_SECONDS", "20"))
     try:
-        r = httpx.get(url, timeout=timeout)
+        r = _get_with_retry(url, timeout=timeout)
         r.raise_for_status()
         return yaml.safe_load(r.text) or {}
     except Exception as exc:
@@ -357,7 +357,7 @@ def _fetch_catalog(*, ctx: RunContext) -> dict:
         return ctx.catalog
     timeout = float(os.environ.get("EVALUATOR_HTTP_TIMEOUT_SECONDS", "20"))
     try:
-        response = httpx.get(
+        response = _get_with_retry(
             _STANDARDS_CATALOG_URL,
             timeout=timeout,
             headers={"User-Agent": _USER_AGENT},
@@ -641,6 +641,55 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
             except ValueError:
                 pass
     return min(_DOWNLOAD_BACKOFF_SECONDS * (2**attempt), _DOWNLOAD_BACKOFF_CAP_SECONDS)
+
+
+#: Statuses worth another attempt: GitHub's secondary rate limit (403),
+#: throttling (429) and server-side failures. Anything else — a 404, a 401 —
+#: is an answer, and asking again cannot change it.
+_RETRYABLE_STATUS = frozenset({403, 429, 500, 502, 503, 504})
+
+
+def _get_with_retry(
+    url: str,
+    *,
+    timeout: float,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
+    """GET ``url`` with the zipball download's retry policy.
+
+    Returns the last response, whatever its status — the caller decides
+    what a non-2xx means, as it did before. Raises the last transport
+    error if no attempt got a response at all.
+
+    The catalog fetch and the ecosystem.yaml fetch were single attempts.
+    One 503 from the API behind the catalog failed the whole run, and the
+    queue's redelivery re-ran it from the top minutes later — the right
+    backstop for a run that cannot succeed, the wrong answer to a blip.
+    """
+    for attempt in range(_DOWNLOAD_ATTEMPTS):
+        last = attempt == _DOWNLOAD_ATTEMPTS - 1
+        response: httpx.Response | None = None
+        try:
+            response = httpx.get(url, timeout=timeout, headers=headers)
+        except httpx.TransportError as exc:
+            if last:
+                raise
+            detail = f"{type(exc).__name__}: {exc}"
+        else:
+            if last or response.status_code not in _RETRYABLE_STATUS:
+                return response
+            detail = f"HTTP {response.status_code}"
+        delay = _retry_delay(response, attempt)
+        log.warning(
+            "conformance: GET %s failed (%s) — retrying in %.1fs (attempt %d of %d)",
+            url,
+            detail,
+            delay,
+            attempt + 2,
+            _DOWNLOAD_ATTEMPTS,
+        )
+        time.sleep(delay)
+    raise AssertionError("unreachable: the last attempt returns or raises")
 
 
 def _fetch_zipball(

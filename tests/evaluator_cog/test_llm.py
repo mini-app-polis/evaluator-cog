@@ -774,3 +774,80 @@ def test_excepted_llm_rule_is_filtered() -> None:
     assess_section = prompt.split("RULES TO ASSESS:", 1)[1]
     listing_block, _, _ = assess_section.partition("WHAT YOU ARE AND ARE NOT")
     assert "PIPE-013" not in listing_block
+
+
+# ---------------------------------------------------------------------------
+# _anthropic_messages_create — retry
+# ---------------------------------------------------------------------------
+
+_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+_OK = httpx.Response(200, json={"content": [{"type": "text", "text": "ok"}]})
+
+
+def _call() -> str:
+    return _anthropic_messages_create(
+        api_key="k", model="m", max_tokens=10, user_prompt="x"
+    )
+
+
+@pytest.fixture
+def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    delays: list[float] = []
+    monkeypatch.setattr("evaluator_cog.engine.llm.time.sleep", delays.append)
+    return delays
+
+
+@respx.mock
+def test_anthropic_retries_overload_then_succeeds(slept: list[float]) -> None:
+    """A 529 is Anthropic being busy, not the request being wrong."""
+    route = respx.post(_MESSAGES_URL).mock(
+        side_effect=[httpx.Response(529, json={}), httpx.Response(429, json={}), _OK]
+    )
+    assert _call() == "ok"
+    assert route.call_count == 3
+    assert slept == [2.0, 4.0]
+
+
+@respx.mock
+def test_anthropic_honours_retry_after(slept: list[float]) -> None:
+    respx.post(_MESSAGES_URL).mock(
+        side_effect=[httpx.Response(429, headers={"retry-after": "7"}), _OK]
+    )
+    assert _call() == "ok"
+    assert slept == [7.0]
+
+
+@respx.mock
+def test_anthropic_gives_up_after_three_attempts(slept: list[float]) -> None:
+    route = respx.post(_MESSAGES_URL).mock(return_value=httpx.Response(503, json={}))
+    with pytest.raises(httpx.HTTPStatusError):
+        _call()
+    assert route.call_count == 3
+    assert len(slept) == 2
+
+
+@respx.mock
+def test_anthropic_does_not_retry_a_bad_request(slept: list[float]) -> None:
+    route = respx.post(_MESSAGES_URL).mock(return_value=httpx.Response(400, json={}))
+    with pytest.raises(httpx.HTTPStatusError):
+        _call()
+    assert route.call_count == 1
+    assert slept == []
+
+
+@respx.mock
+def test_anthropic_retries_a_connection_error(slept: list[float]) -> None:
+    route = respx.post(_MESSAGES_URL).mock(
+        side_effect=[httpx.ConnectError("refused"), _OK]
+    )
+    assert _call() == "ok"
+    assert route.call_count == 2
+
+
+@respx.mock
+def test_anthropic_does_not_retry_a_read_timeout(slept: list[float]) -> None:
+    """A slow model costs a full timeout per attempt; the job's deadline is fixed."""
+    route = respx.post(_MESSAGES_URL).mock(side_effect=httpx.ReadTimeout("slow"))
+    with pytest.raises(httpx.ReadTimeout):
+        _call()
+    assert route.call_count == 1

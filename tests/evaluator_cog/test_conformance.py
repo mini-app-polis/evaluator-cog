@@ -695,10 +695,7 @@ def test_monorepo_deterministic_findings_carry_the_deterministic_flow_name(
     """
 
     def clean(*args, **kwargs):
-        result = MagicMock()
-        result.findings = []
-        result.checked_rule_ids = set()
-        return result
+        return SimpleNamespace(findings=[], checked_rule_ids=set())
 
     posted = _run_mono_flow(monkeypatch, _mono_ecosystem(), run_all=clean)
 
@@ -879,3 +876,91 @@ def test_handler_deduplicates_identical_sibling_findings() -> None:
     assert "also affects app-b" in by_repo["app-a"][0]["finding"]
     # The sibling's duplicate is not posted again; it gets the SUCCESS row.
     assert by_repo["app-b"][0]["severity"] == "SUCCESS"
+
+
+# ---------------------------------------------------------------------------
+# _get_with_retry — the catalog and ecosystem.yaml fetches
+# ---------------------------------------------------------------------------
+
+
+class _Responses:
+    """Stands in for httpx.get: hands out one scripted outcome per call."""
+
+    def __init__(self, *outcomes: object) -> None:
+        self.outcomes = list(outcomes)
+        self.urls: list[str] = []
+
+    def __call__(self, url: str, **_kw: object) -> object:
+        self.urls.append(url)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def _response(status: int) -> object:
+    import httpx
+
+    return httpx.Response(status, request=httpx.Request("GET", "https://x"))
+
+
+@pytest.fixture
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    delays: list[float] = []
+    monkeypatch.setattr(conf_mod.time, "sleep", delays.append)
+    return delays
+
+
+def test_get_with_retry_retries_a_503(
+    monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]
+) -> None:
+    fake = _Responses(_response(503), _response(200))
+    monkeypatch.setattr(conf_mod.httpx, "get", fake)
+    assert conf_mod._get_with_retry("https://x", timeout=1).status_code == 200
+    assert len(fake.urls) == 2
+    assert no_sleep == [2.0]
+
+
+def test_get_with_retry_returns_a_404_at_once(
+    monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]
+) -> None:
+    fake = _Responses(_response(404))
+    monkeypatch.setattr(conf_mod.httpx, "get", fake)
+    assert conf_mod._get_with_retry("https://x", timeout=1).status_code == 404
+    assert no_sleep == []
+
+
+def test_get_with_retry_returns_the_last_failure(
+    monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]
+) -> None:
+    fake = _Responses(_response(502), _response(502), _response(502))
+    monkeypatch.setattr(conf_mod.httpx, "get", fake)
+    assert conf_mod._get_with_retry("https://x", timeout=1).status_code == 502
+    assert len(fake.urls) == 3
+
+
+def test_get_with_retry_raises_the_last_transport_error(
+    monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]
+) -> None:
+    import httpx
+
+    fake = _Responses(*(httpx.ConnectError("down") for _ in range(3)))
+    monkeypatch.setattr(conf_mod.httpx, "get", fake)
+    with pytest.raises(httpx.ConnectError):
+        conf_mod._get_with_retry("https://x", timeout=1)
+    assert len(fake.urls) == 3
+
+
+def test_fetch_catalog_survives_one_transient_failure(
+    monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]
+) -> None:
+    import httpx
+
+    ok = httpx.Response(
+        200,
+        json={"data": {"version": "7.0.0", "rules": [{"id": "X-1"}]}},
+        request=httpx.Request("GET", "https://x"),
+    )
+    monkeypatch.setattr(conf_mod.httpx, "get", _Responses(_response(503), ok))
+    ctx = conf_mod.RunContext()
+    assert conf_mod._fetch_catalog(ctx=ctx)["version"] == "7.0.0"
