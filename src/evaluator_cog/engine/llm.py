@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import httpx
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
 
@@ -206,6 +210,27 @@ def _normalize_finding(item: dict) -> dict:
     return item
 
 
+#: Attempts per Messages API call, including the first.
+_ANTHROPIC_ATTEMPTS = 3
+#: Throttled (429), overloaded (529) and server-side failures. A 4xx other
+#: than 429 is a malformed request or a bad key, and is raised at once.
+_ANTHROPIC_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504, 529})
+_ANTHROPIC_BACKOFF_SECONDS = 2.0
+_ANTHROPIC_BACKOFF_CAP_SECONDS = 30.0
+
+
+def _anthropic_retry_delay(response: httpx.Response | None, attempt: int) -> float:
+    """The server's retry-after when it sent one, else doubling backoff; capped."""
+    if response is not None:
+        raw = response.headers.get("retry-after", "").strip()
+        if raw:
+            with suppress(ValueError):
+                return min(float(raw), _ANTHROPIC_BACKOFF_CAP_SECONDS)
+    return min(
+        _ANTHROPIC_BACKOFF_SECONDS * (2**attempt), _ANTHROPIC_BACKOFF_CAP_SECONDS
+    )
+
+
 def _anthropic_messages_create(
     *,
     api_key: str,
@@ -234,10 +259,30 @@ def _anthropic_messages_create(
         "messages": [{"role": "user", "content": user_prompt}],
     }
     _llm_timeout = float(os.environ.get("EVALUATOR_LLM_TIMEOUT_SECONDS", "120"))
-    with httpx.Client(timeout=_llm_timeout) as client:
-        r = client.post(url, headers=headers, json=body)
-        r.raise_for_status()
-        data = r.json()
+    # Throttling (429), overload (529) and 5xx are retried with backoff, as
+    # are connection failures. Without this one overloaded response failed
+    # the repository's whole evaluation, and the queue re-ran the job from
+    # the top minutes later.
+    data: dict[str, Any] = {}
+    for attempt in range(_ANTHROPIC_ATTEMPTS):
+        last = attempt == _ANTHROPIC_ATTEMPTS - 1
+        response: httpx.Response | None = None
+        try:
+            with httpx.Client(timeout=_llm_timeout) as client:
+                response = client.post(url, headers=headers, json=body)
+        except httpx.ReadTimeout:
+            # The model was slow, not unreachable. Another attempt costs a
+            # full timeout again inside a job with a fixed deadline.
+            raise
+        except httpx.TransportError:
+            if last:
+                raise
+        else:
+            if last or response.status_code not in _ANTHROPIC_RETRYABLE_STATUS:
+                response.raise_for_status()
+                data = response.json()
+                break
+        time.sleep(_anthropic_retry_delay(response, attempt))
     blocks = data.get("content") or []
     parts: list[str] = []
     for b in blocks:
