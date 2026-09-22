@@ -30,6 +30,7 @@ scope filtering by ``applies_to`` is the dispatcher's job, not ours.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
@@ -842,6 +843,53 @@ _DEPENDABOT_ECOSYSTEMS: dict[str, tuple[str, ...]] = {
 }
 
 
+#: Lockfiles that mean a repo installs JavaScript packages, whatever its
+#: package.json says.
+_JS_LOCKFILES: tuple[str, ...] = (
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lockb",
+    "bun.lock",
+)
+
+#: package.json keys that declare something for an updater to update.
+_JS_DEPENDENCY_KEYS: tuple[str, ...] = (
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+)
+
+
+def _uses_javascript(root: Path) -> bool:
+    """Whether this repo has a JavaScript dependency tree to keep current.
+
+    A package.json alone is not that evidence. VER-003 has non-JavaScript
+    repos keep one purely as the file semantic-release writes the version
+    to — no dependencies, nothing to install — and counting it demanded an
+    npm updates entry that would configure updates for nothing, which is
+    the appearance of automation this rule exists to refuse.
+
+    So: a lockfile, or a manifest that declares at least one dependency.
+    A package.json that cannot be read or parsed counts as used — an
+    unreadable manifest is not evidence of an empty one.
+    """
+    if any((root / name).is_file() for name in _JS_LOCKFILES):
+        return True
+    manifest = root / "package.json"
+    if not manifest.is_file():
+        return False
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception:
+        return True
+    if not isinstance(data, dict):
+        return True
+    return any(data.get(key) for key in _JS_DEPENDENCY_KEYS)
+
+
 def _used_ecosystems(root: Path) -> list[str]:
     """Which package ecosystems this repo demonstrably uses.
 
@@ -852,7 +900,7 @@ def _used_ecosystems(root: Path) -> list[str]:
     used: list[str] = []
     if (root / "uv.lock").is_file() or (root / "pyproject.toml").is_file():
         used.append("Python")
-    if (root / "package.json").is_file():
+    if _uses_javascript(root):
         used.append("JavaScript")
     workflows = root / ".github" / "workflows"
     if workflows.is_dir() and any(

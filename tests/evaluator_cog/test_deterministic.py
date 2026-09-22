@@ -2207,7 +2207,7 @@ def test_sec_007_catches_the_half_configured_case(tmp_path) -> None:
     repo = _sec007_repo(
         tmp_path,
         files={
-            "package.json": '{"name":"x"}',
+            "package.json": '{"name":"x","dependencies":{"astro":"^5.0.0"}}',
             ".github/workflows/ci.yml": "name: CI\n",
             ".github/dependabot.yml": (
                 "version: 2\n"
@@ -2232,7 +2232,7 @@ def test_sec_007_accepts_any_tool_that_delivers_updates(tmp_path) -> None:
         repo = _sec007_repo(
             tmp_path / eco,
             files={
-                "package.json": '{"name":"x"}',
+                "package.json": '{"name":"x","devDependencies":{"vitest":"^3"}}',
                 ".github/dependabot.yml": (
                     f'version: 2\nupdates:\n  - package-ecosystem: "{eco}"\n'
                     '    directory: "/"\n'
@@ -2240,6 +2240,71 @@ def test_sec_007_accepts_any_tool_that_delivers_updates(tmp_path) -> None:
             },
         )
         assert check_sec_007(repo) == [], eco
+
+
+def test_sec_007_a_version_only_package_json_is_not_javascript(tmp_path) -> None:
+    """Regression: the .github repo keeps a package.json only because
+    semantic-release needs a version file (VER-003). No dependencies means
+    nothing for an npm updater to do, so Actions-only coverage is complete."""
+    from evaluator_cog.engine.deterministic.security import check_sec_007
+
+    repo = _sec007_repo(
+        tmp_path,
+        files={
+            "package.json": '{"name":"x","version":"3.3.0","private":true}',
+            ".github/workflows/ci.yml": "name: CI\n",
+            ".github/dependabot.yml": (
+                "version: 2\n"
+                "updates:\n"
+                '  - package-ecosystem: "github-actions"\n'
+                '    directory: "/"\n'
+            ),
+        },
+    )
+    assert check_sec_007(repo) == []
+
+
+def test_sec_007_a_lockfile_is_javascript_whatever_the_manifest_says(
+    tmp_path,
+) -> None:
+    from evaluator_cog.engine.deterministic.security import check_sec_007
+
+    repo = _sec007_repo(
+        tmp_path,
+        files={
+            "package.json": '{"name":"x"}',
+            "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+            ".github/workflows/ci.yml": "name: CI\n",
+            ".github/dependabot.yml": (
+                "version: 2\n"
+                "updates:\n"
+                '  - package-ecosystem: "github-actions"\n'
+                '    directory: "/"\n'
+            ),
+        },
+    )
+    findings = check_sec_007(repo)
+    assert len(findings) == 1
+    assert "does not cover JavaScript" in findings[0]["finding"]
+
+
+def test_sec_007_an_unparseable_package_json_counts_as_javascript(tmp_path) -> None:
+    """Unreadable is not evidence of empty."""
+    from evaluator_cog.engine.deterministic.security import check_sec_007
+
+    repo = _sec007_repo(
+        tmp_path,
+        files={
+            "package.json": "{not json",
+            ".github/dependabot.yml": (
+                'version: 2\nupdates:\n  - package-ecosystem: "github-actions"\n'
+                '    directory: "/"\n'
+            ),
+        },
+    )
+    findings = check_sec_007(repo)
+    assert len(findings) == 1
+    assert "does not cover JavaScript" in findings[0]["finding"]
 
 
 def test_sec_007_reports_an_unparseable_config(tmp_path) -> None:
