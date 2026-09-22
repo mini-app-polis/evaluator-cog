@@ -244,16 +244,19 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
        equivalents count too — ``assert_awaited`` / ``assert_any_await`` /
        ``assert_not_awaited`` / ``assert_awaited_with`` / ``assert_awaited_once``
        / ``assert_awaited_once_with``, plus reads of ``.await_count`` /
-       ``.await_args`` / ``.await_args_list``.
+       ``.await_args`` / ``.await_args_list`` / ``.method_calls`` /
+       ``.mock_calls``.
 
     2. Capture-list verification — a local ``name: list = []`` (or ``name = []``)
        bound inside the test body, then referenced in any ``assert`` statement.
        This covers the common pytest idiom where the mock hands off to a closure
        that appends to the list, and the test asserts on the list afterward.
 
-    3. Behavior-injection verification — ``patch(..., return_value=X)`` or
-       ``patch(..., side_effect=X)`` configures the mock as plumbing for the
-       real thing under test. The test verifies the real thing's output with
+    3. Behavior-injection verification — ``patch(..., return_value=X)``,
+       ``patch(..., side_effect=X)``, the same keywords on a ``MagicMock``
+       constructor, or an assignment to ``.return_value`` / ``.side_effect``
+       on a mock built bare. Any of these configures the mock as plumbing
+       for the real thing under test. The test verifies the real thing's output with
        any ``assert`` statement, not the mock itself.
 
     4. Exception-shape verification — ``with pytest.raises(...):`` /
@@ -298,6 +301,10 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
         r"\.call_args\b",
         r"\.call_args_list\b",
         r"\.called\b",
+        # The whole call sequence, in order — the strictest verification a
+        # mock offers, and the one this check used to miss.
+        r"\.method_calls\b",
+        r"\.mock_calls\b",
         r"\.await_count\b",
         r"\.await_args\b",
         r"\.await_args_list\b",
@@ -354,6 +361,19 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
         re.DOTALL,
     )
 
+    # The same idiom again, written as an assignment rather than a
+    # constructor argument: ``sp.find_playlist_by_name.return_value = {...}``,
+    # ``g.drive.service.files().get().execute.side_effect = RuntimeError(...)``.
+    # This is how a mock built bare and configured afterwards injects
+    # behavior, and it is the commoner of the two forms. Reaching it
+    # requires a mock to have been created in the body already — that is
+    # the condition under which this check runs at all — so an assignment
+    # to ``.return_value`` here is mock configuration and nothing else.
+    _mock_attr_behavior_injection_re = re.compile(
+        r"^\s*[\w.()\[\]\"\'-]+\.(?:return_value|side_effect)\s*=(?!=)",
+        re.MULTILINE,
+    )
+
     # Any explicit `assert ...` statement (not assertRaises / not assert_xxx),
     # or a `pytest.raises(...)` / `pytest.warns(...)` call — both of which
     # are exception-shape assertions on the code under test.
@@ -398,11 +418,13 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
           - ``patch(target, return_value=X)`` / ``patch(target, side_effect=X)``
           - ``patch(target, FakeClass)`` / ``patch.object(obj, "m", fake_fn)``
           - ``MagicMock(return_value=X)`` / ``AsyncMock(side_effect=X)``
+          - ``mock.method.return_value = X`` / ``mock.method.side_effect = X``
         """
         injects = (
             _patch_behavior_injection_re.search(body_src)
             or _patch_replacement_re.search(body_src)
             or _mock_ctor_behavior_injection_re.search(body_src)
+            or _mock_attr_behavior_injection_re.search(body_src)
         )
         if not injects:
             return False

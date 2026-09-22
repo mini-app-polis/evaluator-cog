@@ -141,3 +141,37 @@ def dead_letter_queue_names(resources: list[Resource]) -> set[str]:
             )
         )
     return names
+
+
+_VARIABLE = re.compile(r'^\s*variable\s+"(?P<name>[\w-]+)"\s*\{', re.M)
+
+
+def variable_defaults(repo_path: Path) -> dict[str, str]:
+    """The ``default = ...`` of every ``variable`` block in ``infra/*.tf``.
+
+    A rule that compares two numbers in the stack — PIPE-018's
+    reservation against the mapping's ceiling — reads them as they are
+    written, and they are usually written as ``var.reserved_concurrency``.
+    A variable's default is the value the stack applies with unless
+    ``terraform.tfvars`` overrides it, and tfvars is not in the
+    repository, so the default is the only value a check can see.
+
+    Returns the raw right-hand side, unparsed: the caller decides what
+    counts as a number.
+    """
+    infra = repo_path / "infra"
+    if not infra.is_dir():
+        return {}
+    defaults: dict[str, str] = {}
+    for tf in sorted(infra.glob("*.tf")):
+        try:
+            text = _strip_comments(tf.read_text(errors="replace"))
+        except OSError:
+            continue
+        for m in _VARIABLE.finditer(text):
+            start = m.end() - 1
+            body = text[start + 1 : _block_end(text, start)]
+            default = re.search(r"(?m)^\s*default\s*=\s*(.+?)\s*$", body)
+            if default:
+                defaults[m.group("name")] = default.group(1)
+    return defaults

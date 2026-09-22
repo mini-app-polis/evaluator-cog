@@ -60,6 +60,7 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_pytest_coverage_in_ci,
     check_release_gated_on_security,
     check_structured_logging,
+    check_terraform_checked_in_ci,
     check_three_layer_observability,
 )
 from evaluator_cog.engine.deterministic.docs import (
@@ -110,6 +111,7 @@ from evaluator_cog.engine.deterministic.pipeline import (
     check_pipe_017,
     check_pipe_018,
     check_pipe_019,
+    check_pipe_020,
     check_retry_logic,
 )
 from evaluator_cog.engine.deterministic.python import (
@@ -477,6 +479,9 @@ def run_all_checks(
     _run(check_release_commit_message, "VER-009")
     _run(check_release_gated_on_security, "CD-025")
     _run(check_canonical_ci_job_names, "CD-026")
+    # CD-027 skips a repo with no infra/*.tf, so it is safe to run
+    # everywhere rather than gated on a repo type.
+    _run(check_terraform_checked_in_ci, "CD-027")
 
     _mark_checked("XSTACK-001")
     if (evaluator_config is None and "XSTACK-001" not in _exceptions) or (
@@ -591,6 +596,7 @@ def run_all_checks(
         _run(check_pipe_016, "PIPE-016")
         _run(check_pipe_017, "PIPE-017")
         _run(check_pipe_018, "PIPE-018")
+        _run(check_pipe_020, "PIPE-020")
     if is_trigger_cog:
         _run(check_pipe_019, "PIPE-019")
     if is_pipeline_cog or is_trigger_cog:
