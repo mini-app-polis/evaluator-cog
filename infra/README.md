@@ -55,6 +55,28 @@ for little. The cost is real: lose `terraform.tfstate` and these resources
 are orphaned and have to be re-imported by hand. Revisit when a second
 person or a second machine applies this.
 
+**Secrets come from Doppler, not tfvars.** `./tf` is a wrapper that reads
+`evaluator_cog_api_key`, `github_token`, `anthropic_api_key` and `sentry_dsn`
+out of Doppler and hands them to Terraform as `TF_VAR_*`. Use it instead of
+bare `terraform` for anything that reads variables:
+
+```bash
+./tf plan -out tfplan
+./tf apply tfplan
+```
+
+A secret placed in `terraform.tfvars` would win over the environment, so the
+wrapper refuses to run while one is set. `terraform.tfvars` holds the
+non-secret settings only — `alert_email`, `kaiano_api_base_url`,
+`create_github_oidc_provider`. State still records every value Terraform
+applies; that is why the state file is gitignored and why SEC-008 checks it.
+
+One-time per machine, in this directory:
+
+```bash
+doppler setup --project <evaluator-cog project> --config prd
+```
+
 **No access key in Terraform.** `producer.tf` creates the IAM user and its
 send-only policy but not its key, because Terraform would hold that secret
 in plaintext local state. Mint it once by hand into Doppler — the file says
@@ -66,11 +88,11 @@ thing here most worth a rotation reminder.
 Each step is provable before the next one starts.
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # then fill it in
+cp terraform.tfvars.example terraform.tfvars   # non-secret settings only
 terraform init
 terraform fmt -check
 terraform validate
-terraform plan
+./tf plan -out tfplan
 ```
 
 1. **Account, billing alarm, MFA on root.** The budget is in `account.tf`
