@@ -1,3 +1,15 @@
+# [3.42.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.41.2...v3.42.0) (2026-09-22)
+
+
+### Bug Fixes
+
+* **checks:** recognise call-sequence assertions and assignment-injected mocks ([34715f3](https://github.com/mini-app-polis/evaluator-cog/commit/34715f3f380337e26932558c40d0e1249ed1e3d7))
+
+
+### Features
+
+* **checks:** check PIPE-018's concurrency conflict, PIPE-020 and CD-027 ([80c47ee](https://github.com/mini-app-polis/evaluator-cog/commit/80c47ee20e71da668335d6da1c2f5d79f32a67a6))
+
 ## [3.41.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.41.1...v3.41.2) (2026-09-22)
 
 
