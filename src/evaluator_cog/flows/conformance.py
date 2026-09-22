@@ -162,6 +162,12 @@ class VersionedRunReport(RunReport):
     standards_version: str = ""
 
     def text(self) -> str:
+        """The library's message body, with the version stamp as its last line.
+
+        Stamped here rather than at send time so every path that renders the
+        report — :meth:`send`, and the tests that read it — sees the same
+        text. See :func:`stamp_versions` for the format.
+        """
         return stamp_versions(super().text(), self.standards_version)
 
 
