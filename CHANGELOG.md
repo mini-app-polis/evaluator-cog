@@ -1,3 +1,11 @@
+## [3.41.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.41.0...v3.41.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **checks:** count javascript for SEC-007 only when dependencies are declared ([6b75070](https://github.com/mini-app-polis/evaluator-cog/commit/6b75070817770580c4b1db7cee2a1cc4de7152bf))
+* **deps:** bump the python-minor-and-patch group with 3 updates ([5f97046](https://github.com/mini-app-polis/evaluator-cog/commit/5f97046b53a6555d97a84e6d393fe877f7a793ab))
+
 # [3.41.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.40.1...v3.41.0) (2026-09-21)
 
 
