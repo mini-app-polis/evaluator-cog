@@ -61,6 +61,7 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_release_gated_on_security,
     check_structured_logging,
     check_terraform_checked_in_ci,
+    check_terraform_versions_pinned,
     check_three_layer_observability,
 )
 from evaluator_cog.engine.deterministic.docs import (
@@ -135,6 +136,7 @@ from evaluator_cog.engine.deterministic.security import (
     check_sec_005,
     check_sec_006,
     check_sec_007,
+    check_sec_008,
 )
 from evaluator_cog.engine.deterministic.testing import (
     check_db_test_fixtures,
@@ -482,6 +484,7 @@ def run_all_checks(
     # CD-027 skips a repo with no infra/*.tf, so it is safe to run
     # everywhere rather than gated on a repo type.
     _run(check_terraform_checked_in_ci, "CD-027")
+    _run(check_terraform_versions_pinned, "CD-028")
 
     _mark_checked("XSTACK-001")
     if (evaluator_config is None and "XSTACK-001" not in _exceptions) or (
@@ -820,6 +823,7 @@ def run_all_checks(
     _run(lambda p: check_sec_004(p, monorepo_root=monorepo_root), "SEC-004")
     _run(lambda p: check_sec_005(p, monorepo_root=monorepo_root), "SEC-005")
     _run(check_sec_006, "SEC-006")
+    _run(check_sec_008, "SEC-008")
     _run(lambda p: check_sec_007(p, monorepo_root=monorepo_root), "SEC-007")
 
     # operational_readiness — only OPS-002 is checkable.

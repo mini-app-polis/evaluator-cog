@@ -199,3 +199,65 @@ def production_python_text(repo_path: Path) -> str:
         except (OSError, UnicodeDecodeError):
             continue
     return "\n".join(parts)
+
+
+#: Seconds to wait on the `git ls-files` used to decide whether a file is
+#: committed. Generous for a metadata read, and bounded so a wedged git
+#: cannot stall the run — the check degrades to "git cannot say" instead.
+_GIT_QUERY_TIMEOUT_SECONDS = 30
+
+
+def _tracked_paths(repo_path: Path) -> set[str] | None:
+    """Paths git tracks under ``repo_path``, relative to it, or None.
+
+    None means "no answer available" — no working tree above this path
+    (the zipball download path), or git failed — and callers must not
+    read that as "nothing is tracked".
+
+    The .git directory is looked for upward, not only at ``repo_path``:
+    a monorepo service is checked at ``apps/api`` while the working tree
+    lives at the repo root, and asking only at the service directory
+    would answer "cannot say" for every monorepo.
+    """
+    root: Path | None = None
+    for candidate in (repo_path, *repo_path.parents):
+        if (candidate / ".git").exists():
+            root = candidate
+            break
+    if root is None:
+        return None
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+
+    try:
+        prefix = repo_path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+    prefix_str = "" if prefix == Path(".") else prefix.as_posix() + "/"
+
+    tracked: set[str] = set()
+    for line in result.stdout.split("\0"):
+        if not line:
+            continue
+        if prefix_str and not line.startswith(prefix_str):
+            continue
+        tracked.add(line[len(prefix_str) :])
+
+    # An empty answer is not "this directory tracks nothing" — a real
+    # checkout always tracks something. It means the walk upward found a
+    # working tree this directory is not actually part of, which is what
+    # happens if an extracted archive lands inside an unrelated repo.
+    # Returning the empty set there would filter out every match and
+    # disable the check without saying so.
+    return tracked or None

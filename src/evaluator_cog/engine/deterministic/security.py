@@ -1,4 +1,4 @@
-"""Security-posture rule checks (SEC-001..006).
+"""Security-posture rule checks (SEC-001..008).
 
 These six rules answer one question each about how a repo defends
 itself against secrets and vulnerable dependencies:
@@ -8,7 +8,8 @@ itself against secrets and vulnerable dependencies:
   - SEC-003 a dependency vulnerability scan runs in CI, gating;
   - SEC-004 some static analysis workflow exists (gating not required);
   - SEC-005 an SBOM is produced and retained as a build artifact;
-  - SEC-006 the catalog declares vulnerability response deadlines.
+  - SEC-006 the catalog declares vulnerability response deadlines;
+  - SEC-008 Terraform state, tfvars and saved plans stay uncommitted.
 
 Five of the six read ``.github/workflows/``. None of them parse YAML by
 hand: ``_workflows.load_workflows`` already flattens every workflow into
@@ -38,6 +39,7 @@ import yaml
 from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
+    _tracked_paths,
 )
 from evaluator_cog.engine.deterministic._workflows import (
     Step,
@@ -1025,6 +1027,102 @@ def check_sec_007(repo_path: Path, monorepo_root: Path | None = None) -> list[Fi
                 f"that covers only some of what a repo depends on leaves the "
                 f"rest updated by hand, which is the state this rule exists "
                 f"to end.",
+            )
+        )
+    return findings
+
+
+#: Tracked paths under ``infra/`` that must never exist. State is the one
+#: that matters: ``terraform.tfstate`` records every attribute Terraform
+#: set, and for a Lambda that is the function's whole environment — every
+#: Doppler secret it runs with, in plaintext. tfvars and a saved plan carry
+#: the values they were built with.
+_FORBIDDEN_INFRA_PATTERNS = (
+    "*.tfstate",
+    "*.tfstate.*",
+    "terraform.tfvars",
+    "*.auto.tfvars",
+    "tfplan",
+    "*.tfplan",
+    ".terraform/*",
+)
+
+
+def _infra_is_declared(repo_path: Path) -> bool:
+    infra = repo_path / "infra"
+    return infra.is_dir() and any(infra.rglob("*.tf"))
+
+
+def check_sec_008(repo_path: Path) -> list[Finding]:
+    """SEC-008: Terraform state, variables and saved plans are never committed.
+
+    Two modes, because the repository arrives two ways. Against a working
+    tree, ``git ls-files`` says what is committed and a local state file
+    that ``.gitignore`` covers is correctly not a finding. Against the
+    production zipball there is no ``.git`` at all — but a zipball
+    contains only tracked files, so anything present there is committed
+    by construction. Both readings are handled; neither guesses.
+
+    ``terraform.tfvars.example`` is the committed template, and
+    ``.terraform.lock.hcl`` is committed on purpose (CD-028). Neither
+    matches the patterns above, and both are meant to be there.
+    """
+    CHECK_ID = "SEC-008"
+    import fnmatch
+
+    if not _infra_is_declared(repo_path):
+        return []
+
+    findings: list[Finding] = []
+    tracked = _tracked_paths(repo_path)
+    if tracked is None:
+        candidates = [
+            f.relative_to(repo_path).as_posix()
+            for f in (repo_path / "infra").rglob("*")
+            if f.is_file()
+        ]
+    else:
+        candidates = [p for p in sorted(tracked) if p.startswith("infra/")]
+
+    offenders = sorted(
+        {
+            path
+            for path in candidates
+            for pattern in _FORBIDDEN_INFRA_PATTERNS
+            if fnmatch.fnmatch(path.split("/")[-1], pattern)
+            or fnmatch.fnmatch(path, f"infra/{pattern}")
+        }
+    )
+    if offenders:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                "security_posture",
+                "Terraform state, variable or plan files are committed: "
+                + ", ".join(offenders[:5])
+                + (f" (+{len(offenders) - 5} more)" if len(offenders) > 5 else "")
+                + ". State records every attribute Terraform set, which for "
+                "a Lambda is its whole environment — every secret it runs "
+                "with, in plaintext.",
+                "Remove them from the index (git rm --cached) and rotate "
+                "anything they exposed. Only the .tf sources, "
+                "terraform.tfvars.example and .terraform.lock.hcl belong in "
+                "the repository.",
+            )
+        )
+
+    if not (repo_path / "infra" / ".gitignore").exists():
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                "security_posture",
+                "infra/ declares Terraform but has no .gitignore.",
+                "Add infra/.gitignore covering *.tfstate, *.tfstate.*, "
+                "terraform.tfvars, *.auto.tfvars, tfplan and .terraform/. "
+                "With local state that file is the whole of the control; a "
+                "repo clean without one is clean by luck.",
             )
         )
     return findings

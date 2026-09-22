@@ -4,8 +4,9 @@ PIPE-007 (call-site retry), PIPE-016 (Lambda behind its own queue),
 PIPE-017 (per-record failure, redrive, visibility), PIPE-018 (concurrency
 ceiling, stated once), PIPE-019 (trigger cogs go through the API),
 PIPE-020 (a run stops before the function timeout), CD-027 (Terraform
-checked in CI), and the pipeline-cog branches of CD-010 (DLQ alarm as
-Layer 1) and CD-024 (function limits).
+checked in CI), CD-028 (versions pinned, lock committed), SEC-008
+(state and tfvars never committed), and the pipeline-cog branches of
+CD-010 (DLQ alarm as Layer 1) and CD-024 (function limits).
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from evaluator_cog.engine.deterministic._terraform import (
 from evaluator_cog.engine.deterministic.containers import check_cd_024
 from evaluator_cog.engine.deterministic.delivery import (
     check_terraform_checked_in_ci,
+    check_terraform_versions_pinned,
     check_three_layer_observability,
 )
 from evaluator_cog.engine.deterministic.pipeline import (
@@ -32,6 +34,7 @@ from evaluator_cog.engine.deterministic.pipeline import (
     check_pipe_020,
     check_retry_logic,
 )
+from evaluator_cog.engine.deterministic.security import check_sec_008
 
 _QUEUE_TF = """
 resource "aws_sqs_queue" "dlq" {
@@ -81,6 +84,31 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
 }
 """
 
+_VERSIONS_TF = """
+terraform {
+  required_version = ">= 1.6"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+"""
+
+#: Two platforms' hashes, which is what a stack checked in CI needs.
+_LOCK_HCL = """
+provider "registry.terraform.io/hashicorp/aws" {
+  version     = "5.82.2"
+  constraints = "~> 5.0"
+  hashes = [
+    "h1:darwin_arm64_placeholder",
+    "h1:linux_amd64_placeholder",
+  ]
+}
+"""
+
 _HANDLER = (
     "def lambda_handler(event, context):\n"
     "    context.get_remaining_time_in_millis()\n"
@@ -112,6 +140,9 @@ def _lambda_cog(repo: Path, **overrides: str) -> Path:
         "infra/account.tf": _ALARM_TF,
         "src/demo_cog/worker.py": _HANDLER,
         ".github/workflows/ci.yml": _CI_YML,
+        "infra/versions.tf": _VERSIONS_TF,
+        "infra/.terraform.lock.hcl": _LOCK_HCL,
+        "infra/.gitignore": "*.tfstate\n*.tfstate.*\nterraform.tfvars\ntfplan\n",
         "pyproject.toml": '[project]\nname = "demo-cog"\ndependencies = ["httpx"]\n',
     }
     files.update(overrides)
@@ -161,6 +192,8 @@ def test_compliant_lambda_cog_passes_every_runtime_rule(tmp_path: Path) -> None:
     assert check_pipe_018(repo) == []
     assert check_pipe_020(repo) == []
     assert check_terraform_checked_in_ci(repo) == []
+    assert check_terraform_versions_pinned(repo) == []
+    assert check_sec_008(repo) == []
     assert check_cd_024(repo, repo_type="pipeline-cog") == []
     layer1 = [
         f
@@ -631,3 +664,97 @@ def test_cd024_pipeline_without_a_function(tmp_path: Path) -> None:
 def test_cd024_other_types_still_read_railway(tmp_path: Path) -> None:
     findings = check_cd_024(tmp_path, repo_type="api-service")
     assert "railway" in findings[0]["finding"].lower()
+
+
+# --- CD-028 -------------------------------------------------------------------
+
+
+def test_cd028_flags_a_provider_with_no_version(tmp_path: Path) -> None:
+    versions = _VERSIONS_TF.replace('    version = "~> 5.0"\n', "")
+    repo = _lambda_cog(tmp_path, **{"infra/versions.tf": versions})
+    assert "no version constraint" in _messages(check_terraform_versions_pinned(repo))
+
+
+def test_cd028_flags_a_missing_required_version(tmp_path: Path) -> None:
+    versions = _VERSIONS_TF.replace('  required_version = ">= 1.6"\n', "")
+    repo = _lambda_cog(tmp_path, **{"infra/versions.tf": versions})
+    assert "required_version" in _messages(check_terraform_versions_pinned(repo))
+
+
+def test_cd028_flags_an_uncommitted_lock(tmp_path: Path) -> None:
+    repo = _lambda_cog(tmp_path)
+    (repo / "infra" / ".terraform.lock.hcl").unlink()
+    findings = check_terraform_versions_pinned(repo)
+    assert len(findings) == 1
+    assert ".terraform.lock.hcl" in findings[0]["finding"]
+
+
+def test_cd028_flags_a_single_platform_lock_when_ci_runs_terraform(
+    tmp_path: Path,
+) -> None:
+    """The failure all three cogs hit the day Terraform reached CI."""
+    lock = _LOCK_HCL.replace('    "h1:linux_amd64_placeholder",\n', "")
+    repo = _lambda_cog(tmp_path, **{"infra/.terraform.lock.hcl": lock})
+    text = _messages(check_terraform_versions_pinned(repo))
+    assert "1 platform hash" in text
+
+
+def test_cd028_accepts_a_single_platform_lock_when_ci_does_not(
+    tmp_path: Path,
+) -> None:
+    """A stack applied only from one workstation needs only that platform."""
+    lock = _LOCK_HCL.replace('    "h1:linux_amd64_placeholder",\n', "")
+    ci = _CI_YML.replace("    with:\n      terraform-dir: infra\n", "")
+    repo = _lambda_cog(
+        tmp_path,
+        **{"infra/.terraform.lock.hcl": lock, ".github/workflows/ci.yml": ci},
+    )
+    assert check_terraform_versions_pinned(repo) == []
+
+
+def test_cd028_skips_a_repo_with_no_terraform(tmp_path: Path) -> None:
+    assert check_terraform_versions_pinned(tmp_path) == []
+
+
+# --- SEC-008 ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "terraform.tfstate",
+        "terraform.tfstate.backup",
+        "terraform.tfvars",
+        "prod.auto.tfvars",
+        "tfplan",
+    ],
+)
+def test_sec008_flags_a_committed_state_or_variable_file(
+    tmp_path: Path, name: str
+) -> None:
+    """No .git here, so every file present is tracked by construction."""
+    repo = _lambda_cog(tmp_path, **{f"infra/{name}": "x = 1\n"})
+    findings = check_sec_008(repo)
+    assert len(findings) == 1
+    assert name in findings[0]["finding"]
+    assert findings[0]["severity"] == "ERROR"
+
+
+def test_sec008_does_not_flag_the_committed_template_or_lock(tmp_path: Path) -> None:
+    repo = _lambda_cog(
+        tmp_path,
+        **{"infra/terraform.tfvars.example": 'name_prefix = "demo"\n'},
+    )
+    assert check_sec_008(repo) == []
+
+
+def test_sec008_requires_an_infra_gitignore(tmp_path: Path) -> None:
+    repo = _lambda_cog(tmp_path)
+    (repo / "infra" / ".gitignore").unlink()
+    findings = check_sec_008(repo)
+    assert len(findings) == 1
+    assert ".gitignore" in findings[0]["finding"]
+
+
+def test_sec008_skips_a_repo_with_no_terraform(tmp_path: Path) -> None:
+    assert check_sec_008(tmp_path) == []
