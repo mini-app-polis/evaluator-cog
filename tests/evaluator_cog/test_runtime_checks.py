@@ -2,8 +2,10 @@
 
 PIPE-007 (call-site retry), PIPE-016 (Lambda behind its own queue),
 PIPE-017 (per-record failure, redrive, visibility), PIPE-018 (concurrency
-ceiling), PIPE-019 (trigger cogs go through the API), and the pipeline-cog
-branches of CD-010 (DLQ alarm as Layer 1) and CD-024 (function limits).
+ceiling, stated once), PIPE-019 (trigger cogs go through the API),
+PIPE-020 (a run stops before the function timeout), CD-027 (Terraform
+checked in CI), and the pipeline-cog branches of CD-010 (DLQ alarm as
+Layer 1) and CD-024 (function limits).
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from evaluator_cog.engine.deterministic._terraform import (
 )
 from evaluator_cog.engine.deterministic.containers import check_cd_024
 from evaluator_cog.engine.deterministic.delivery import (
+    check_terraform_checked_in_ci,
     check_three_layer_observability,
 )
 from evaluator_cog.engine.deterministic.pipeline import (
@@ -26,6 +29,7 @@ from evaluator_cog.engine.deterministic.pipeline import (
     check_pipe_017,
     check_pipe_018,
     check_pipe_019,
+    check_pipe_020,
     check_retry_logic,
 )
 
@@ -77,7 +81,21 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
 }
 """
 
-_HANDLER = "def lambda_handler(event, context):\n    return {'batchItemFailures': []}\n"
+_HANDLER = (
+    "def lambda_handler(event, context):\n"
+    "    context.get_remaining_time_in_millis()\n"
+    "    return {'batchItemFailures': []}\n"
+)
+
+_CI_YML = """
+name: CI
+on: [push]
+jobs:
+  test:
+    uses: mini-app-polis/.github/.github/workflows/python-test.yml@v1
+    with:
+      terraform-dir: infra
+"""
 
 
 def _write(repo: Path, rel: str, body: str) -> None:
@@ -93,6 +111,7 @@ def _lambda_cog(repo: Path, **overrides: str) -> Path:
         "infra/worker.tf": _WORKER_TF,
         "infra/account.tf": _ALARM_TF,
         "src/demo_cog/worker.py": _HANDLER,
+        ".github/workflows/ci.yml": _CI_YML,
         "pyproject.toml": '[project]\nname = "demo-cog"\ndependencies = ["httpx"]\n',
     }
     files.update(overrides)
@@ -140,6 +159,8 @@ def test_compliant_lambda_cog_passes_every_runtime_rule(tmp_path: Path) -> None:
     assert check_pipe_016(repo) == []
     assert check_pipe_017(repo) == []
     assert check_pipe_018(repo) == []
+    assert check_pipe_020(repo) == []
+    assert check_terraform_checked_in_ci(repo) == []
     assert check_cd_024(repo, repo_type="pipeline-cog") == []
     layer1 = [
         f
@@ -297,6 +318,133 @@ def test_pipe018_does_not_count_unreserved_minus_one(tmp_path: Path) -> None:
         "  memory_size   = 1024\n  reserved_concurrent_executions = -1\n",
     )
     assert check_pipe_018(_lambda_cog(tmp_path, **{"infra/worker.tf": worker}))
+
+
+def test_pipe018_flags_a_reservation_below_the_mapping_ceiling(
+    tmp_path: Path,
+) -> None:
+    """AWS rejects this pair at create time; the stack only applies until it is."""
+    worker = _WORKER_TF.replace(
+        "  memory_size   = 1024\n",
+        "  memory_size   = 1024\n  reserved_concurrent_executions = 1\n",
+    )
+    findings = check_pipe_018(_lambda_cog(tmp_path, **{"infra/worker.tf": worker}))
+    assert len(findings) == 1
+    text = findings[0]["finding"]
+    assert "reserved_concurrent_executions = 1" in text
+    assert "maximum_concurrency = 2" in text
+
+
+def test_pipe018_reads_a_reservation_through_its_variable_default(
+    tmp_path: Path,
+) -> None:
+    """The reservation is written as var.reserved_concurrency in every cog."""
+    worker = _WORKER_TF.replace(
+        "  memory_size   = 1024\n",
+        "  memory_size   = 1024\n"
+        "  reserved_concurrent_executions = var.reserved_concurrency\n",
+    )
+    variables = 'variable "reserved_concurrency" {\n  default = 1\n}\n'
+    repo = _lambda_cog(
+        tmp_path,
+        **{"infra/worker.tf": worker, "infra/variables.tf": variables},
+    )
+    assert "AWS rejects" in _messages(check_pipe_018(repo))
+
+
+def test_pipe018_accepts_a_reservation_above_the_mapping_ceiling(
+    tmp_path: Path,
+) -> None:
+    """The pair is only wrong when the reservation is the lower of the two."""
+    worker = _WORKER_TF.replace(
+        "  memory_size   = 1024\n",
+        "  memory_size   = 1024\n  reserved_concurrent_executions = 10\n",
+    )
+    assert check_pipe_018(_lambda_cog(tmp_path, **{"infra/worker.tf": worker})) == []
+
+
+def test_pipe018_says_nothing_about_a_pair_it_cannot_read(tmp_path: Path) -> None:
+    """A variable with no default is not a number this check may compare."""
+    worker = _WORKER_TF.replace(
+        "  memory_size   = 1024\n",
+        "  memory_size   = 1024\n"
+        "  reserved_concurrent_executions = var.reserved_concurrency\n",
+    )
+    variables = 'variable "reserved_concurrency" {\n  type = number\n}\n'
+    repo = _lambda_cog(
+        tmp_path,
+        **{"infra/worker.tf": worker, "infra/variables.tf": variables},
+    )
+    assert check_pipe_018(repo) == []
+
+
+# --- PIPE-020 -----------------------------------------------------------------
+
+
+def test_pipe020_flags_a_handler_that_never_reads_the_remaining_time(
+    tmp_path: Path,
+) -> None:
+    handler = "def lambda_handler(event, context):\n    return {}\n"
+    repo = _lambda_cog(tmp_path, **{"src/demo_cog/worker.py": handler})
+    findings = check_pipe_020(repo)
+    assert len(findings) == 1
+    assert "get_remaining_time_in_millis" in findings[0]["finding"]
+
+
+def test_pipe020_accepts_the_read_from_a_helper_module(tmp_path: Path) -> None:
+    """The deadline lives in its own module in every cog that has one."""
+    repo = _lambda_cog(
+        tmp_path,
+        **{
+            "src/demo_cog/worker.py": "def lambda_handler(event, context):\n"
+            "    return {}\n",
+            "src/demo_cog/_deadline.py": "def deadline(context):\n"
+            "    return context.get_remaining_time_in_millis()\n",
+        },
+    )
+    assert check_pipe_020(repo) == []
+
+
+def test_pipe020_says_nothing_about_a_repo_with_no_source(tmp_path: Path) -> None:
+    assert check_pipe_020(tmp_path) == []
+
+
+# --- CD-027 -------------------------------------------------------------------
+
+
+def test_cd027_flags_infra_that_ci_never_checks(tmp_path: Path) -> None:
+    ci = _CI_YML.replace("    with:\n      terraform-dir: infra\n", "")
+    findings = check_terraform_checked_in_ci(
+        _lambda_cog(tmp_path, **{".github/workflows/ci.yml": ci})
+    )
+    assert len(findings) == 1
+    assert "terraform-dir" in findings[0]["finding"]
+
+
+def test_cd027_accepts_terraform_run_inline(tmp_path: Path) -> None:
+    ci = """
+name: CI
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: terraform fmt -check -recursive
+      - run: terraform validate
+"""
+    repo = _lambda_cog(tmp_path, **{".github/workflows/ci.yml": ci})
+    assert check_terraform_checked_in_ci(repo) == []
+
+
+def test_cd027_skips_a_repo_with_no_terraform(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        ".github/workflows/ci.yml",
+        _CI_YML.replace(
+            "      terraform-dir: infra\n", "      python-version: '3.11'\n"
+        ),
+    )
+    assert check_terraform_checked_in_ci(tmp_path) == []
 
 
 # --- PIPE-019 -----------------------------------------------------------------

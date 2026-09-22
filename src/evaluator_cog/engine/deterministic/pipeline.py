@@ -12,7 +12,11 @@ from evaluator_cog.engine.deterministic._shared import (
     _is_checker_self_source,
     production_python_text,
 )
-from evaluator_cog.engine.deterministic._terraform import infra_resources, of_type
+from evaluator_cog.engine.deterministic._terraform import (
+    infra_resources,
+    of_type,
+    variable_defaults,
+)
 
 
 def check_healthchecks_integration(
@@ -475,32 +479,115 @@ def check_pipe_017(repo_path: Path) -> list[Finding]:
     return findings
 
 
+def _concurrency_int(value: str | None, defaults: dict[str, str]) -> int | None:
+    """The number behind a concurrency setting, or None when it is not one.
+
+    ``reserved_concurrent_executions = 1`` reads directly;
+    ``= var.reserved_concurrency`` reads through the variable's default,
+    which is the value the stack applies with when nothing overrides it.
+    Anything else — an expression, a variable with no default — is not a
+    number this check may compare, and saying nothing is right.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if _INT_LITERAL.match(value):
+        return int(value)
+    var = re.fullmatch(r"var\.([\w-]+)", value)
+    if var:
+        default = (defaults.get(var.group(1)) or "").strip()
+        if _INT_LITERAL.match(default):
+            return int(default)
+    return None
+
+
 def check_pipe_018(repo_path: Path) -> list[Finding]:
-    """PIPE-018: how many jobs may run at once is stated in infra/."""
+    """PIPE-018: how many jobs may run at once is stated in infra/, once."""
     resources = infra_resources(repo_path)
     if resources is None:
         return []
-    mapping_ceiling = any(
-        m.has_block("scaling_config") and m.attr("maximum_concurrency")
+    ceilings = [
+        c
         for m in of_type(resources, "aws_lambda_event_source_mapping")
-    )
-    reserved = any(
-        (f.attr("reserved_concurrent_executions") or "-1").strip() != "-1"
+        if m.has_block("scaling_config")
+        for c in [m.attr("maximum_concurrency")]
+        if c
+    ]
+    reservations = [
+        r
         for f in of_type(resources, "aws_lambda_function")
-    )
-    if mapping_ceiling or reserved:
+        for r in [f.attr("reserved_concurrent_executions")]
+        if r and r.strip() != "-1"
+    ]
+    if not ceilings and not reservations:
+        return [
+            _finding(
+                "PIPE-018",
+                "WARN",
+                "pipeline_reliability",
+                "infra/ states no concurrency ceiling: neither "
+                "scaling_config.maximum_concurrency on the event source mapping "
+                "nor reserved_concurrent_executions on the function.",
+                "Set scaling_config { maximum_concurrency = N } on the mapping "
+                "(minimum 2), or reserved_concurrent_executions on the function "
+                "when the job needs to run alone.",
+            )
+        ]
+
+    # Both set. AWS refuses to create a mapping whose maximum concurrency
+    # exceeds the function's reservation, so the pair is only applyable
+    # while the mapping predates the reservation — it fails the day
+    # anything recreates it. Only a pair this check can read as two
+    # numbers is reported; an expression it cannot resolve is not a
+    # finding.
+    defaults = variable_defaults(repo_path)
+    for ceiling in ceilings:
+        for reservation in reservations:
+            top = _concurrency_int(ceiling, defaults)
+            floor = _concurrency_int(reservation, defaults)
+            if top is None or floor is None or floor >= top:
+                continue
+            return [
+                _finding(
+                    "PIPE-018",
+                    "WARN",
+                    "pipeline_reliability",
+                    f"infra/ sets both reserved_concurrent_executions = "
+                    f"{reservation} ({floor}) on the function and "
+                    f"scaling_config.maximum_concurrency = {ceiling} ({top}) on "
+                    f"the event source mapping. AWS rejects a mapping maximum "
+                    f"above the function's reservation.",
+                    "Keep one. A reservation of 1 means no scaling_config at "
+                    "all, because the mapping's maximum cannot go below 2; "
+                    "above 1, drop the reservation and let the mapping hold "
+                    "the ceiling.",
+                )
+            ]
+    return []
+
+
+_REMAINING_TIME = "get_remaining_time_in_millis"
+
+
+def check_pipe_020(repo_path: Path) -> list[Finding]:
+    """PIPE-020: a run stops before the function timeout, and says so."""
+    CHECK_ID = "PIPE-020"
+    if not (repo_path / "src").is_dir():
+        return []
+    if _REMAINING_TIME in production_python_text(repo_path):
         return []
     return [
         _finding(
-            "PIPE-018",
+            CHECK_ID,
             "WARN",
             "pipeline_reliability",
-            "infra/ states no concurrency ceiling: neither "
-            "scaling_config.maximum_concurrency on the event source mapping "
-            "nor reserved_concurrent_executions on the function.",
-            "Set scaling_config { maximum_concurrency = N } on the mapping "
-            "(minimum 2), or reserved_concurrent_executions on the function "
-            "when the job needs to run alone.",
+            "No source under src/ reads the Lambda context's "
+            f"{_REMAINING_TIME}(), so a run that outlives the function "
+            "timeout is killed with no report.",
+            "Stop the run a margin before the deadline — transcription-cog's "
+            "_deadline.py raises 30 seconds early — so the flow reports what "
+            "it was doing and re-raises, instead of the invocation ending in "
+            "silence.",
         )
     ]
 

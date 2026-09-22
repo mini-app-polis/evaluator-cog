@@ -181,6 +181,52 @@ def check_pytest_coverage_in_ci(repo_path: Path) -> list[Finding]:
     return findings
 
 
+def _delegates_terraform(repo_path: Path) -> bool:
+    """True when a ci.yml job hands a Terraform directory to the shared test workflow."""
+    workflow = _ci_workflow(repo_path)
+    jobs = workflow.get("jobs") if workflow else None
+    if not isinstance(jobs, dict):
+        return False
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        if _SHARED_TEST_WORKFLOW not in str(job.get("uses") or ""):
+            continue
+        if str((job.get("with") or {}).get("terraform-dir") or "").strip():
+            return True
+    return False
+
+
+def check_terraform_checked_in_ci(repo_path: Path) -> list[Finding]:
+    """CD-027: a repo that declares infrastructure as code checks it in CI."""
+    CHECK_ID = "CD-027"
+    infra = repo_path / "infra"
+    if not infra.is_dir() or not any(infra.rglob("*.tf")):
+        return []
+    ci = repo_path / ".github" / "workflows" / "ci.yml"
+    if not ci.exists():
+        # CD-026 and check_ci report an absent ci.yml. A second finding
+        # naming Terraform would send the reader to the wrong file.
+        return []
+    text = ci.read_text(errors="replace")
+    inline = "terraform fmt" in text and "terraform validate" in text
+    if inline or _delegates_terraform(repo_path):
+        return []
+    return [
+        _finding(
+            CHECK_ID,
+            "WARN",
+            "cd_readiness",
+            "infra/ declares Terraform, but ci.yml neither runs "
+            "`terraform fmt -check` and `terraform validate` nor passes a "
+            "terraform-dir to the shared python-test.yml.",
+            "Pass `terraform-dir: infra` to the test job. Neither fmt nor "
+            "validate needs state or credentials, so CI can own that half "
+            "while applying stays on a workstation.",
+        )
+    ]
+
+
 def check_ci(
     repo_path: Path,
     exceptions: frozenset[str] | None = None,
