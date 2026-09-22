@@ -1,3 +1,10 @@
+## [3.41.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.41.1...v3.41.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* ci check infra with terraform fmt and validate ([a5b5111](https://github.com/mini-app-polis/evaluator-cog/commit/a5b511179bc622498eee920ec97d4286f77fd19e))
+
 ## [3.41.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.41.0...v3.41.1) (2026-09-22)
 
 
