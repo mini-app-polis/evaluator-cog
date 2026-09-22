@@ -1,3 +1,235 @@
+# [3.41.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.40.1...v3.41.0) (2026-09-21)
+
+
+### Features
+
+* **reporting:** stamp processor and standards versions on discord run reports ([0430c70](https://github.com/mini-app-polis/evaluator-cog/commit/0430c70ba60695c47831fd01733a0462184f7972))
+
+## [3.40.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.40.0...v3.40.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **http:** retry the catalog, ecosystem.yaml and Anthropic calls ([f130678](https://github.com/mini-app-polis/evaluator-cog/commit/f1306783309724db007bb1944fd63bcd60f2345c))
+
+# [3.40.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.3...v3.40.0) (2026-09-21)
+
+
+### Features
+
+* **checks:** grade pipeline cogs on the queue/Lambda runtime ([5bb1e14](https://github.com/mini-app-polis/evaluator-cog/commit/5bb1e14d9d2c3e92640eb5f6588745f43b83d42c))
+
+## [3.39.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.2...v3.39.3) (2026-09-21)
+
+
+### Bug Fixes
+
+* latest common ([ec49baf](https://github.com/mini-app-polis/evaluator-cog/commit/ec49bafeb0e7a5ecacf61f82c97f3957dbec3c0b))
+
+## [3.39.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.1...v3.39.2) (2026-09-21)
+
+
+### Bug Fixes
+
+* **deploy:** build for arm64 Lambda through the shared workflow ([3379a4a](https://github.com/mini-app-polis/evaluator-cog/commit/3379a4ad1076e51acdb9f37c97a90a62351d09ce))
+
+## [3.39.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.39.0...v3.39.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **ci:** deploy the worker from ci.yml so releases reach Lambda ([ed98635](https://github.com/mini-app-polis/evaluator-cog/commit/ed9863556232402397f590ed22af38a7f1961add))
+
+# [3.39.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.38.1...v3.39.0) (2026-09-19)
+
+
+### Features
+
+* **api:** send evaluator_version with every finding ([ec8f4b1](https://github.com/mini-app-polis/evaluator-cog/commit/ec8f4b1ca14f3d15eef6eaff9f3ac4893ac610dc))
+
+## [3.38.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.38.0...v3.38.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* updating CD-020 and CD-021 drift from migration ([7147b56](https://github.com/mini-app-polis/evaluator-cog/commit/7147b56a2c9cc021b68d07a883eacd60676bc478))
+
+# [3.38.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.37.0...v3.38.0) (2026-09-16)
+
+
+### Bug Fixes
+
+* **infra:** pin worker_consumes_queue so an apply cannot disable the mappin ([99b1125](https://github.com/mini-app-polis/evaluator-cog/commit/99b11250eb734d3fc0891b4652028b664adf17f9))
+
+
+### Features
+
+* **evaluations:** delete the Railway consumer, strip the Google stack from the Lambda package ([920a96d](https://github.com/mini-app-polis/evaluator-cog/commit/920a96da9e6a8b77720e3d2ecbaba6759b739a3a))
+
+# [3.37.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.36.1...v3.37.0) (2026-09-16)
+
+
+### Features
+
+* **infra:** give the mapping a concurrency ceiling ([57c59c6](https://github.com/mini-app-polis/evaluator-cog/commit/57c59c6fefe0261fce62eee585d9f2fe241b0531))
+
+## [3.36.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.36.0...v3.36.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* **evaluations:** attribute the introspection run and say what it ran ([60483ad](https://github.com/mini-app-polis/evaluator-cog/commit/60483ad63a36af39ec380159b82c0d3b7ec3a54d))
+
+# [3.36.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.35.0...v3.36.0) (2026-09-16)
+
+
+### Features
+
+* **worker:** add the Lambda entrypoint and build the real package ([bf43e2e](https://github.com/mini-app-polis/evaluator-cog/commit/bf43e2e48ca29be5d5129e8d599110c7c30d3ec3))
+
+# [3.35.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.34.0...v3.35.0) (2026-09-16)
+
+
+### Bug Fixes
+
+* **evaluations:** count suppressed findings without naming or flagging them ([b628a40](https://github.com/mini-app-polis/evaluator-cog/commit/b628a404ca7bac888f062006004cd0ecbf7b6cdf))
+
+
+### Features
+
+* **evaluations:** name suppressed findings and title runs correctly ([e058c26](https://github.com/mini-app-polis/evaluator-cog/commit/e058c2603472c71e1c1e224248629da51913b3eb))
+* **evaluations:** run the fleet-scoped checks as their own job ([2ff0251](https://github.com/mini-app-polis/evaluator-cog/commit/2ff02511c7479754b0eeaa91604d06d6a688ae6c))
+
+# [3.34.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.33.0...v3.34.0) (2026-09-16)
+
+
+### Features
+
+* **evaluate:** route fleet scope to the fan-out endpoint ([f9483f8](https://github.com/mini-app-polis/evaluator-cog/commit/f9483f851dacaa35412f0affc15a921e4d8f920a))
+* **evaluations:** fan the fleet out to one job per repository ([89c8900](https://github.com/mini-app-polis/evaluator-cog/commit/89c8900dc7dcea7fcb4b28b0e3953313158858e5))
+
+# [3.33.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.32.3...v3.33.0) (2026-09-16)
+
+
+### Features
+
+* **evaluations:** report the outcome of a single-repository run ([dc328b5](https://github.com/mini-app-polis/evaluator-cog/commit/dc328b540a70c80dcbd235c8705dee96164c10e0))
+
+## [3.32.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.32.2...v3.32.3) (2026-09-15)
+
+
+### Bug Fixes
+
+* deploy ([77f8ea3](https://github.com/mini-app-polis/evaluator-cog/commit/77f8ea3bde818da47524db25005472fa6f31708b))
+* docs ([19a4645](https://github.com/mini-app-polis/evaluator-cog/commit/19a464545943122d7c349917e38085cbb97ff517))
+
+## [3.32.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.32.1...v3.32.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **infra:** let CI read the function configuration it just updated ([f7a4a8f](https://github.com/mini-app-polis/evaluator-cog/commit/f7a4a8f726f3aec056eaf4ec0208366dc066035e))
+
+## [3.32.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.32.0...v3.32.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* **evaluations:** name the queue credentials for their caller ([99aeba7](https://github.com/mini-app-polis/evaluator-cog/commit/99aeba756ca821706124776e937bf6030780884c))
+
+# [3.32.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.31.0...v3.32.0) (2026-09-15)
+
+
+### Features
+
+* **infra:** an IAM user the Railway consumer can actually use ([8a5f41c](https://github.com/mini-app-polis/evaluator-cog/commit/8a5f41c81bab7eef3359ec113211807ea27dc69d))
+
+# [3.31.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.30.0...v3.31.0) (2026-09-15)
+
+
+### Features
+
+* **evaluations:** enqueue evaluation jobs on SQS ([1c51d20](https://github.com/mini-app-polis/evaluator-cog/commit/1c51d2022472768cc66ce14fdf8e322a1a12e75b))
+* **evaluations:** enqueue evaluation jobs on SQS ([d999ebb](https://github.com/mini-app-polis/evaluator-cog/commit/d999ebb588b351725843cb2bb3c9e77d895f27c9))
+
+# [3.30.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.29.0...v3.30.0) (2026-09-15)
+
+
+### Bug Fixes
+
+* **deps:** bump the python-minor-and-patch group across 1 directory with 2 updates ([288af4c](https://github.com/mini-app-polis/evaluator-cog/commit/288af4c91eb915ff981611002a13a1229b140048))
+
+
+### Features
+
+* terraform setup for aws sqs integration ([8dd0d63](https://github.com/mini-app-polis/evaluator-cog/commit/8dd0d630695ba855ca72e97d6b066313b010efe4))
+
+# [3.29.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.28.0...v3.29.0) (2026-09-13)
+
+
+### Features
+
+* **cd-026:** evaluate is a canonical ci job ([d9f3f10](https://github.com/mini-app-polis/evaluator-cog/commit/d9f3f101d5016637dfdd82e308490667a9edaddd))
+
+# [3.28.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.27.1...v3.28.0) (2026-09-13)
+
+
+### Bug Fixes
+
+* drop the Prefect harness that isolates nothing ([c1994af](https://github.com/mini-app-polis/evaluator-cog/commit/c1994affb9e9fed88f073203ebfb0ca96297f15d))
+
+
+### Features
+
+* a shared workflow for asking that a repo be evaluated ([20562a6](https://github.com/mini-app-polis/evaluator-cog/commit/20562a6440bcfe2d888afd5bd38c09d90aed2476))
+* an HTTP adapter over the handler ([b1b49ad](https://github.com/mini-app-polis/evaluator-cog/commit/b1b49adc1a5053eac35ca3c99fc28bfb8e11ddd2))
+* evaluate on demand, with no Prefect runtime ([66daa01](https://github.com/mini-app-polis/evaluator-cog/commit/66daa01ba9eb07d7f4442840da7dcb8cbb05c230))
+
+## [3.27.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.27.0...v3.27.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **cd-019:** scope the compare_digest clause to the Bearer path ([0228942](https://github.com/mini-app-polis/evaluator-cog/commit/0228942a2de5ce03a3e918e03a121b2bf40744af))
+* two checker bugs surfaced by the first live catalog run ([d9bd797](https://github.com/mini-app-polis/evaluator-cog/commit/d9bd7970842fec6d7ced2efb2af411483f514589))
+
+# [3.27.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.26.0...v3.27.0) (2026-09-11)
+
+
+### Features
+
+* read the standards catalog from the API ([9953d2d](https://github.com/mini-app-polis/evaluator-cog/commit/9953d2d384da83809ccf6adce5bf1d6f5c84dac8))
+
+# [3.26.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.3...v3.26.0) (2026-09-11)
+
+
+### Features
+
+* verb status and duration added ([596769c](https://github.com/mini-app-polis/evaluator-cog/commit/596769cb0a3373eccf79f2b57305bd7db897aec4))
+
+## [3.25.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.2...v3.25.3) (2026-09-11)
+
+
+### Bug Fixes
+
+* stop serving prefect deployments outside production ([d97adf3](https://github.com/mini-app-polis/evaluator-cog/commit/d97adf33d81df8d16a577bed367a24104659a606))
+
+## [3.25.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.1...v3.25.2) (2026-09-10)
+
+
+### Bug Fixes
+
+* **cfg-001:** count [@property](https://github.com/property) and [@computed](https://github.com/computed)_field as declared Settings fields ([3320087](https://github.com/mini-app-polis/evaluator-cog/commit/3320087d7eb9ed141115f27a42c5fcefa4dcb2b8))
+* test setup ([bf755b6](https://github.com/mini-app-polis/evaluator-cog/commit/bf755b6543068995b6ebcd74fead9f886b246fa0))
+
+## [3.25.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.25.0...v3.25.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* moving to common 5.7.1 ([b1895ed](https://github.com/mini-app-polis/evaluator-cog/commit/b1895edf654191bb52823ccbd8e65ec41ae6df43))
+* **observability:** report Sentry errors under the real environment ([423de37](https://github.com/mini-app-polis/evaluator-cog/commit/423de3799bc09c421d52cd7e2871b358a859884d))
+
 # [3.25.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.24.0...v3.25.0) (2026-09-10)
 
 

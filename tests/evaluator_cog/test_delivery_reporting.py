@@ -413,8 +413,10 @@ def test_a_fresh_context_starts_a_fresh_coverage_report() -> None:
     # The headline now carries how long the run took, so this asserts the
     # shape rather than the exact string — the duration is real elapsed
     # time and cannot be pinned here.
-    assert fresh.report.text().endswith("— nothing to do.")
-    assert fresh.report.text().startswith("Run complete in ")
+    # First line: the last one is the version stamp.
+    headline = fresh.report.text().splitlines()[0]
+    assert headline.endswith("— nothing to do.")
+    assert headline.startswith("Run complete in ")
 
 
 def test_coverage_issue_makes_a_fully_delivered_run_warn() -> None:
