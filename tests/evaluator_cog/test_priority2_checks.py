@@ -427,6 +427,77 @@ def test_test_011_accepts_assert_not_called(tmp_path: Path) -> None:
     assert check_mock_assertions(tmp_path) == []
 
 
+def test_test_011_accepts_method_calls_sequence(tmp_path: Path) -> None:
+    """TEST-011: asserting the whole call sequence is the strictest check there is.
+
+    Regression: only the per-call helpers were recognized, so a test
+    asserting ``mock.method_calls == [...]`` — which verifies every call
+    and their order at once — was flagged as verifying nothing.
+    """
+    from evaluator_cog.engine.deterministic import check_mock_assertions
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_x.py").write_text(
+        "from unittest.mock import MagicMock, call\n"
+        "\n"
+        "def test_a():\n"
+        "    m = MagicMock()\n"
+        "    m.first('x')\n"
+        "    m.second('y')\n"
+        "    assert m.method_calls == [call.first('x'), call.second('y')]\n"
+    )
+    assert check_mock_assertions(tmp_path) == []
+
+
+def test_test_011_accepts_behavior_injected_by_assignment(tmp_path: Path) -> None:
+    """TEST-011: configuring a bare mock is behavior injection like any other.
+
+    Regression: only ``patch(..., return_value=X)`` and
+    ``MagicMock(return_value=X)`` were recognized. A mock built bare and
+    configured afterwards — the commoner form — left every test that
+    asserts on the real function's return value falsely flagged.
+    """
+    from evaluator_cog.engine.deterministic import check_mock_assertions
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_x.py").write_text(
+        "from unittest.mock import MagicMock\n"
+        "from app import already_in_folder\n"
+        "\n"
+        "def test_a():\n"
+        "    g = MagicMock()\n"
+        "    g.drive.service.files().get().execute.return_value = {'parents': ['f']}\n"
+        "    assert already_in_folder(g, 'file-1', 'f') is True\n"
+        "\n"
+        "def test_b():\n"
+        "    g = MagicMock()\n"
+        "    g.drive.service.files().get().execute.side_effect = RuntimeError('500')\n"
+        "    assert already_in_folder(g, 'file-1', 'f') is False\n"
+    )
+    assert check_mock_assertions(tmp_path) == []
+
+
+def test_test_011_still_flags_a_mock_with_no_assertion_at_all(tmp_path: Path) -> None:
+    """The widened patterns must not swallow the case the rule exists for."""
+    from evaluator_cog.engine.deterministic import check_mock_assertions
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_x.py").write_text(
+        "from unittest.mock import MagicMock\n"
+        "\n"
+        "def test_a():\n"
+        "    m = MagicMock()\n"
+        "    m.do.return_value = 3\n"
+        "    m.do()\n"
+    )
+    findings = check_mock_assertions(tmp_path)
+    assert len(findings) == 1
+    assert "test_a" in findings[0]["finding"]
+
+
 def test_test_011_accepts_call_count(tmp_path: Path) -> None:
     """TEST-011: .call_count comparisons count as assertions."""
     from evaluator_cog.engine.deterministic import check_mock_assertions
