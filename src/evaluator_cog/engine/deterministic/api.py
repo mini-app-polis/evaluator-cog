@@ -208,9 +208,11 @@ def check_response_shape_parity(
                 continue
             if not re.search(r"\bc\.json\s*\(", text):
                 continue
-            if "success(" in text or re.search(
-                r"from\s+['\"][^'\"]*success", text, re.I
-            ):
+            # Either helper counts: a middleware that only ever rejects
+            # (timeouts, rate limits, auth) has no success() to call.
+            if re.search(
+                r"\b(?:success\w*|error)\s*\(|\bCommonErrors\.", text
+            ) or re.search(r"from\s+['\"][^'\"]*success", text, re.I):
                 continue
             findings.append(
                 _finding(
