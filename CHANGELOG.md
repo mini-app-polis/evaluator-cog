@@ -1,3 +1,10 @@
+# [3.46.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.45.3...v3.46.0) (2026-09-23)
+
+
+### Features
+
+* **TEST-012:** flag Python repos that never typecheck ([d13d91f](https://github.com/mini-app-polis/evaluator-cog/commit/d13d91f99c3ad93af6106a8e13cc2c9ec21b12ed))
+
 ## [3.45.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.45.2...v3.45.3) (2026-09-23)
 
 
