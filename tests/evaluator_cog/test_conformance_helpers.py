@@ -18,6 +18,7 @@ from evaluator_cog.flows.conformance import (
     _get_standards_version,
     _parse_check_exceptions,
     _ping_healthcheck,
+    _resolve_language,
 )
 
 #: Where the evaluator reads the catalog. Always production — see the
@@ -166,6 +167,31 @@ def test_empty_catalog_raises_rather_than_evaluating_nothing() -> None:
 # ---------------------------------------------------------------------------
 # _parse_check_exceptions — pure parsing
 # ---------------------------------------------------------------------------
+
+
+def test_resolve_language_prefers_the_declared_language(tmp_path) -> None:
+    (tmp_path / "package.json").write_text("{}")
+    assert _resolve_language({"language": "python"}, tmp_path) == "python"
+
+
+def test_resolve_language_maps_astro_to_typescript(tmp_path) -> None:
+    assert _resolve_language({"language": "astro"}, tmp_path) == "typescript"
+
+
+def test_resolve_language_detects_typescript_from_package_json(tmp_path) -> None:
+    """A release-triggered event carries no language."""
+    (tmp_path / "package.json").write_text("{}")
+    assert _resolve_language({"id": "deejaytools-api"}, tmp_path) == "typescript"
+
+
+def test_resolve_language_detects_python_from_pyproject(tmp_path) -> None:
+    (tmp_path / "pyproject.toml").write_text("")
+    (tmp_path / "package.json").write_text("{}")
+    assert _resolve_language({"id": "a-cog"}, tmp_path) == "python"
+
+
+def test_resolve_language_defaults_to_python(tmp_path) -> None:
+    assert _resolve_language({"id": "unknown"}, tmp_path) == "python"
 
 
 def test_parse_check_exceptions_plain_string_format() -> None:

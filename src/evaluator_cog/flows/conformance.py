@@ -562,6 +562,26 @@ def _fetch_standards_for_service(
     return rules
 
 
+def _resolve_language(service: dict, repo_path: Path) -> str:
+    """The language a service's checks run as: "python" or "typescript".
+
+    A registry record declares it. A release-triggered event does not — it
+    names a repository and nothing else — so the repository's manifest
+    decides: pyproject.toml means Python, package.json means TypeScript.
+    Defaulting to Python instead graded every TypeScript repository that
+    evaluates on release against the FastAPI rules.
+    """
+    declared = str(service.get("language") or "").strip()
+    if not declared:
+        if (repo_path / "pyproject.toml").is_file():
+            declared = "python"
+        elif (repo_path / "package.json").is_file():
+            declared = "typescript"
+        else:
+            declared = "python"
+    return "typescript" if declared == "astro" else declared
+
+
 def _parse_check_exceptions(raw: list) -> tuple[list[str], dict[str, str]]:
     """
     Parse check_exceptions from ecosystem.yaml.
@@ -1009,8 +1029,7 @@ def _run_standalone_conformance(
     if not repo_id:
         return
     service_type = service.get("type", "worker")
-    _raw_language = str(service.get("language") or "python")
-    language = "typescript" if _raw_language == "astro" else _raw_language
+    language = _resolve_language(service, repo_path)
     cog_subtype = str(service.get("cog_subtype") or "").strip() or None
     dod_type = service.get("dod_type")
     raw_exc = service.get("check_exceptions") or []
@@ -1206,8 +1225,7 @@ def _evaluate_service_deterministic(
         return None
 
     service_type = service.get("type", "worker")
-    _raw_language = str(service.get("language") or "python")
-    language = "typescript" if _raw_language == "astro" else _raw_language
+    language = _resolve_language(service, repo_path)
     cog_subtype = str(service.get("cog_subtype") or "").strip() or None
     dod_type = service.get("dod_type")
     raw_exc = service.get("check_exceptions") or []
