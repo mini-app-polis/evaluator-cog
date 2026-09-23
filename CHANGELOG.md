@@ -1,3 +1,17 @@
+# [3.43.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.42.0...v3.43.0) (2026-09-23)
+
+
+### Bug Fixes
+
+* **checks:** accept Tailwind 4 setup in FE-003 ([f38c466](https://github.com/mini-app-polis/evaluator-cog/commit/f38c46686751d51e4d78d8f7df2e4c15ff397c98))
+* **conformance:** remove monorepo support retired in ecosystem-standards 7.2.0 ([dac98a7](https://github.com/mini-app-polis/evaluator-cog/commit/dac98a7880cb81bf6160970dad0f9972bf1e1195))
+
+
+### Features
+
+* **checks:** check SEC-008 and CD-028 ([5aca7c7](https://github.com/mini-app-polis/evaluator-cog/commit/5aca7c77ab1131ea8548ab7efbd0d98901463da3))
+* **infra:** read secrets from Doppler through ./tf, and stop a run before the timeout ([ec8d9c2](https://github.com/mini-app-polis/evaluator-cog/commit/ec8d9c25fdf86be5e4bfe58de09137b96e16e0c7))
+
 # [3.42.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.41.2...v3.42.0) (2026-09-22)
 
 
