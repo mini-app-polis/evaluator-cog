@@ -109,6 +109,40 @@ def test_xstack002_typescript_passes_with_success_helper(tmp_path: Path) -> None
     assert check_response_shape_parity(tmp_path, language="typescript") == []
 
 
+def test_xstack002_typescript_passes_with_success_list_helper(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "src/routes/runs.ts",
+        "import { successList } from 'common-typescript-utils'\n"
+        "export const h = (c) => c.json(successList([], { count: 0 }))\n",
+    )
+    assert check_response_shape_parity(tmp_path, language="typescript") == []
+
+
+def test_xstack002_typescript_passes_with_only_error_helper(tmp_path: Path) -> None:
+    """A middleware that only rejects never calls success()."""
+    _write(
+        tmp_path,
+        "src/middleware/timeout.ts",
+        "import { error } from 'common-typescript-utils'\n"
+        "export const mw = async (c) => c.json(\n"
+        "  error('request_timeout', 'Request timed out'),\n"
+        "  503\n"
+        ")\n",
+    )
+    assert check_response_shape_parity(tmp_path, language="typescript") == []
+
+
+def test_xstack002_typescript_passes_with_common_errors(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "src/middleware/auth.ts",
+        "import { CommonErrors } from 'common-typescript-utils'\n"
+        "export const mw = async (c) => c.json(CommonErrors.unauthorized(), 401)\n",
+    )
+    assert check_response_shape_parity(tmp_path, language="typescript") == []
+
+
 # --- FE-009 / FE-010 ---------------------------------------------------------
 
 
