@@ -100,7 +100,7 @@ _CONSUMER_SERVICE = {
 def test_xstack_006_no_ecosystem_returns_empty() -> None:
     """No registry means no comparison — and no network call at all.
 
-    Mirrors check_mono_003's guard. respx is active with zero routes, so
+    respx is active with zero routes, so
     any HTTP request would raise; returning [] proves none was made.
     """
     assert check_xstack_006(ecosystem=None, github_token="t") == []
@@ -147,17 +147,6 @@ def test_xstack_006_ignores_unregistered_repo_without_evaluator_yaml() -> None:
     ecosystem = _ecosystem(
         [{"id": "evaluator-cog", "type": "pipeline-cog", "status": "active"}]
     )
-    assert check_xstack_006(ecosystem=ecosystem, github_token="t") == []
-
-
-@respx.mock
-def test_xstack_006_registers_monorepo_repo_field() -> None:
-    """A monorepo is registered under monorepos[].repo, not services[].id."""
-    _mock_org_repos(["deejaytools-com"])
-    ecosystem = {
-        "services": [],
-        "monorepos": [{"id": "deejaytools-com", "repo": "deejaytools-com"}],
-    }
     assert check_xstack_006(ecosystem=ecosystem, github_token="t") == []
 
 

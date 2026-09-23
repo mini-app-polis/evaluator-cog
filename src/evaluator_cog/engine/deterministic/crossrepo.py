@@ -25,7 +25,7 @@ is correct, because neither rule has a per-repo question to ask:
 
 Both therefore run once per flow invocation, from the "applies_to-absent"
 lane in ``evaluator_cog/flows/conformance.py::_run_applies_to_absent_checks``
-— the same lane that carries EVAL-003, MONO-003 and EVAL-007. That lane
+— the same lane that carries EVAL-003 and EVAL-007. That lane
 calls checks with keyword-only arguments and no ``repo_path``, so the
 functions below are shaped to match it exactly: keyword-only, ``->
 list[Finding]``, and returning ``[]`` rather than raising when their
@@ -46,7 +46,7 @@ Network failures are never conformance violations
 Both rules read GitHub. A rate limit, a DNS blip or an expired token
 must not be reported as "this repo is unregistered" or "this pin is
 stale" — those would be fabricated violations against innocent repos.
-Following ``check_eval_003`` / ``check_mono_003``, any failure to reach
+Following ``check_eval_003``, any failure to reach
 a required read source produces a single finding tagged with the
 ``CHECKER`` sentinel rule ID at WARN severity, and the check returns
 immediately without emitting any rule findings. ``CHECKER`` is the
@@ -127,15 +127,13 @@ def _registry_repo_names(ecosystem: dict) -> set[str]:
     """Every repo name ``ecosystem.yaml`` knows about, normalized.
 
     check_notes for XSTACK-006 names ``repos[].id`` as the registry key.
-    The live ``ecosystem.yaml`` spells that list ``services[]`` and adds a
-    ``monorepos[]`` list whose entries carry a ``repo`` field; a service
-    entry may also carry an explicit ``repo`` that differs from its ``id``.
-    All of those are "this repo is registered" for the purposes of this
-    rule, so the union is taken rather than a single key. Reading only
-    one spelling would report every monorepo in the fleet as unregistered.
+    The live ``ecosystem.yaml`` spells that list ``services[]``, and a
+    service entry may also carry an explicit ``repo`` that differs from
+    its ``id``. All of those are "this repo is registered" for the
+    purposes of this rule, so the union is taken rather than a single key.
     """
     names: set[str] = set()
-    for key in ("repos", "services", "monorepos", "libraries"):
+    for key in ("repos", "services", "libraries"):
         entries = ecosystem.get(key) or []
         if not isinstance(entries, list):
             continue
@@ -191,7 +189,7 @@ def _fleet_repo_names(ecosystem: dict) -> list[str]:
     """
     seen: set[str] = set()
     ordered: list[str] = []
-    for key in ("repos", "services", "monorepos"):
+    for key in ("repos", "services"):
         entries = ecosystem.get(key) or []
         if not isinstance(entries, list):
             continue
@@ -316,7 +314,7 @@ def _latest_release_tag(org: str, repo: str, token: str) -> str | None:
 def _checker_finding(rule_id: str, detail: str) -> Finding:
     """The house sentinel for "the check could not run", not "the repo failed".
 
-    Mirrors ``check_eval_003`` / ``check_mono_003``: rule ID ``CHECKER``,
+    Mirrors ``check_eval_003``: rule ID ``CHECKER``,
     WARN severity, the rule's own dimension, and a remediation aimed at
     the operator rather than at any target repo.
     """

@@ -10,6 +10,7 @@ from pathlib import Path
 from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
+    _tracked_paths,
 )
 from evaluator_cog.engine.deterministic._terraform import (
     dead_letter_queue_names,
@@ -227,10 +228,98 @@ def check_terraform_checked_in_ci(repo_path: Path) -> list[Finding]:
     ]
 
 
+def _required_provider_blocks(tf_text: str) -> list[str]:
+    """The body of each ``required_providers { ... }``, found by brace count."""
+    blocks: list[str] = []
+    for m in re.finditer(r"required_providers\s*\{", tf_text):
+        depth, i = 0, m.end() - 1
+        while i < len(tf_text):
+            if tf_text[i] == "{":
+                depth += 1
+            elif tf_text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    blocks.append(tf_text[m.end() : i])
+                    break
+            i += 1
+    return blocks
+
+
+def _runs_terraform_in_ci(repo_path: Path) -> bool:
+    """True when ci.yml checks Terraform — inline, or by delegation (CD-027)."""
+    ci = repo_path / ".github" / "workflows" / "ci.yml"
+    if not ci.exists():
+        return False
+    text = ci.read_text(errors="replace")
+    inline = "terraform fmt" in text or "terraform validate" in text
+    return inline or _delegates_terraform(repo_path)
+
+
+def check_terraform_versions_pinned(repo_path: Path) -> list[Finding]:
+    """CD-028: Terraform versions pinned, lock committed, lock covers CI's platform."""
+    CHECK_ID = "CD-028"
+    infra = repo_path / "infra"
+    if not infra.is_dir() or not any(infra.rglob("*.tf")):
+        return []
+
+    findings: list[Finding] = []
+
+    def fail(message: str, suggestion: str) -> None:
+        findings.append(_finding(CHECK_ID, "WARN", "cd_readiness", message, suggestion))
+
+    tf_text = "\n".join(
+        f.read_text(errors="replace") for f in sorted(infra.glob("*.tf"))
+    )
+    if not re.search(r"(?m)^\s*required_version\s*=", tf_text):
+        fail(
+            "No infra/*.tf sets required_version in its terraform block.",
+            'Pin the Terraform version (e.g. required_version = ">= 1.6") so '
+            "the workstation and CI agree on what is running the stack.",
+        )
+
+    # Each `source = ...` inside required_providers needs a `version` in the
+    # same provider block. A regex cannot find the end of the outer block —
+    # the non-greedy form stops at the first inner `}` — so the extent is
+    # found by counting braces, and the provider entries inside it (which
+    # nest no further) are then read with one.
+    for block in _required_provider_blocks(tf_text):
+        for name, body in re.findall(r"(\w+)\s*=\s*\{([^{}]*)\}", block):
+            if "source" in body and not re.search(r"(?m)^\s*version\s*=", body):
+                fail(
+                    f"Provider `{name}` declares a source with no version constraint.",
+                    'Pin it (e.g. version = "~> 5.0"), so a second machine '
+                    "resolves the provider this stack was written against "
+                    "rather than whatever is newest that day.",
+                )
+
+    lock = infra / ".terraform.lock.hcl"
+    if not lock.exists():
+        fail(
+            "infra/.terraform.lock.hcl is not committed.",
+            "Commit it. It holds provider versions and checksums and no "
+            "values — it is the one generated file in infra/ that belongs "
+            "in the repository (SEC-008 covers the ones that do not).",
+        )
+        return findings
+
+    if _runs_terraform_in_ci(repo_path):
+        platforms = lock.read_text(errors="replace").count("h1:")
+        if platforms < 2:
+            fail(
+                f"ci.yml runs Terraform, but .terraform.lock.hcl carries "
+                f"{platforms} platform hash(es) — it has only ever been "
+                f"written on one operating system.",
+                "Record the runner's platform too: `terraform providers lock "
+                "-platform=darwin_arm64 -platform=linux_amd64`. Without it "
+                "`init` on Linux rejects the provider it just downloaded, "
+                "with an error that names checksums and reads like tampering.",
+            )
+    return findings
+
+
 def check_ci(
     repo_path: Path,
     exceptions: frozenset[str] | None = None,
-    monorepo_root: Path | None = None,
 ) -> list[Finding]:
     """
     Runs all CI checks in one pass.
@@ -239,8 +328,7 @@ def check_ci(
     CHECK_ID = "VER-003"
     findings = []
     _exc = exceptions or frozenset()
-    ci_root = monorepo_root or repo_path
-    ci = ci_root / ".github" / "workflows" / "ci.yml"
+    ci = repo_path / ".github" / "workflows" / "ci.yml"
     if not ci.exists():
         findings.append(
             _finding(
@@ -439,68 +527,6 @@ def check_structured_logging(repo_path: Path) -> list[Finding]:
     return findings
 
 
-#: Seconds to wait on the `git ls-files` used to decide whether a file is
-#: committed. Generous for a metadata read, and bounded so a wedged git
-#: cannot stall the run — the check degrades to "git cannot say" instead.
-_GIT_QUERY_TIMEOUT_SECONDS = 30
-
-
-def _tracked_paths(repo_path: Path) -> set[str] | None:
-    """Paths git tracks under ``repo_path``, relative to it, or None.
-
-    None means "no answer available" — no working tree above this path
-    (the zipball download path), or git failed — and callers must not
-    read that as "nothing is tracked".
-
-    The .git directory is looked for upward, not only at ``repo_path``:
-    a monorepo service is checked at ``apps/api`` while the working tree
-    lives at the repo root, and asking only at the service directory
-    would answer "cannot say" for every monorepo.
-    """
-    root: Path | None = None
-    for candidate in (repo_path, *repo_path.parents):
-        if (candidate / ".git").exists():
-            root = candidate
-            break
-    if root is None:
-        return None
-    import subprocess
-
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z"],
-            capture_output=True,
-            text=True,
-            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
-        )
-    except (subprocess.SubprocessError, OSError):
-        return None
-    if result.returncode != 0:
-        return None
-
-    try:
-        prefix = repo_path.resolve().relative_to(root.resolve())
-    except ValueError:
-        return None
-    prefix_str = "" if prefix == Path(".") else prefix.as_posix() + "/"
-
-    tracked: set[str] = set()
-    for line in result.stdout.split("\0"):
-        if not line:
-            continue
-        if prefix_str and not line.startswith(prefix_str):
-            continue
-        tracked.add(line[len(prefix_str) :])
-
-    # An empty answer is not "this directory tracks nothing" — a real
-    # checkout always tracks something. It means the walk upward found a
-    # working tree this directory is not actually part of, which is what
-    # happens if an extracted archive lands inside an unrelated repo.
-    # Returning the empty set there would filter out every match and
-    # disable the check without saying so.
-    return tracked or None
-
-
 def check_no_hardcoded_secrets(repo_path: Path) -> list[Finding]:
     """CD-011: Doppler as canonical secret store."""
     CHECK_ID = "CD-011"
@@ -672,13 +698,11 @@ def check_gha_not_trigger_relay(repo_path: Path) -> list[Finding]:
 def check_migration_in_ci(
     repo_path: Path,
     language: str = "python",
-    monorepo_root: Path | None = None,
 ) -> list[Finding]:
     """API-011: CI runs database migrations on deploy.
 
     Python (Alembic): ci.yml contains 'alembic upgrade head' in a deploy job.
     TypeScript (Drizzle): ci.yml contains 'drizzle-kit push' or 'drizzle-kit migrate'.
-    For monorepo services, also checks the workspace root ci.yml.
     """
     findings: list[Finding] = []
 
@@ -687,11 +711,6 @@ def check_migration_in_ci(
     if ci.exists():
         with suppress(Exception):
             ci_texts.append(ci.read_text())
-    if monorepo_root is not None:
-        root_ci = monorepo_root / ".github" / "workflows" / "ci.yml"
-        if root_ci.exists():
-            with suppress(Exception):
-                ci_texts.append(root_ci.read_text())
 
     if not ci_texts:
         findings.append(
@@ -880,15 +899,11 @@ def check_three_layer_observability(
     return findings
 
 
-def check_pnpm_lockfile(
-    repo_path: Path,
-    monorepo_root: Path | None = None,
-) -> list[Finding]:
+def check_pnpm_lockfile(repo_path: Path) -> list[Finding]:
     """XSTACK-003: pnpm for all TypeScript projects."""
     CHECK_ID = "XSTACK-003"
     findings = []
-    check_root = monorepo_root or repo_path
-    if (check_root / "package-lock.json").exists():
+    if (repo_path / "package-lock.json").exists():
         findings.append(
             _finding(
                 "XSTACK-003",
@@ -898,7 +913,7 @@ def check_pnpm_lockfile(
                 "Migrate to pnpm: remove package-lock.json, run pnpm install, commit pnpm-lock.yaml.",
             )
         )
-    if (check_root / "yarn.lock").exists():
+    if (repo_path / "yarn.lock").exists():
         findings.append(
             _finding(
                 "XSTACK-003",
@@ -908,7 +923,7 @@ def check_pnpm_lockfile(
                 "Migrate to pnpm: remove yarn.lock, run pnpm install, commit pnpm-lock.yaml.",
             )
         )
-    if not (check_root / "pnpm-lock.yaml").exists():
+    if not (repo_path / "pnpm-lock.yaml").exists():
         findings.append(
             _finding(
                 "XSTACK-003",

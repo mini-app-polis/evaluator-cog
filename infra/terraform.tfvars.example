@@ -1,11 +1,13 @@
 # Copy to terraform.tfvars (gitignored) and fill in.
+#
+# Non-secret settings only. The four secrets — evaluator_cog_api_key,
+# github_token, sentry_dsn, anthropic_api_key — come from Doppler through
+# the ./tf wrapper and must NOT appear here; tfvars wins over the
+# environment, so a value left here silently overrides Doppler, and ./tf
+# refuses to run while one is set.
 
-alert_email           = "you@example.com"
-kaiano_api_base_url   = "https://api.kaianolevine.com"
-evaluator_cog_api_key = "..."   # this cog's named key, CD-019
-github_token          = "..."   # read access to mini-app-polis repos
-sentry_dsn            = ""      # SENTRY_DSN_EVALUATOR
-anthropic_api_key     = ""      # only the llm mode needs this
+alert_email         = "you@example.com"
+kaiano_api_base_url = "https://api.kaianolevine.com"
 
 # First cog in the account creates the shared GitHub OIDC provider;
 # every cog after sets this to false.

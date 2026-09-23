@@ -1,7 +1,7 @@
 """The checks that belong to no repository, and how they get run now.
 
-Six of them — EVAL-003, MONO-003, XSTACK-006, XSTACK-007, XSTACK-008 and
-EVAL-007 — carry ``applies_to: None``. They grade the inventory, the
+Five of them — EVAL-003, XSTACK-006, XSTACK-007, XSTACK-008 and EVAL-007
+— carry ``applies_to: None``. They grade the inventory, the
 stored findings and the catalog, so there is no per-repository invocation
 any of them belongs to. They ran at the tail of ``run_fleet_sweep``
 because that was the one place in the old design that happened once per
@@ -160,8 +160,8 @@ def test_ordinary_findings_are_not_mistaken_for_missing_repos() -> None:
 
 
 def test_the_same_repo_twice_is_one_entry() -> None:
-    """A monorepo posts one not-evaluated row per app, all naming the same
-    repository. Reporting it twice would put two identical XSTACK-008
+    """A repository with several services posts one not-evaluated row per
+    service, all naming the same repository. Reporting it twice would put two identical XSTACK-008
     findings in one run."""
     reason = c._NOT_FOUND_REASON_FMT.format(
         org="mini-app-polis", repo="ghost-mono", ref="main"
@@ -348,9 +348,9 @@ def test_a_complete_pass_reports_what_it_ran() -> None:
 
 def test_a_partial_pass_says_so() -> None:
     """A check that raises is logged and skipped and the run goes on, so
-    "five of six ran" and "six ran and found nothing" are otherwise the
+    "four of five ran" and "five ran and found nothing" are otherwise the
     same silence."""
-    report = _introspect(completed=5).report
+    report = _introspect(completed=4).report
 
     assert report.severity == "WARN"
     assert "check_failed" in report.text()

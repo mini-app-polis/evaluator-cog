@@ -6,7 +6,6 @@ These helpers are independently testable without mocking a whole sweep
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 import httpx
@@ -15,12 +14,10 @@ import respx
 
 from evaluator_cog.flows.conformance import (
     RunContext,
-    _deduplicate_sibling_findings,
     _fetch_yaml,
     _get_standards_version,
     _parse_check_exceptions,
     _ping_healthcheck,
-    _read_workspace_package_json,
 )
 
 #: Where the evaluator reads the catalog. Always production — see the
@@ -167,33 +164,6 @@ def test_empty_catalog_raises_rather_than_evaluating_nothing() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _get_monorepos — pure dict parsing
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# _read_workspace_package_json — filesystem helper
-# ---------------------------------------------------------------------------
-
-
-def test_read_workspace_package_json_returns_lowercased_content(
-    tmp_path: Path,
-) -> None:
-    """Returns the lowercased content of package.json when present."""
-    (tmp_path / "package.json").write_text('{"name": "MyMonorepo"}')
-    result = _read_workspace_package_json(tmp_path)
-    assert result == '{"name": "mymonorepo"}'
-
-
-def test_read_workspace_package_json_returns_empty_when_absent(
-    tmp_path: Path,
-) -> None:
-    """Returns empty string when package.json does not exist."""
-    result = _read_workspace_package_json(tmp_path)
-    assert result == ""
-
-
-# ---------------------------------------------------------------------------
 # _parse_check_exceptions — pure parsing
 # ---------------------------------------------------------------------------
 
@@ -248,57 +218,3 @@ def test_parse_check_exceptions_empty_input() -> None:
     """Empty list and None both return empty results."""
     assert _parse_check_exceptions([]) == ([], {})
     assert _parse_check_exceptions(None) == ([], {})
-
-
-# ---------------------------------------------------------------------------
-# _deduplicate_sibling_findings — pure logic
-# ---------------------------------------------------------------------------
-
-
-def test_deduplicate_sibling_findings_collapses_identical_findings() -> None:
-    """Identical rule_id+finding across siblings is collapsed into the primary."""
-    findings_by_service = {
-        "svc-a": [
-            {
-                "rule_id": "XSTACK-001",
-                "finding": "Shared lib missing.",
-                "severity": "WARN",
-            }
-        ],
-        "svc-b": [
-            {
-                "rule_id": "XSTACK-001",
-                "finding": "Shared lib missing.",
-                "severity": "WARN",
-            }
-        ],
-    }
-    result = _deduplicate_sibling_findings(findings_by_service)
-    assert result["svc-b"] == []
-    assert "also affects svc-b" in result["svc-a"][0]["finding"]
-
-
-def test_deduplicate_sibling_findings_keeps_distinct_findings() -> None:
-    """Non-identical findings are kept on each sibling."""
-    findings_by_service = {
-        "svc-a": [
-            {"rule_id": "DOC-001", "finding": "README missing.", "severity": "ERROR"}
-        ],
-        "svc-b": [
-            {"rule_id": "CD-010", "finding": "Sentry missing.", "severity": "ERROR"}
-        ],
-    }
-    result = _deduplicate_sibling_findings(findings_by_service)
-    assert len(result["svc-a"]) == 1
-    assert len(result["svc-b"]) == 1
-
-
-def test_deduplicate_sibling_findings_single_service_unchanged() -> None:
-    """With only one service, no deduplication occurs."""
-    findings_by_service = {
-        "svc-a": [
-            {"rule_id": "DOC-001", "finding": "README missing.", "severity": "ERROR"}
-        ]
-    }
-    result = _deduplicate_sibling_findings(findings_by_service)
-    assert result == findings_by_service

@@ -358,7 +358,6 @@ def test_every_emitted_dimension_is_one_the_catalog_declares() -> None:
         "cd_readiness",
         "cross_repo_coherence",
         "standards_currency",
-        "monorepo_coherence",
         "security_posture",
         "operational_readiness",
     }

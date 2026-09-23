@@ -100,7 +100,6 @@ from evaluator_cog.engine.deterministic.identity import (
 from evaluator_cog.engine.deterministic.introspection import (
     check_eval_003,
     check_eval_007,
-    check_mono_003,
 )
 from evaluator_cog.engine.deterministic.meta import (
     check_meta_005_check_notes_prefix,
@@ -240,7 +239,6 @@ __all__ = [
     "check_meta_release_pipeline_wired",
     "check_migration_in_ci",
     "check_mock_assertions",
-    "check_mono_003",
     "check_mypy_in_ci",
     "check_naming_conventions",
     "check_no_hardcoded_secrets",

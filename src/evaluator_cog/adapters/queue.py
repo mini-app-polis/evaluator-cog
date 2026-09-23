@@ -115,16 +115,6 @@ def _event_from(payload: dict[str, Any], *, ctx: RunContext) -> EvaluationEvent:
     # A release-triggered evaluation names a repository and nothing else,
     # and synthesising its single service from the repo id is right: CI
     # knows what it built and no registry lookup can add to that.
-    #
-    # A fan-out is different in a way that is not cosmetic. A monorepo is
-    # ONE event carrying every app in it, because sibling deduplication
-    # treats an identical finding on two apps as one issue and cannot know
-    # that until every app has been evaluated. Flatten a monorepo into one
-    # message per app and monorepo_root, the workspace package.json and
-    # monorepo_context all resolve to None, _deduplicate_sibling_findings
-    # never fires — it is gated on more than one service — and duplicate
-    # findings land looking like a clean run. So the grouping travels in
-    # the message rather than being rebuilt from it.
     services = payload.get("services")
     if isinstance(services, list) and services:
         if not all(isinstance(service, dict) for service in services):
@@ -134,10 +124,6 @@ def _event_from(payload: dict[str, Any], *, ctx: RunContext) -> EvaluationEvent:
         repo_id = str(payload.get("repo_id") or repo)
         resolved = ({"id": repo_id, "repo": repo},)
 
-    monorepo = payload.get("monorepo")
-    if monorepo is not None and not isinstance(monorepo, dict):
-        raise UnprocessableMessage("monorepo must be an object")
-
     return EvaluationEvent(
         org=str(payload.get("org") or "mini-app-polis"),
         repo=repo,
@@ -145,7 +131,6 @@ def _event_from(payload: dict[str, Any], *, ctx: RunContext) -> EvaluationEvent:
         services=resolved,
         run_id=run_id,
         mode=mode,
-        monorepo=monorepo,
         standards_version=str(payload.get("standards_version") or ""),
     )
 

@@ -396,13 +396,12 @@ def check_hardcoded_time_values(
 def check_shared_library_used(
     repo_path: Path,
     language: str = "python",
-    workspace_package_json_text: str | None = None,
 ) -> list[Finding]:
     """XSTACK-001: Shared library dependency must be declared (2026-04 narrow).
 
     Hand-rolled logger/auth/response reimplementation heuristics moved to LLM
     rule XSTACK-005; this check only verifies the dependency is present in
-    ``pyproject.toml`` / workspace ``package.json`` (MONO-001).
+    ``pyproject.toml`` / ``package.json``.
     """
     CHECK_ID = "XSTACK-001"
     findings: list[Finding] = []
@@ -422,8 +421,7 @@ def check_shared_library_used(
             )
     else:
         pkg = repo_path / "package.json"
-        per_app_text = pkg.read_text().lower() if pkg.exists() else ""
-        pkg_text = per_app_text + (workspace_package_json_text or "").lower()
+        pkg_text = pkg.read_text().lower() if pkg.exists() else ""
         if not declares_shared_library(pkg_text, TYPESCRIPT_SHARED_LIBRARY_NAMES):
             findings.append(
                 _finding(

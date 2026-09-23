@@ -361,27 +361,27 @@ def test_fetch_full_rule_catalog_captures_applies_to_and_modifies() -> None:
     catalog = _catalog(
         [
             _rule(
-                "MONO-001",
+                "MOD-001",
                 applies_to=["api-service", "react-app"],
                 modifies=["XSTACK-001"],
-                dimension="monorepo_coherence",
+                dimension="cross_repo_coherence",
             ),
             # Not a repo-source scan: the compiler collapses both an absent
             # and an explicitly empty applies_to to None (ADR-004).
-            _rule("MONO-003", applies_to=None, dimension="monorepo_coherence"),
+            _rule("EVAL-003", applies_to=None, dimension="standards_currency"),
             _rule("EVAL-005", applies_to=["all"], check_mode="llm"),
         ]
     )
     with _patch_catalog(catalog):
         full = _fetch_full_rule_catalog(ctx=RunContext())
 
-    assert full["MONO-001"]["applies_to"] == ["api-service", "react-app"]
-    assert full["MONO-001"]["modifies"] == ["XSTACK-001"]
-    assert full["MONO-001"]["dimension"] == "monorepo_coherence"
-    assert full["MONO-003"]["applies_to"] is None
+    assert full["MOD-001"]["applies_to"] == ["api-service", "react-app"]
+    assert full["MOD-001"]["modifies"] == ["XSTACK-001"]
+    assert full["MOD-001"]["dimension"] == "cross_repo_coherence"
+    assert full["EVAL-003"]["applies_to"] is None
     # check_mode arrives resolved rather than parsed out of check_notes.
     assert full["EVAL-005"]["check_mode"] == "llm"
-    assert full["MONO-001"]["check_mode"] == "deterministic"
+    assert full["MOD-001"]["check_mode"] == "deterministic"
 
 
 def test_run_standalone_deterministic_calls_load_evaluator_config(
@@ -412,7 +412,6 @@ def test_run_standalone_deterministic_calls_load_evaluator_config(
             "2.5.0",
             "deterministic-2.5.0-unit",
             prefect_log,
-            monorepo_root=None,
             ctx=RunContext(),
         )
 
@@ -434,8 +433,6 @@ def test_run_standalone_deterministic_calls_load_evaluator_config(
         "cog_subtype": None,
         "check_exceptions": [],
         "exception_reasons": {},
-        "monorepo_root": None,
-        "workspace_package_json_text": None,
         "evaluator_config": cfg,
         "rule_catalog": None,
         "catalog_schema": None,
@@ -567,141 +564,8 @@ def test_retry_delay_honours_retry_after(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# One evaluation path for both shapes
+# Delivering a service's findings
 # ---------------------------------------------------------------------------
-#
-# The monorepo branch used to carry its own copy of the per-service
-# evaluation — roughly 254 lines calling run_all_checks directly — and it had
-# drifted from the standalone path it duplicated. Two of these tests cover
-# skips that copy had and the standalone path did not.
-
-
-def _run_mono_flow(monkeypatch, ecosystem: dict, *, run_all):
-    """Run one grouped monorepo job and return what was posted.
-
-    Built from the registry fixture rather than read out of it by the
-    evaluator, because the evaluator no longer reads a registry: the API
-    resolves the fleet and sends each repository its services already
-    grouped. This is that message, arriving.
-
-    The grouping is the thing under test either way. A monorepo has to
-    reach ``handler`` as one event carrying every app, or sibling
-    deduplication cannot see the siblings.
-    """
-    import evaluator_cog.flows.conformance as conf
-
-    def fake_download_repo(
-        repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw
-    ):
-        root = Path(tmp_dir) / repo_name
-        (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
-        return root
-
-    posted: list[dict] = []
-
-    def capture(**kwargs):
-        posted.append(kwargs)
-        return conf.PostResult(attempted=1, posted=1)
-
-    record = ecosystem["monorepos"][0]
-    event = conf.EvaluationEvent(
-        org="mini-app-polis",
-        repo=record["repo"],
-        ref="main",
-        services=tuple(ecosystem["services"]),
-        run_id="deterministic-9.9.9-test-abc",
-        mode="deterministic",
-        monorepo=record,
-    )
-
-    monkeypatch.setenv("STANDARDS_VERSION", "9.9.9-test")
-    with (
-        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
-        patch.object(conf, "_fetch_yaml", return_value=ecosystem),
-        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
-        patch.object(conf, "_download_repo", side_effect=fake_download_repo),
-        patch.object(conf, "run_all_checks", side_effect=run_all),
-        patch.object(conf, "post_findings", side_effect=capture),
-        patch.object(conf, "_fetch_standards_for_service", return_value=[]),
-    ):
-        conf.handler(event, log=_LOG, ctx=RunContext.for_run())
-    return posted
-
-
-def _mono_ecosystem(*, path_a: str = "apps/a") -> dict:
-    return {
-        "services": [
-            {
-                "id": "app-a",
-                "repo": "mono",
-                "status": "active",
-                "type": "api-service",
-                "language": "typescript",
-                "monorepo": "mono-1",
-                "monorepo_path": path_a,
-            },
-        ],
-        "monorepos": [
-            {
-                "id": "mono-1",
-                "repo": "mono",
-                "apps": [{"service_id": "app-a", "path": path_a}],
-            }
-        ],
-    }
-
-
-def test_monorepo_app_with_a_missing_path_is_reported(monkeypatch) -> None:
-    """A declared monorepo_path that is not in the tree used to vanish.
-
-    The old branch logged and continued, so the service was simply absent
-    from the report with nothing saying why — the invisible absence the
-    standalone path had already been fixed for.
-    """
-
-    def unreachable(*args, **kwargs):  # pragma: no cover - must not run
-        raise AssertionError("checks ran against a path that does not exist")
-
-    posted = _run_mono_flow(
-        monkeypatch, _mono_ecosystem(path_a="apps/nope"), run_all=unreachable
-    )
-
-    texts = "\n".join(str(f) for call in posted for f in call.get("findings", []))
-    assert "apps/nope" in texts
-    assert "does not exist" in texts
-
-
-def test_monorepo_app_whose_checks_raise_is_reported(monkeypatch) -> None:
-    """A raising check used to be a log line and nothing else."""
-
-    def raising(*args, **kwargs):
-        raise RuntimeError("checker exploded")
-
-    posted = _run_mono_flow(monkeypatch, _mono_ecosystem(), run_all=raising)
-
-    texts = "\n".join(str(f) for call in posted for f in call.get("findings", []))
-    assert "RuntimeError" in texts
-    assert "checker exploded" in texts
-
-
-def test_monorepo_deterministic_findings_carry_the_deterministic_flow_name(
-    monkeypatch,
-) -> None:
-    """Both shapes now name the flow the same way.
-
-    The monorepo copy posted deterministic findings under flow_name
-    "conformance-check" — the LLM flow's name — while every standalone repo
-    used "deterministic-conformance" for the same source.
-    """
-
-    def clean(*args, **kwargs):
-        return SimpleNamespace(findings=[], checked_rule_ids=set())
-
-    posted = _run_mono_flow(monkeypatch, _mono_ecosystem(), run_all=clean)
-
-    service_posts = [c for c in posted if c.get("repo") == "app-a"]
-    assert service_posts, "the app was never posted"
-    assert all(c["flow_name"] == "deterministic-conformance" for c in service_posts)
 
 
 def test_post_service_findings_substitutes_the_success_row() -> None:
@@ -802,8 +666,8 @@ def test_handler_evaluates_a_standalone_repo(tmp_path) -> None:
 def test_handler_reports_every_service_when_the_download_fails() -> None:
     """A failed download hides each service, so each gets its own row.
 
-    The repository is not something the report has a column for — for a
-    monorepo especially, the apps it hid are what went unevaluated.
+    The repository is not something the report has a column for — the
+    services it hid are what went unevaluated.
     """
     import evaluator_cog.flows.conformance as conf
 
@@ -819,7 +683,6 @@ def test_handler_reports_every_service_when_the_download_fails() -> None:
         ref="main",
         services=(_svc("app-a"), _svc("app-b")),
         run_id="r-2",
-        monorepo={"id": "mono-1", "repo": "mono"},
     )
 
     with (
@@ -833,49 +696,6 @@ def test_handler_reports_every_service_when_the_download_fails() -> None:
     assert result.not_evaluated == ["app-a", "app-b"]
     assert result.evaluated == []
     assert {c["repo"] for c in posted} == {"app-a", "app-b"}
-
-
-def test_handler_deduplicates_identical_sibling_findings() -> None:
-    """Why a monorepo is one event: dedup needs every app's findings first."""
-    import evaluator_cog.flows.conformance as conf
-
-    def download(repo_name, tmp_dir, branch="main", org="mini-app-polis", **_kw):
-        root = Path(tmp_dir) / repo_name
-        (root / "apps" / "a").mkdir(parents=True, exist_ok=True)
-        (root / "apps" / "b").mkdir(parents=True, exist_ok=True)
-        return root
-
-    posted: list[dict] = []
-
-    def capture(**kwargs):
-        posted.append(kwargs)
-        return conf.PostResult(attempted=1, posted=1)
-
-    event = conf.EvaluationEvent(
-        org="mini-app-polis",
-        repo="mono",
-        ref="main",
-        services=(
-            _svc("app-a", monorepo_path="apps/a"),
-            _svc("app-b", monorepo_path="apps/b"),
-        ),
-        run_id="r-3",
-        monorepo={"id": "mono-1", "repo": "mono", "apps": []},
-    )
-
-    with (
-        patch.object(conf, "_fetch_catalog", return_value=_FAKE_CATALOG),
-        patch.object(conf, "_get_standards_version", return_value="9.9.9-test"),
-        patch.object(conf, "_download_repo", side_effect=download),
-        patch.object(conf, "run_all_checks", side_effect=_findings("the same issue")),
-        patch.object(conf, "post_findings", side_effect=capture),
-    ):
-        conf.handler(event, log=MagicMock(), ctx=conf.RunContext())
-
-    by_repo = {c["repo"]: c["findings"] for c in posted}
-    assert "also affects app-b" in by_repo["app-a"][0]["finding"]
-    # The sibling's duplicate is not posted again; it gets the SUCCESS row.
-    assert by_repo["app-b"][0]["severity"] == "SUCCESS"
 
 
 # ---------------------------------------------------------------------------

@@ -165,3 +165,84 @@ def test_the_handler_signature_matches_what_lambda_calls() -> None:
 
     params = list(inspect.signature(lw.lambda_handler).parameters)
     assert len(params) == 2
+
+
+# ── the deadline ─────────────────────────────────────────────────────────
+
+
+class _Context:
+    """Lambda's context, as far as the worker reads it."""
+
+    def __init__(self, remaining_ms: int) -> None:
+        self._remaining_ms = remaining_ms
+
+    def get_remaining_time_in_millis(self) -> int:
+        return self._remaining_ms
+
+
+def test_a_run_that_outlives_the_deadline_fails_the_ordinary_way(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An evaluation can run long. Stopped before Lambda kills it, the
+    failure is reported and the message comes back; killed by the timeout,
+    neither happens."""
+    import time
+
+    from evaluator_cog import _deadline
+
+    monkeypatch.setattr(_deadline, "DEADLINE_MARGIN_SECONDS", 0)
+    raised: list[BaseException] = []
+
+    def _slow(_body: str) -> None:
+        try:
+            time.sleep(2)
+        except BaseException as exc:
+            raised.append(exc)
+            raise
+
+    with (
+        patch.object(lw, "process_message", _slow),
+        patch.object(lw, "_report_failure") as reported,
+    ):
+        result = lw.lambda_handler(_event(_body()), _Context(remaining_ms=100))
+
+    assert result == {"batchItemFailures": [{"itemIdentifier": "m-0"}]}
+    assert len(raised) == 1
+    assert isinstance(raised[0], _deadline.RunOutOfTime)
+    assert reported.called
+
+
+def test_the_deadline_is_cleared_after_a_run() -> None:
+    import signal
+
+    with patch.object(lw, "process_message"):
+        result = lw.lambda_handler(_event(_body()), _Context(remaining_ms=900_000))
+
+    assert result == {"batchItemFailures": []}
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+
+
+def test_no_time_left_to_start_is_a_retry_not_a_run() -> None:
+    """Below the margin there is not enough left to run and report, so the
+    message goes back rather than starting something that will be killed."""
+    with patch.object(lw, "process_message") as process:
+        result = lw.lambda_handler(_event(_body()), _Context(remaining_ms=1_000))
+
+    assert result == {"batchItemFailures": [{"itemIdentifier": "m-0"}]}
+    process.assert_not_called()
+
+
+def test_an_unreadable_message_is_reported_once_not_on_every_redelivery() -> None:
+    """Five receives of one bad message were five identical findings. The
+    dead-letter queue it lands in has an alarm of its own (PIPE-021)."""
+    event = _event(_body())
+    event["Records"][0]["attributes"]["ApproximateReceiveCount"] = "3"
+
+    with (
+        patch.object(lw, "process_message", side_effect=lw.UnprocessableMessage("x")),
+        patch.object(lw, "_report_failure") as reported,
+    ):
+        result = lw.lambda_handler(event, None)
+
+    assert result == {"batchItemFailures": [{"itemIdentifier": "m-0"}]}
+    reported.assert_not_called()

@@ -29,6 +29,7 @@ from typing import Any
 import sentry_sdk
 from mini_app_polis import logger as logger_mod
 
+from evaluator_cog._deadline import deadline
 from evaluator_cog.adapters.queue import (
     UnprocessableMessage,
     _report_failure,
@@ -46,7 +47,7 @@ sentry_sdk.init(
 )
 
 
-def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # noqa: ARG001
+def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Do each record's work, and name the ones that must come back.
 
     Never raises. An exception escaping here fails the whole batch, and at
@@ -55,9 +56,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # no
     record starts dragging its neighbours back onto the queue. Reporting
     per record is correct at every size.
 
-    ``context`` is unused, deliberately: the remaining-time budget belongs
-    to the timeout Terraform sets, and a handler that starts trimming its
-    own work to fit would make that number a suggestion.
+    ``context`` is read for one thing only: how long is left. The run is
+    stopped a margin before the function's timeout so that it fails the
+    ordinary way — Lambda kills a timed-out invocation outright, with no
+    report sent and nothing said. That is not the handler trimming its work
+    to fit; the timeout Terraform sets is still the budget.
     """
     records = event.get("Records", []) if isinstance(event, dict) else []
     failures: list[dict[str, str]] = []
@@ -67,7 +70,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # no
         attempt = (record.get("attributes") or {}).get("ApproximateReceiveCount", "?")
 
         try:
-            process_message(record.get("body") or "")
+            with deadline(context):
+                process_message(record.get("body") or "")
         except UnprocessableMessage as exc:
             # A shape this consumer does not handle — a producer bug, since
             # this queue is evaluator-cog's alone. Reported back so it
@@ -75,7 +79,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # no
             # where a person can see what produced it. Deleting it here
             # would make the bad producer invisible.
             log.error("worker: unprocessable message (attempt %s): %s", attempt, exc)
-            _report_failure("an unprocessable message", exc)
+            # Once, on the first receive. Every later receive fails the same
+            # way, and where it ends up — the dead-letter queue — has an
+            # alarm of its own; five reports of one bad message is noise
+            # (PIPE-021).
+            if attempt in ("1", "?"):
+                _report_failure("an unprocessable message", exc)
             failures.append({"itemIdentifier": message_id})
         except Exception as exc:  # noqa: BLE001 — every failure is a retry
             log.exception("worker: job failed (attempt %s)", attempt)

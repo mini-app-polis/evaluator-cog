@@ -13,15 +13,11 @@ from evaluator_cog.engine.deterministic._shared import (
 )
 
 
-def check_releaserc(
-    repo_path: Path, monorepo_root: Path | None = None
-) -> list[Finding]:
+def check_releaserc(repo_path: Path) -> list[Finding]:
     """VER-003: semantic-release on all repos."""
     CHECK_ID = "VER-003"
     findings = []
     exists = (repo_path / ".releaserc.json").exists()
-    if not exists and monorepo_root:
-        exists = (monorepo_root / ".releaserc.json").exists()
     if not exists:
         findings.append(
             _finding(
@@ -62,17 +58,13 @@ def check_no_manual_changelog(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_releaserc_assets(
-    repo_path: Path, monorepo_root: Path | None = None
-) -> list[Finding]:
+def check_releaserc_assets(repo_path: Path) -> list[Finding]:
     """VER-008: .releaserc.json assets must include all version-managed files."""
     CHECK_ID = "VER-008"
     import json as _json
 
     findings = []
     releaserc = repo_path / ".releaserc.json"
-    if not releaserc.exists() and monorepo_root:
-        releaserc = monorepo_root / ".releaserc.json"
     if not releaserc.exists():
         return findings
     try:

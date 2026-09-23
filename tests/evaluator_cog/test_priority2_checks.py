@@ -397,17 +397,6 @@ def test_xstack001_ts_hand_rolled_ok_when_dep_declared(tmp_path: Path) -> None:
     assert check_shared_library_used(tmp_path, language="typescript") == []
 
 
-def test_xstack001_ts_workspace_root_dep_satisfies(tmp_path: Path) -> None:
-    _write(tmp_path, "package.json", '{"name":"x","dependencies":{}}\n')
-    ws = '{"dependencies":{"common-typescript-utils":"1.0.0"}}'
-    assert (
-        check_shared_library_used(
-            tmp_path, language="typescript", workspace_package_json_text=ws
-        )
-        == []
-    )
-
-
 # --- TEST-011 -----------------------------------------------------------------
 
 

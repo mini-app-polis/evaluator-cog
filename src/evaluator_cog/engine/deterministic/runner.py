@@ -61,6 +61,7 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_release_gated_on_security,
     check_structured_logging,
     check_terraform_checked_in_ci,
+    check_terraform_versions_pinned,
     check_three_layer_observability,
 )
 from evaluator_cog.engine.deterministic.docs import (
@@ -135,6 +136,7 @@ from evaluator_cog.engine.deterministic.security import (
     check_sec_005,
     check_sec_006,
     check_sec_007,
+    check_sec_008,
 )
 from evaluator_cog.engine.deterministic.testing import (
     check_db_test_fixtures,
@@ -212,8 +214,6 @@ def run_all_checks(
     dod_type: str | None = None,
     check_exceptions: list[str] | None = None,
     exception_reasons: dict[str, str] | None = None,
-    monorepo_root: Path | None = None,
-    workspace_package_json_text: str | None = None,
     evaluator_config: EvaluatorConfig | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
@@ -427,15 +427,15 @@ def run_all_checks(
 
     findings: list[Finding] = []
 
-    _run(lambda p: check_readme(p, monorepo_root=monorepo_root), "DOC-001")
-    _run(lambda p: check_changelog(p, monorepo_root=monorepo_root), "DOC-003")
-    _run(lambda p: check_releaserc(p, monorepo_root=monorepo_root), "VER-003")
+    _run(check_readme, "DOC-001")
+    _run(check_changelog, "DOC-003")
+    _run(check_releaserc, "VER-003")
     _run(check_conventional_commits, "VER-001")
     _run(check_breaking_change_footer, "VER-002")
     _run(check_split_package_identity, "DOC-009")
 
     if not is_library:
-        _run(lambda p: check_env_example(p, monorepo_root=monorepo_root), "DOC-004")
+        _run(check_env_example, "DOC-004")
 
     if is_python and not is_frontend:
         _run(check_pre_commit, "PY-008")
@@ -482,6 +482,7 @@ def run_all_checks(
     # CD-027 skips a repo with no infra/*.tf, so it is safe to run
     # everywhere rather than gated on a repo type.
     _run(check_terraform_checked_in_ci, "CD-027")
+    _run(check_terraform_versions_pinned, "CD-028")
 
     _mark_checked("XSTACK-001")
     if (evaluator_config is None and "XSTACK-001" not in _exceptions) or (
@@ -496,7 +497,6 @@ def run_all_checks(
                 check_shared_library_used(
                     repo_path,
                     language=language,
-                    workspace_package_json_text=workspace_package_json_text,
                 )
             )
     else:
@@ -526,7 +526,6 @@ def run_all_checks(
             check_ci(
                 repo_path,
                 exceptions=_exceptions,
-                monorepo_root=monorepo_root,
             )
         )
     except Exception as exc:
@@ -674,9 +673,7 @@ def run_all_checks(
         _run(_api_010, "API-010")
 
         def _api_011(p: Path) -> list[Finding]:
-            return check_migration_in_ci(
-                p, language=language, monorepo_root=monorepo_root
-            )
+            return check_migration_in_ci(p, language=language)
 
         _run(_api_011, "API-011")
 
@@ -776,10 +773,7 @@ def run_all_checks(
     ):
         _run(check_env_var_prefix, "XSTACK-004")
 
-    _run(
-        lambda p: check_releaserc_assets(p, monorepo_root=monorepo_root),
-        "VER-008",
-    )
+    _run(check_releaserc_assets, "VER-008")
 
     # XSTACK-003 pnpm — applies to api-service (TS) and react-app
     if evaluator_config is not None:
@@ -790,11 +784,7 @@ def run_all_checks(
         _needs_pnpm = dod_type in ("new_hono_service", "new_react_app")
 
     if _needs_pnpm:
-
-        def _pnpm_lock_check(p: Path) -> list[Finding]:
-            return check_pnpm_lockfile(p, monorepo_root=monorepo_root)
-
-        _run(_pnpm_lock_check, "XSTACK-003")
+        _run(check_pnpm_lockfile, "XSTACK-003")
 
     # ── Rules added with ecosystem-standards v5.x ────────────────────────
     # Registered unconditionally: `resolve_dispatch()` already skips a
@@ -808,19 +798,17 @@ def run_all_checks(
     # for them on every repo. They read the org listing and the registry
     # rather than any one repo's source, and so run once per flow
     # invocation from _run_applies_to_absent_checks(), alongside EVAL-003
-    # / MONO-003 / EVAL-007.
+    # and EVAL-007.
 
-    # security_posture — SEC-001..006.
-    # A monorepo service is evaluated at its own subdirectory, but one set
-    # of workflows at the repo root covers every app in it — so the CI root
-    # has to be handed down or every app is reported for CI it shares.
-    _run(lambda p: check_sec_001(p, monorepo_root=monorepo_root), "SEC-001")
-    _run(lambda p: check_sec_002(p, monorepo_root=monorepo_root), "SEC-002")
-    _run(lambda p: check_sec_003(p, monorepo_root=monorepo_root), "SEC-003")
-    _run(lambda p: check_sec_004(p, monorepo_root=monorepo_root), "SEC-004")
-    _run(lambda p: check_sec_005(p, monorepo_root=monorepo_root), "SEC-005")
+    # security_posture — SEC-001..008.
+    _run(check_sec_001, "SEC-001")
+    _run(check_sec_002, "SEC-002")
+    _run(check_sec_003, "SEC-003")
+    _run(check_sec_004, "SEC-004")
+    _run(check_sec_005, "SEC-005")
     _run(check_sec_006, "SEC-006")
-    _run(lambda p: check_sec_007(p, monorepo_root=monorepo_root), "SEC-007")
+    _run(check_sec_008, "SEC-008")
+    _run(check_sec_007, "SEC-007")
 
     # operational_readiness — only OPS-002 is checkable.
     #
@@ -843,22 +831,13 @@ def run_all_checks(
     # CD-022 and CD-023 skip silently where no Dockerfile exists; the
     # absence of an image definition is CD-021's gap, which has no check
     # while no service carries a Dockerfile (see its catalog check_notes).
-    def _cd_017_check(p: Path) -> list[Finding]:
-        # The descriptor sits beside the service in a monorepo, so the
-        # service's own directory is searched first and the repo root is
-        # the fallback. Passing None meant a monorepo service was only
-        # ever looked for at the root it does not own.
-        return check_cd_017(p, monorepo_path=monorepo_root)
-
-    _run(_cd_017_check, "CD-017")
+    _run(check_cd_017, "CD-017")
     _run(check_cd_022, "CD-022")
     _run(check_cd_023, "CD-023")
     # CD-024 reads a pipeline cog's limits from infra/*.tf and everything
     # else's from its Railway descriptor, so it needs the resolved type.
     _run(
-        lambda p: check_cd_024(
-            p, monorepo_path=monorepo_root, repo_type=_repo_type_for_checks
-        ),
+        lambda p: check_cd_024(p, repo_type=_repo_type_for_checks),
         "CD-024",
     )
 

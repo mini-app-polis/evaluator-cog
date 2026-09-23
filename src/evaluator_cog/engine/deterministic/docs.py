@@ -13,13 +13,11 @@ from evaluator_cog.engine.deterministic._shared import (
 )
 
 
-def check_readme(repo_path: Path, monorepo_root: Path | None = None) -> list[Finding]:
+def check_readme(repo_path: Path) -> list[Finding]:
     """DOC-001: README.md is mandatory."""
     CHECK_ID = "DOC-001"
     findings = []
     exists = (repo_path / "README.md").exists()
-    if not exists and monorepo_root:
-        exists = (monorepo_root / "README.md").exists()
     if not exists:
         findings.append(
             _finding(
@@ -33,15 +31,11 @@ def check_readme(repo_path: Path, monorepo_root: Path | None = None) -> list[Fin
     return findings
 
 
-def check_changelog(
-    repo_path: Path, monorepo_root: Path | None = None
-) -> list[Finding]:
+def check_changelog(repo_path: Path) -> list[Finding]:
     """DOC-003: CHANGELOG.md required."""
     CHECK_ID = "DOC-003"
     findings = []
     exists = (repo_path / "CHANGELOG.md").exists()
-    if not exists and monorepo_root:
-        exists = (monorepo_root / "CHANGELOG.md").exists()
     if not exists:
         findings.append(
             _finding(
@@ -55,23 +49,17 @@ def check_changelog(
     return findings
 
 
-def check_env_example(
-    repo_path: Path, monorepo_root: Path | None = None
-) -> list[Finding]:
+def check_env_example(repo_path: Path) -> list[Finding]:
     """DOC-004: .env.example is required."""
     CHECK_ID = "DOC-004"
     findings = []
-    # Check root first, then common monorepo locations
+    # Check root first, then common service subdirectories
     candidates = [
         repo_path / ".env.example",
-        repo_path / "apps" / "api" / ".env.example",
-        repo_path / "apps" / "app" / ".env.example",
         repo_path / "app" / ".env.example",
         repo_path / "backend" / ".env.example",
         repo_path / "server" / ".env.example",
     ]
-    if monorepo_root:
-        candidates.append(monorepo_root / ".env.example")
     if not any(p.exists() for p in candidates):
         findings.append(
             _finding(
@@ -152,8 +140,8 @@ def check_readme_running_locally(
         missing.extend([r for r in required if r not in text])
     elif dod_type in ("new_frontend_site", "new_react_app"):
         # A "Running locally" (or equivalent) section heading is sufficient
-        # evidence that the install step is documented — it may live in a
-        # monorepo root README or be implied by the section prose, so we
+        # evidence that the install step is documented — it may be implied
+        # by the section prose, so we
         # don't require an explicit `pnpm install` line when the section exists.
         _has_running_locally_section = bool(
             re.search(
