@@ -937,8 +937,12 @@ def check_pnpm_lockfile(repo_path: Path) -> list[Finding]:
     return findings
 
 
-#: The fleet's shared conformance-evaluation trigger.
-_EVALUATE_WORKFLOW = "mini-app-polis/.github/.github/workflows/evaluate.yml@*"
+#: The fleet's shared conformance-evaluation trigger, as every repo calls
+#: it — and as the repo that owns it calls its own copy, by local path.
+_EVALUATE_WORKFLOWS = (
+    "mini-app-polis/.github/.github/workflows/evaluate.yml@*",
+    "./.github/workflows/evaluate.yml",
+)
 
 
 def check_cd_031(repo_path: Path) -> list[Finding]:
@@ -959,7 +963,10 @@ def check_cd_031(repo_path: Path) -> list[Finding]:
             continue
         by_id = {job.job_id: job for job in wf.jobs}
         for job in wf.jobs:
-            if job.uses and fnmatch.fnmatch(job.uses.strip(), _EVALUATE_WORKFLOW):
+            if job.uses and any(
+                fnmatch.fnmatch(job.uses.strip(), pattern)
+                for pattern in _EVALUATE_WORKFLOWS
+            ):
                 evaluate_jobs.append((wf, by_id, job))
 
     if not evaluate_jobs:
