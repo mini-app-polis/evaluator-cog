@@ -1,3 +1,10 @@
+## [3.45.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.45.2...v3.45.3) (2026-09-23)
+
+
+### Bug Fixes
+
+* **checks:** accept error-only and successList responses in XSTACK-002 ([b06aaa8](https://github.com/mini-app-polis/evaluator-cog/commit/b06aaa8783abe2eb555e6fae59f45a44cf0703ac))
+
 ## [3.45.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.45.1...v3.45.2) (2026-09-23)
 
 
