@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import fnmatch
 import re
 from contextlib import suppress
 from pathlib import Path
@@ -933,4 +934,80 @@ def check_pnpm_lockfile(repo_path: Path) -> list[Finding]:
                 "Use pnpm as the package manager and commit pnpm-lock.yaml.",
             )
         )
+    return findings
+
+
+#: The fleet's shared conformance-evaluation trigger.
+_EVALUATE_WORKFLOW = "mini-app-polis/.github/.github/workflows/evaluate.yml@*"
+
+
+def check_cd_031(repo_path: Path) -> list[Finding]:
+    """CD-031: every release requests its own conformance evaluation.
+
+    (1) A push-triggered workflow has a job calling the shared evaluate.yml.
+    (2) That job's ``needs:`` reaches, directly or transitively, a job that
+    runs semantic-release — so it evaluates the released tree, not the
+    one before it.
+    """
+    from evaluator_cog.engine.deterministic._workflows import load_workflows
+
+    CHECK_ID = "CD-031"
+    findings: list[Finding] = []
+    evaluate_jobs = []
+    for wf in load_workflows(repo_path):
+        if "push" not in wf.triggers:
+            continue
+        by_id = {job.job_id: job for job in wf.jobs}
+        for job in wf.jobs:
+            if job.uses and fnmatch.fnmatch(job.uses.strip(), _EVALUATE_WORKFLOW):
+                evaluate_jobs.append((wf, by_id, job))
+
+    if not evaluate_jobs:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "cd_readiness",
+                "No CI job calls the shared evaluate.yml, so a release of this "
+                "repository never requests its own conformance evaluation — its "
+                "findings only move when a standards or evaluator release sweeps "
+                "the fleet.",
+                "Add an evaluate job after the release job: `needs: release`, "
+                "`if: github.ref == 'refs/heads/main' && github.event_name == "
+                "'push'`, `uses: mini-app-polis/.github/.github/workflows/"
+                "evaluate.yml@v3`, with `secrets: api-key: "
+                "${{ secrets.CI_VALIDATOR_API_KEY }}`.",
+            )
+        )
+        return findings
+
+    def _releases(job_id: str, by_id: dict, seen: set[str]) -> bool:
+        if job_id in seen:
+            return False
+        seen.add(job_id)
+        job = by_id.get(job_id)
+        if job is None:
+            return False
+        if any(step.run_invokes("semantic-release") for step in job.steps):
+            return True
+        return any(_releases(n, by_id, seen) for n in job.needs)
+
+    for _wf, by_id, job in evaluate_jobs:
+        if any(_releases(n, by_id, set()) for n in job.needs):
+            return findings
+
+    wf, _by_id, job = evaluate_jobs[0]
+    findings.append(
+        _finding(
+            CHECK_ID,
+            "WARN",
+            "cd_readiness",
+            f"{wf.rel}::{job.job_id} calls evaluate.yml but does not run after the "
+            f"release — its needs ({', '.join(job.needs) or 'none'}) reach no job "
+            f"that runs semantic-release, so it can evaluate the tree before the "
+            f"release produced it.",
+            "Make the evaluate job depend on the release job (`needs: release`), "
+            "or on the deploy job that itself needs the release.",
+        )
+    )
     return findings

@@ -57,6 +57,7 @@ from evaluator_cog.engine.deterministic.crossrepo import (
 )
 from evaluator_cog.engine.deterministic.delivery import (
     check_canonical_ci_job_names,
+    check_cd_031,
     check_ci,
     check_gha_not_trigger_relay,
     check_migration_in_ci,
@@ -179,6 +180,7 @@ __all__ = [
     "check_cd_019",
     "check_cd_029",
     "check_cd_030",
+    "check_cd_031",
     "check_cd_020",
     "check_cd_022",
     "check_cd_023",
