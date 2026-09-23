@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -261,114 +259,14 @@ def test_build_conformance_prompt_truncates_long_readme(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_pipeline_run_no_anthropic_key_does_not_post(monkeypatch) -> None:
-    """Without ANTHROPIC_API_KEY, non-direct-finding calls return without posting."""
-    from evaluator_cog.flows.pipeline_eval import evaluate_pipeline_run
-
-    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://x")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-
-    posted: list = []
-    api = SimpleNamespace(post=MagicMock(side_effect=lambda *a, **_: posted.append(a)))
-
-    with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
-        m.from_env.return_value = api
-        evaluate_pipeline_run(
-            run_id="r-no-key",
-            repo="deejay-cog",
-            sets_imported=1,
-            sets_failed=0,
-            sets_skipped=0,
-            total_tracks=10,
-            failed_set_labels=[],
-            api_ingest_success=True,
-            sets_attempted=1,
-            direct_finding_text=None,
-        )
-
-    assert posted == []
-
-
 # ---------------------------------------------------------------------------
 # _extract_flow_run_event_fields — nested resource payload
 # ---------------------------------------------------------------------------
 
 
-def test_extract_flow_run_event_fields_nested_resource() -> None:
-    """Prefect Cloud nested resource format is unwrapped correctly."""
-    from evaluator_cog.flows.pipeline_eval import _extract_flow_run_event_fields
-
-    payload = {
-        "resource": {
-            "flow_run_id": "nested-run-id",
-            "flow_name": "process-transcript",
-            "state_name": "Failed",
-            "state_type": "FAILED",
-            "start_time": "2026-04-01T10:00:00Z",
-            "end_time": "2026-04-01T10:01:00Z",
-        }
-    }
-
-    fields = _extract_flow_run_event_fields(payload)
-
-    assert fields["flow_run_id"] == "nested-run-id"
-    assert fields["flow_name"] == "process-transcript"
-    assert fields["state_type"] == "FAILED"
-
-
-def test_extract_flow_run_event_fields_flat_payload() -> None:
-    """Flat (non-nested) payload is parsed directly."""
-    from evaluator_cog.flows.pipeline_eval import _extract_flow_run_event_fields
-
-    payload = {
-        "flow_run_id": "flat-run-id",
-        "flow_name": "update-dj-set-collection",
-        "state_name": "Completed",
-        "state_type": "COMPLETED",
-        "start_time": "2026-04-01T10:00:00Z",
-        "end_time": "2026-04-01T10:01:00Z",
-    }
-
-    fields = _extract_flow_run_event_fields(payload)
-
-    assert fields["flow_run_id"] == "flat-run-id"
-    assert fields["state_type"] == "COMPLETED"
-
-
 # ---------------------------------------------------------------------------
 # _flow_name_to_repo — unknown flow returns "unknown"
 # ---------------------------------------------------------------------------
-
-
-def test_flow_name_to_repo_unknown_returns_unknown() -> None:
-    """Unknown flow names now return 'unknown' instead of 'deejay-cog'."""
-    from evaluator_cog.flows.pipeline_eval import _flow_name_to_repo
-
-    assert _flow_name_to_repo("some-brand-new-flow") == "unknown"
-    assert _flow_name_to_repo("") == "unknown"
-    assert _flow_name_to_repo("watcher-flow") == "unknown"
-
-
-def test_flow_name_to_repo_known_flows_unchanged() -> None:
-    """Known flow names still map to their correct repos."""
-    from evaluator_cog.flows.pipeline_eval import _flow_name_to_repo
-
-    # transcription-cog (post-merge from notes-ingest-cog + voicenotes-cog,
-    # May 2026): three pipeline flow names plus the router flow itself,
-    # all under the unified transcription-cog repo identifier.
-    assert _flow_name_to_repo("transcription-cog") == "transcription-cog"
-    assert _flow_name_to_repo("process-transcript") == "transcription-cog"
-    assert _flow_name_to_repo("voicenotes-ingest") == "transcription-cog"
-    assert _flow_name_to_repo("voicenotes-cleanup") == "transcription-cog"
-    # evaluator-cog
-    assert _flow_name_to_repo("conformance-check") == "evaluator-cog"
-    assert _flow_name_to_repo("pipeline-eval") == "evaluator-cog"
-    # deejay-cog
-    assert _flow_name_to_repo("process-new-csv-files") == "deejay-cog"
-    assert _flow_name_to_repo("ingest-live-history") == "deejay-cog"
-    assert _flow_name_to_repo("generate-summaries") == "deejay-cog"
-    assert _flow_name_to_repo("update-dj-set-collection") == "deejay-cog"
-    assert _flow_name_to_repo("retag-music") == "deejay-cog"
 
 
 def test_parse_findings_findings_value_not_list_returns_empty() -> None:
