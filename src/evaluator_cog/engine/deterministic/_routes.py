@@ -1,4 +1,4 @@
-"""AST route enumeration for the identity rules (AUTH-003, AUTH-004, CD-019).
+"""AST route enumeration for the identity rules (AUTH-003, AUTH-004, CD-019, CD-029, CD-030).
 
 Enumerate routes **by their registration call, never by matching literal
 path strings.**

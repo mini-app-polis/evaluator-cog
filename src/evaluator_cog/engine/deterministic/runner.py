@@ -91,6 +91,8 @@ from evaluator_cog.engine.deterministic.identity import (
     check_auth_003,
     check_auth_004,
     check_cd_019,
+    check_cd_029,
+    check_cd_030,
 )
 from evaluator_cog.engine.deterministic.meta import (
     check_meta_005_check_notes_prefix,
@@ -844,15 +846,18 @@ def run_all_checks(
     # cd_readiness — packaging.
     _run(check_cd_020, "CD-020")
 
-    # structural_conformance — the identity contract. CD-019 splits into
-    # caller and receiver halves on repo type, so it needs the type the
-    # rest of the dispatcher already resolved.
+    # structural_conformance — the identity contract. CD-019 is the
+    # caller's side and needs the resolved repo type to tell a caller from
+    # a receiver; CD-029 and CD-030 are the receiver's two populations,
+    # scoped to api-service by the catalog.
     def _cd_019_check(p: Path) -> list[Finding]:
         return check_cd_019(p, repo_type=_repo_type_for_checks)
 
     _run(check_auth_003, "AUTH-003")
     _run(check_auth_004, "AUTH-004")
     _run(_cd_019_check, "CD-019")
+    _run(check_cd_029, "CD-029")
+    _run(check_cd_030, "CD-030")
 
     # EVAL-008: check for evaluator.yaml presence
     _mark_checked("EVAL-008")

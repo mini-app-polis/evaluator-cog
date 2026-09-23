@@ -31,6 +31,8 @@ from evaluator_cog.engine.deterministic.identity import (
     check_auth_003,
     check_auth_004,
     check_cd_019,
+    check_cd_029,
+    check_cd_030,
 )
 
 
@@ -925,7 +927,7 @@ def test_cd019_flags_a_stale_docstring(tmp_path: Path) -> None:
     assert "docstring" in clause2[0]["finding"]
 
 
-# --- CD-019: receiver steps (5)-(9) ------------------------------------------
+# --- CD-029 / CD-030: receiver steps ------------------------------------------
 
 
 _RECEIVER_AUTH_SOURCE = (
@@ -949,12 +951,14 @@ _RECEIVER_AUTH_SOURCE = (
 )
 
 
-def test_cd019_passes_a_receiver_on_the_shared_library(tmp_path: Path) -> None:
+def test_receiver_rules_pass_a_receiver_on_the_shared_library(tmp_path: Path) -> None:
     _write(tmp_path, "src/pkg/auth.py", _RECEIVER_AUTH_SOURCE)
     assert check_cd_019(tmp_path, repo_type="api-service") == []
+    assert check_cd_029(tmp_path) == []
+    assert check_cd_030(tmp_path) == []
 
 
-def test_cd019_flags_local_verification_primitives(tmp_path: Path) -> None:
+def test_receiver_rules_flag_local_verification_primitives(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "src/pkg/auth.py",
@@ -968,18 +972,22 @@ def test_cd019_flags_local_verification_primitives(tmp_path: Path) -> None:
         "        return True\n"
         '    return jwt.decode(token, key, algorithms=["RS256"])\n',
     )
-    findings = check_cd_019(tmp_path, repo_type="api-service")
-    _assert_well_formed(findings, "CD-019")
-    clause5 = _clause(findings, "CD-019", 5)
-    text = _texts(clause5)
+    sessions = check_cd_029(tmp_path)
+    _assert_well_formed(sessions, "CD-029")
+    text = _texts(_clause(sessions, "CD-029", 1))
     assert "imports nothing from the shared identity library" in text
-    assert "constant-time credential comparison" in text
     assert "RS256-family" in text
+    assert "constant-time" not in text
+
+    keys = check_cd_030(tmp_path)
+    _assert_well_formed(keys, "CD-030")
+    assert "constant-time credential comparison" in _texts(_clause(keys, "CD-030", 2))
 
 
-def test_cd019_flags_a_receiver_configuring_only_one_population(
+def test_a_humans_only_receiver_passes_cd029_and_fails_only_cd030(
     tmp_path: Path,
 ) -> None:
+    """The split's purpose: the Clerk half is graded on its own."""
     _write(
         tmp_path,
         "src/pkg/auth.py",
@@ -993,14 +1001,49 @@ def test_cd019_flags_a_receiver_configuring_only_one_population(
         "def build_chain():\n"
         "    return chain.build(clerk_issuers=CLERK_ISSUERS)\n",
     )
-    findings = check_cd_019(tmp_path, repo_type="api-service")
-    _assert_well_formed(findings, "CD-019")
-    clause6 = _clause(findings, "CD-019", 6)
-    assert len(clause6) == 1
-    assert "machine-key set" in clause6[0]["finding"]
+    assert _clause(check_cd_029(tmp_path), "CD-029", 2) == []
+    keys = check_cd_030(tmp_path)
+    _assert_well_formed(keys, "CD-030")
+    clause1 = _clause(keys, "CD-030", 1)
+    assert len(clause1) == 1
+    assert "machine-key set" in clause1[0]["finding"]
+    assert "exempt CD-030" in clause1[0]["suggestion"]
 
 
-def test_cd019_flags_a_remote_call_on_the_verification_path(tmp_path: Path) -> None:
+def test_cd029_flags_a_typescript_receiver_with_a_jwks_url_but_no_issuer(
+    tmp_path: Path,
+) -> None:
+    """A JWKS URL proves the signature, not who issued the token."""
+    _write(
+        tmp_path,
+        "src/middleware/auth.ts",
+        'import { verifyClerkToken } from "common-typescript-utils";\n'
+        "const url = process.env.CLERK_JWKS_URL;\n"
+        "export const guard = (t: string) => verifyClerkToken(t, url!);\n",
+    )
+    findings = check_cd_029(tmp_path)
+    _assert_well_formed(findings, "CD-029")
+    clause2 = _clause(findings, "CD-029", 2)
+    assert len(clause2) == 1
+    assert "CLERK_JWKS_URL alone" in clause2[0]["finding"]
+    assert _clause(findings, "CD-029", 1) == []
+
+
+def test_cd029_passes_a_typescript_receiver_that_checks_the_issuer(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path,
+        "src/middleware/auth.ts",
+        'import { verifyClerkToken } from "common-typescript-utils";\n'
+        "const url = process.env.CLERK_JWKS_URL;\n"
+        "const iss = process.env.CLERK_ISSUER;\n"
+        "export const guard = (t: string) => verifyClerkToken(t, url!, iss);\n",
+    )
+    assert check_cd_029(tmp_path) == []
+
+
+def test_cd029_flags_a_remote_call_on_the_verification_path(tmp_path: Path) -> None:
     _write(tmp_path, "src/pkg/config.py", _RECEIVER_AUTH_SOURCE)
     _write(
         tmp_path,
@@ -1011,14 +1054,14 @@ def test_cd019_flags_a_remote_call_on_the_verification_path(tmp_path: Path) -> N
         "def verify_session(token):\n"
         '    return httpx.get("https://api.clerk.com/v1/sessions/" + token)\n',
     )
-    findings = check_cd_019(tmp_path, repo_type="api-service")
-    _assert_well_formed(findings, "CD-019")
-    clause7 = _clause(findings, "CD-019", 7)
-    assert len(clause7) == 1
-    assert "Verification is local" in clause7[0]["finding"]
+    findings = check_cd_029(tmp_path)
+    _assert_well_formed(findings, "CD-029")
+    clause3 = _clause(findings, "CD-029", 3)
+    assert len(clause3) == 1
+    assert "Verification is local" in clause3[0]["finding"]
 
 
-def test_cd019_flags_persisted_key_material_but_exempts_jwks_url(
+def test_cd030_flags_persisted_key_material_but_exempts_jwks_url(
     tmp_path: Path,
 ) -> None:
     _write(tmp_path, "src/pkg/config.py", _RECEIVER_AUTH_SOURCE)
@@ -1043,15 +1086,15 @@ def test_cd019_flags_persisted_key_material_but_exempts_jwks_url(
         "    id = Column(Integer, primary_key=True)\n"
         "    jwks_url = Column(String)\n",
     )
-    findings = check_cd_019(tmp_path, repo_type="api-service")
-    _assert_well_formed(findings, "CD-019")
-    clause8 = _clause(findings, "CD-019", 8)
-    assert len(clause8) == 1
-    assert "api_key_hash" in clause8[0]["finding"]
-    assert "jwks_url" not in clause8[0]["finding"]
+    findings = check_cd_030(tmp_path)
+    _assert_well_formed(findings, "CD-030")
+    clause3 = _clause(findings, "CD-030", 3)
+    assert len(clause3) == 1
+    assert "api_key_hash" in clause3[0]["finding"]
+    assert "jwks_url" not in clause3[0]["finding"]
 
 
-def test_cd019_flags_a_machine_name_read_from_the_request(tmp_path: Path) -> None:
+def test_cd030_flags_a_machine_name_read_from_the_request(tmp_path: Path) -> None:
     _write(tmp_path, "src/pkg/config.py", _RECEIVER_AUTH_SOURCE)
     _write(
         tmp_path,
@@ -1064,11 +1107,11 @@ def test_cd019_flags_a_machine_name_read_from_the_request(tmp_path: Path) -> Non
         "):\n"
         "    return machine_name\n",
     )
-    findings = check_cd_019(tmp_path, repo_type="api-service")
-    _assert_well_formed(findings, "CD-019")
-    clause9 = _clause(findings, "CD-019", 9)
-    assert clause9
-    assert "resolve_principal()" in _texts(clause9)
+    findings = check_cd_030(tmp_path)
+    _assert_well_formed(findings, "CD-030")
+    clause4 = _clause(findings, "CD-030", 4)
+    assert clause4
+    assert "resolve_principal()" in _texts(clause4)
 
 
 # --- CD-019: the repo_type split ---------------------------------------------
@@ -1121,6 +1164,8 @@ def test_checks_never_raise_on_unparseable_or_absent_sources(tmp_path: Path) -> 
     assert check_auth_003(tmp_path) == []
     assert check_auth_004(tmp_path) == []
     assert isinstance(check_cd_019(tmp_path, repo_type="api-service"), list)
+    assert isinstance(check_cd_029(tmp_path), list)
+    assert isinstance(check_cd_030(tmp_path), list)
 
     empty = tmp_path / "empty"
     empty.mkdir()
@@ -1213,11 +1258,11 @@ def test_cd019_matches_the_ecosystem_hint_on_the_url_not_the_payload(
     assert [f for f in findings if "CD-019 (1)" in f["finding"]] == []
 
 
-def test_cd019_clause7_ignores_a_captcha_check(tmp_path: Path) -> None:
+def test_cd029_clause3_ignores_a_captcha_check(tmp_path: Path) -> None:
     """Turnstile is a bot check on a public form, not credential verification.
 
     `_verify_turnstile()` posts to challenges.cloudflare.com. A
-    third-party challenge is remote by construction, so clause (7)'s
+    third-party challenge is remote by construction, so CD-029 (3)'s
     "verification is local" says nothing about it. Matching on the name
     alone flagged it.
     """
@@ -1234,14 +1279,13 @@ def test_cd019_clause7_ignores_a_captcha_check(tmp_path: Path) -> None:
         "        )\n"
         "    return r.json()['success']\n",
     )
-    findings = check_cd_019(tmp_path, repo_type="api-service")
-    assert [f for f in findings if "CD-019 (7)" in f["finding"]] == []
+    assert _clause(check_cd_029(tmp_path), "CD-029", 3) == []
 
 
-def test_cd019_clause7_still_flags_remote_credential_verification(
+def test_cd029_clause3_still_flags_remote_credential_verification(
     tmp_path: Path,
 ) -> None:
-    """The true positive clause (7) exists for must still fire."""
+    """The true positive CD-029 (3) exists for must still fire."""
     _write(
         tmp_path,
         "src/pkg/auth.py",
@@ -1252,8 +1296,7 @@ def test_cd019_clause7_still_flags_remote_credential_verification(
         "        headers={'Authorization': authorization},\n"
         "    )\n",
     )
-    findings = check_cd_019(tmp_path, repo_type="api-service")
-    assert any("CD-019 (7)" in f["finding"] for f in findings)
+    assert _clause(check_cd_029(tmp_path), "CD-029", 3)
 
 
 def test_auth003_does_not_treat_a_db_session_as_a_guard(tmp_path: Path) -> None:
@@ -1585,12 +1628,12 @@ def test_cd019_clause1_still_flags_a_wrapper_around_an_unnamed_client(
     assert clause1
 
 
-def test_cd019_clause5_reads_the_typescript_half_of_the_shared_library(
+def test_cd029_clause1_reads_the_typescript_half_of_the_shared_library(
     tmp_path: Path,
 ) -> None:
     """`identity` is Python; a Hono service consumes common-typescript-utils.
 
-    deejaytools-com-api imports verifyClerkToken from the shared TS
+    deejaytools-api imports verifyClerkToken from the shared TS
     package — it is delegating correctly — and was reported for
     importing nothing from `identity`, which it cannot import at all.
     """
@@ -1601,15 +1644,10 @@ def test_cd019_clause5_reads_the_typescript_half_of_the_shared_library(
         'import { verifyClerkToken } from "common-typescript-utils";\n'
         "export const guard = () => verifyClerkToken;\n"
     )
-    clause5 = [
-        f
-        for f in check_cd_019(tmp_path, repo_type="api-service")
-        if "CD-019 (5)" in f["finding"]
-    ]
-    assert clause5 == []
+    assert _clause(check_cd_029(tmp_path), "CD-029", 1) == []
 
 
-def test_cd019_clause5_still_flags_local_typescript_verification(
+def test_cd029_clause1_still_flags_local_typescript_verification(
     tmp_path: Path,
 ) -> None:
     """A TS service that verifies locally is still reported — in TS terms."""
@@ -1619,22 +1657,18 @@ def test_cd019_clause5_still_flags_local_typescript_verification(
     (src / "auth.ts").write_text(
         'import { jwtVerify } from "jose";\nexport const guard = () => jwtVerify;\n'
     )
-    clause5 = [
-        f
-        for f in check_cd_019(tmp_path, repo_type="api-service")
-        if "CD-019 (5)" in f["finding"]
-    ]
-    assert len(clause5) == 1
-    assert "common-typescript-utils" in clause5[0]["finding"]
-    assert "identity.chain" not in clause5[0]["finding"]
+    clause1 = _clause(check_cd_029(tmp_path), "CD-029", 1)
+    assert len(clause1) == 1
+    assert "common-typescript-utils" in clause1[0]["finding"]
+    assert "identity.chain" not in clause1[0]["finding"]
 
 
 # ---------------------------------------------------------------------------
-# CD-019 (5) — compare_digest is scoped to the Bearer path
+# CD-030 (2) — compare_digest is scoped to the Bearer path
 # ---------------------------------------------------------------------------
 #
 # The clause used to fire on the function name alone, which made it the only
-# one of the three in check (5) with no notion of what it was looking at. It
+# local-primitive check with no notion of what it was looking at. It
 # reported two comparisons CD-019 does not govern — a Prefect webhook secret
 # and a GitHub body signature — and prescribed a fix (call identity.clerk or
 # identity.apikey) that has no meaning for either.
@@ -1657,7 +1691,7 @@ def _api_repo(tmp_path: Path, rel: str, body: str) -> Path:
     return tmp_path
 
 
-def test_cd019_5_ignores_a_webhook_shared_secret(tmp_path: Path) -> None:
+def test_cd030_2_ignores_a_webhook_shared_secret(tmp_path: Path) -> None:
     """X-Prefect-Token is not a Clerk session or a named machine key."""
     repo = _api_repo(
         tmp_path,
@@ -1671,10 +1705,10 @@ def test_cd019_5_ignores_a_webhook_shared_secret(tmp_path: Path) -> None:
         "        return False\n"
         "    return hmac.compare_digest(expected, provided)\n",
     )
-    assert _clause(check_cd_019(repo, repo_type="api-service"), "CD-019", 5) == []
+    assert _clause(check_cd_030(repo), "CD-030", 2) == []
 
 
-def test_cd019_5_ignores_a_body_signature(tmp_path: Path) -> None:
+def test_cd030_2_ignores_a_body_signature(tmp_path: Path) -> None:
     """A digest over the payload is a signature, not a presented credential."""
     repo = _api_repo(
         tmp_path,
@@ -1691,10 +1725,10 @@ def test_cd019_5_ignores_a_body_signature(tmp_path: Path) -> None:
         "    ).hexdigest()\n"
         "    return hmac.compare_digest(expected, signature)\n",
     )
-    assert _clause(check_cd_019(repo, repo_type="api-service"), "CD-019", 5) == []
+    assert _clause(check_cd_030(repo), "CD-030", 2) == []
 
 
-def test_cd019_5_still_flags_a_local_bearer_comparison(tmp_path: Path) -> None:
+def test_cd030_2_still_flags_a_local_bearer_comparison(tmp_path: Path) -> None:
     """The clause keeps its subject: a machine key compared in-repo."""
     repo = _api_repo(
         tmp_path,
@@ -1712,6 +1746,6 @@ def test_cd019_5_still_flags_a_local_bearer_comparison(tmp_path: Path) -> None:
         "            return name\n"
         "    return None\n",
     )
-    findings = _clause(check_cd_019(repo, repo_type="api-service"), "CD-019", 5)
+    findings = _clause(check_cd_030(repo), "CD-030", 2)
     assert len(findings) == 1
     assert "constant-time credential comparison" in findings[0]["finding"]
