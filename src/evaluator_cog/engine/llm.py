@@ -8,10 +8,19 @@ import time
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 if TYPE_CHECKING:
     import httpx
+
+
+class _FileGroup(TypedDict):
+    """One evidence group: which files, and how much of each to include."""
+
+    patterns: list[str]
+    per_file_cap: int
+    test_group_cap: int | None
+
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
 
@@ -58,7 +67,7 @@ def _gather_evidence_files(repo_path: Path, *, total_budget_chars: int = 40000) 
                 out.append(p)
         return sorted(set(out), key=lambda p: str(p.relative_to(repo_path)))
 
-    groups = [
+    groups: list[_FileGroup] = [
         {
             "patterns": [
                 "pyproject.toml",

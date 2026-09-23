@@ -36,7 +36,7 @@ def check_no_manual_changelog(repo_path: Path) -> list[Finding]:
     CHECK_ID = "VER-004"
     import re
 
-    findings = []
+    findings: list[Finding] = []
     changelog = repo_path / "CHANGELOG.md"
     if not changelog.exists():
         return findings
@@ -63,7 +63,7 @@ def check_releaserc_assets(repo_path: Path) -> list[Finding]:
     CHECK_ID = "VER-008"
     import json as _json
 
-    findings = []
+    findings: list[Finding] = []
     releaserc = repo_path / ".releaserc.json"
     if not releaserc.exists():
         return findings

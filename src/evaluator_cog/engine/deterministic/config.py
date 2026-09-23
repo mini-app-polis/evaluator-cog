@@ -340,7 +340,7 @@ def check_hardcoded_time_values(
             re.compile(r"retry_delay_seconds\s*=\s*(\d+)"),
             re.compile(r"\btimeout\s*=\s*(\d+)"),
         ]
-        exts = ("*.py",)
+        exts: tuple[str, ...] = ("*.py",)
     else:
         patterns = [
             re.compile(r"setTimeout\(\s*\w+\s*,\s*(\d+)"),

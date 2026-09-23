@@ -729,6 +729,7 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
             user_id_has_fk = False
 
             for stmt in node.body:
+                targets: list[ast.expr]
                 if isinstance(stmt, ast.AnnAssign):
                     targets = [stmt.target]
                     value = stmt.value

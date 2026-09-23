@@ -169,7 +169,7 @@ def check_shadcn(repo_path: Path) -> list[Finding]:
 def check_react_hook_form_zod(repo_path: Path) -> list[Finding]:
     """FE-005: React Hook Form + Zod for forms and validation."""
     CHECK_ID = "FE-005"
-    findings = []
+    findings: list[Finding] = []
     pkg = repo_path / "package.json"
     pkg_text = pkg.read_text().lower() if pkg.exists() else ""
     src = repo_path / "src"

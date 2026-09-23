@@ -761,9 +761,9 @@ def _request_identity_reads(
     bound_positional = positional[len(positional) - len(fn.args.defaults) :]
     for arg, default in zip(bound_positional, fn.args.defaults, strict=False):
         defaults[arg.arg] = default
-    for arg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults, strict=False):
-        if default is not None:
-            defaults[arg.arg] = default
+    for arg, kw_default in zip(fn.args.kwonlyargs, fn.args.kw_defaults, strict=False):
+        if kw_default is not None:
+            defaults[arg.arg] = kw_default
 
     for arg in args:
         candidates: list[ast.AST] = []
@@ -799,8 +799,8 @@ def _request_identity_reads(
         key = ""
         bag_expr = ""
         if isinstance(node, ast.Call) and _call_name(node) == "get":
-            target = _unparse(node.func).lower()
-            if not any(f".{bag}" in target for bag in _REQUEST_BAGS):
+            bag_target = _unparse(node.func).lower()
+            if not any(f".{bag}" in bag_target for bag in _REQUEST_BAGS):
                 continue
             literals = _string_constants(node)
             if not literals:
@@ -808,8 +808,8 @@ def _request_identity_reads(
             key = literals[0]
             bag_expr = _unparse(node)
         elif isinstance(node, ast.Subscript):
-            target = _unparse(node.value).lower()
-            if not any(f".{bag}" in target for bag in _REQUEST_BAGS):
+            bag_target = _unparse(node.value).lower()
+            if not any(f".{bag}" in bag_target for bag in _REQUEST_BAGS):
                 continue
             index = node.slice
             if isinstance(index, ast.Constant) and isinstance(index.value, str):

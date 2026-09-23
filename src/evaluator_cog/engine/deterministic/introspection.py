@@ -268,7 +268,7 @@ def check_eval_007(
 
     impl_ids: set[str] = set()
     try:
-        package_dir = Path(inspect.getfile(inspect.getmodule(check_eval_007))).parent
+        package_dir = Path(inspect.getfile(check_eval_007)).parent
         py_files = sorted(package_dir.glob("*.py"))
     except (TypeError, OSError):
         py_files = []

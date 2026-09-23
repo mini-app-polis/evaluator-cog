@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import tomllib
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic._shared import (
@@ -74,7 +75,7 @@ def check_no_setup_py(repo_path: Path) -> list[Finding]:
 def check_common_python_utils_dep(repo_path: Path) -> list[Finding]:
     """PY-006: common-python-utils declared as dependency."""
     CHECK_ID = "PY-006"
-    findings = []
+    findings: list[Finding] = []
     pyproject = repo_path / "pyproject.toml"
     if not pyproject.exists():
         return findings
@@ -431,7 +432,7 @@ def check_naming_conventions(repo_path: Path) -> list[Finding]:
 def check_failed_prefix(repo_path: Path) -> list[Finding]:
     """PY-012: FAILED_ prefix for failed inputs."""
     CHECK_ID = "PY-012"
-    findings = []
+    findings: list[Finding] = []
     src = repo_path / "src"
     if not src.is_dir():
         return findings
@@ -528,7 +529,7 @@ def check_finally_cleanup(repo_path: Path) -> list[Finding]:
     CHECK_ID = "PY-014"
     import ast
 
-    findings = []
+    findings: list[Finding] = []
     src = repo_path / "src"
     if not src.is_dir():
         return findings
@@ -581,30 +582,96 @@ def check_finally_cleanup(repo_path: Path) -> list[Finding]:
     return findings
 
 
+def _declares_tool_mypy(pyproject_text: str) -> bool:
+    """True when pyproject.toml has a [tool.mypy] table.
+
+    Parsed rather than substring-matched, so a commented-out section does not
+    count. A file that will not parse falls back to the substring — saying
+    what is wrong with the TOML is another rule's job.
+    """
+    try:
+        return "mypy" in tomllib.loads(pyproject_text).get("tool", {})
+    except tomllib.TOMLDecodeError:
+        return "[tool.mypy]" in pyproject_text
+
+
+def _workflows_invoke_mypy(repo_path: Path) -> bool:
+    """True when a CI workflow runs mypy.
+
+    Comment lines are skipped: a comment explaining why mypy is not run is
+    not a step that runs it. The literal is enough otherwise — a `run:` step
+    and the `typecheck:` input to python-test.yml both carry it.
+    """
+    workflows = repo_path / ".github" / "workflows"
+    if not workflows.is_dir():
+        return False
+    for yml in sorted([*workflows.rglob("*.yml"), *workflows.rglob("*.yaml")]):
+        for line in yml.read_text().lower().splitlines():
+            if "mypy" in line and not line.lstrip().startswith("#"):
+                return True
+    return False
+
+
 def check_mypy_in_ci(repo_path: Path) -> list[Finding]:
-    """TEST-012: mypy must run in CI if [tool.mypy] is declared."""
+    """TEST-012: every Python repo in scope typechecks in CI, against a config.
+
+    Scoped by repo type (the runner filters on applies_to), not by whether
+    the repo opted in. Gated on [tool.mypy], as this used to be, a repo that
+    configured nothing was invisible — it could not tell "deliberately
+    untyped" from "never set up". The first is a TEST-012 exemption in
+    evaluator.yaml and the second a deferral with an `until:`, both of which
+    the runner applies before this is called.
+
+    A repo with no pyproject.toml is not a Python repo (applies_to includes
+    shared-library, which TypeScript libraries are too), so it passes.
+    """
     CHECK_ID = "TEST-012"
-    findings = []
+    findings: list[Finding] = []
     pyproject = repo_path / "pyproject.toml"
     if not pyproject.exists():
         return findings
-    content = pyproject.read_text()
-    if "[tool.mypy]" not in content:
-        return findings
 
-    workflows = repo_path / ".github" / "workflows"
-    combined = ""
-    if workflows.is_dir():
-        for yml in list(workflows.rglob("*.yml")) + list(workflows.rglob("*.yaml")):
-            combined += "\n" + yml.read_text().lower()
-    if "mypy" not in combined:
+    configured = _declares_tool_mypy(pyproject.read_text())
+    runs = _workflows_invoke_mypy(repo_path)
+
+    if not configured and not runs:
+        findings.append(
+            _finding(
+                "TEST-012",
+                "WARN",
+                "cd_readiness",
+                "Nothing typechecks this repo: pyproject.toml declares no "
+                "[tool.mypy] and no CI workflow runs mypy.",
+                "Declare [tool.mypy] (python_version at minimum) and run "
+                "`uv run mypy src/` in CI — inline, or as the `typecheck` "
+                "input to python-test.yml, which skips its typecheck step "
+                "silently when the input is empty. A repo that deliberately "
+                "does not typecheck declares a TEST-012 exemption with a "
+                "reason in evaluator.yaml.",
+            )
+        )
+    elif not runs:
         findings.append(
             _finding(
                 "TEST-012",
                 "WARN",
                 "cd_readiness",
                 "[tool.mypy] is configured but mypy is not run in CI workflows.",
-                "Add a mypy step to CI when [tool.mypy] is present.",
+                "Run `uv run mypy src/` in CI. With python-test.yml, pass it "
+                "as the `typecheck` input — the step is skipped silently "
+                "without it, so the config is assurance nothing checks.",
+            )
+        )
+    elif not configured:
+        findings.append(
+            _finding(
+                "TEST-012",
+                "WARN",
+                "cd_readiness",
+                "mypy runs in CI, but pyproject.toml declares no [tool.mypy], "
+                "so nothing pins what is checked.",
+                "Declare [tool.mypy] with python_version, so the result does "
+                "not move with the runner's Python or with mypy's defaults.",
             )
         )
     return findings
