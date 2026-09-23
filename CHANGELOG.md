@@ -1,3 +1,10 @@
+## [3.45.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.45.1...v3.45.2) (2026-09-23)
+
+
+### Bug Fixes
+
+* **conformance:** detect language from the repo manifest when the event doesn't declare one ([0b80e66](https://github.com/mini-app-polis/evaluator-cog/commit/0b80e6605aae25002a30c394ccf119886e547521))
+
 ## [3.45.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.45.0...v3.45.1) (2026-09-23)
 
 
