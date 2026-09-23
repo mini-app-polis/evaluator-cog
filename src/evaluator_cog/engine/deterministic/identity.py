@@ -1,6 +1,6 @@
-"""Identity-contract rule checks (AUTH-003, AUTH-004, CD-019).
+"""Identity-contract rule checks (AUTH-003, AUTH-004, CD-019, CD-029, CD-030).
 
-These three rules encode the credential architecture that shipped in
+These rules encode the credential architecture that shipped in
 September 2026, and each one exists because a specific class of mistake
 survived review before it:
 
@@ -9,7 +9,10 @@ survived review before it:
     ``identity`` contract and every decision is audited.
   - **CD-019** the bearer-credential contract itself: Clerk session
     JWTs for humans, named per-machine API keys for machines, and
-    nothing else.
+    nothing else — and the caller's side of it.
+  - **CD-029** / **CD-030** the receiver's side, split by population:
+    verifying Clerk sessions, and verifying named machine keys. An API
+    with no machine callers exempts CD-030 and stays bound by CD-029.
 
 The architecture the checks encode
 ----------------------------------
@@ -315,7 +318,7 @@ _ECOSYSTEM_URL_HINTS = (
     "ecosystem_api",
 )
 
-# CD-019 (8): key material must not be persisted.
+# CD-030 (3): key material must not be persisted.
 _KEY_TABLE_RE = re.compile(
     r"principal|machine|issuer|credential|api_?key|service_account", re.IGNORECASE
 )
@@ -1828,8 +1831,8 @@ def _ecosystem_client_sites(
     service's own test suite is a FastAPI ``TestClient`` exercising the
     app in process — no HTTP, no credential, nothing to attribute — and
     reading it as an unattributed ecosystem call put dozens of false
-    ERRORs on api-kaianolevine-com in the 2026-09-03 fleet run. Clauses
-    (5)-(9) already filtered tests; clause (1) did not, and this is
+    ERRORs on api-kaianolevine-com in the 2026-09-03 fleet run. The
+    receiver rules (CD-029, CD-030) already filtered tests; clause (1) did not, and this is
     where that belongs so every caller of this helper inherits it.
     """
     constructions: list[tuple[str, int, str]] = []
@@ -2259,14 +2262,14 @@ def _cd019_clause4(
     return findings
 
 
-# --- CD-019: receiver steps (5)-(9) ------------------------------------------
+# --- CD-029 / CD-030: receiver steps ------------------------------------------
 
 
 def _in_identity_library(f: _PyFile) -> bool:
     """True for the shared library's own source, vendored into the repo.
 
-    Steps (5) and (7) forbid verification primitives "written outside
-    that library"; if the library itself is present, its own JWKS
+    CD-029 (1), CD-029 (3) and CD-030 (2) forbid verification primitives
+    "written outside that library"; if the library itself is present, its own JWKS
     handling is the sanctioned implementation.
     """
     norm = f.rel.replace("\\", "/")
@@ -2328,7 +2331,7 @@ def _verification_functions(
     ``_verify_turnstile()`` in api-kaianolevine-com, which posts a
     Cloudflare Turnstile response to ``challenges.cloudflare.com`` from
     a contact form. That is a bot check on a public form, not
-    verification of the caller's identity, so clause (7)'s "verification
+    verification of the caller's identity, so CD-029 (3)'s "verification
     is local" has nothing to say about it — a third-party challenge is
     remote by construction. Requiring credential vocabulary keeps the
     clause pointed at the JWKS/Clerk/machine-key path it exists to
@@ -2454,9 +2457,9 @@ def _compares_a_bearer_credential(node: ast.Call, enclosing: ast.AST | None) -> 
       - Otherwise it is in scope only where the Bearer path is visible —
         an ``Authorization`` header, or a machine-key or Clerk lookup.
 
-    Defaulting to "not in scope" is deliberate. The first half of check (5)
-    already fails any service that imports no verification helper from
-    ``identity`` at all, so a service reimplementing the real thing is
+    Defaulting to "not in scope" is deliberate. CD-029 (1) already fails
+    any service that imports no verification helper from ``identity`` at
+    all, so a service reimplementing the real thing is
     caught there; this clause exists to catch a stray primitive alongside
     a library that is otherwise used, and a false ERROR on a webhook route
     costs more than a missed one here.
@@ -2469,10 +2472,10 @@ def _compares_a_bearer_credential(node: ast.Call, enclosing: ast.AST | None) -> 
     return any(marker in haystack for marker in _BEARER_MARKERS)
 
 
-def _cd019_clause5(
+def _cd029_clause1(
     check_id: str, files: list[_PyFile], repo_path: Path | None = None
 ) -> list[Finding]:
-    """(5) Verification is consumed from the shared library, not rewritten.
+    """(1) Session verification is consumed from the shared library.
 
     The shared library has two halves. `identity` is Python; a
     TypeScript service consumes `common-typescript-utils` instead. A
@@ -2491,9 +2494,9 @@ def _cd019_clause5(
                     check_id,
                     _SEVERITY,
                     _DIMENSION,
-                    f"CD-019 (5): the service imports no verification helper from "
+                    f"CD-029 (1): the service imports no verification helper from "
                     f"the shared TypeScript utilities "
-                    f"({_TS_SHARED_AUTH_PACKAGE}), so its credential verification "
+                    f"({_TS_SHARED_AUTH_PACKAGE}), so its session verification "
                     f"is local.",
                     f"Import verifyClerkToken from {_TS_SHARED_AUTH_PACKAGE} and "
                     f"delete the in-repo equivalent, so session-JWT verification "
@@ -2509,19 +2512,18 @@ def _cd019_clause5(
                 check_id,
                 _SEVERITY,
                 _DIMENSION,
-                "CD-019 (5): the service imports nothing from the shared identity "
-                "library (identity.chain / identity.clerk / identity.apikey), so its "
-                "credential verification is local.",
+                "CD-029 (1): the service imports nothing from the shared identity "
+                "library (identity.chain / identity.clerk), so its session "
+                "verification is local.",
                 "Import the verification chain from identity (identity.chain for the "
-                "request chain, identity.clerk for session JWTs, identity.apikey for "
-                "named machine keys) and delete the in-repo equivalent.",
+                "request chain, identity.clerk for session JWTs) and delete the "
+                "in-repo equivalent.",
             )
         )
 
     for f in files:
         if _in_identity_library(f):
             continue
-        owners = _enclosing_functions(f.tree)
         for node in ast.walk(f.tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -2540,10 +2542,6 @@ def _cd019_clause5(
                         algorithms = _unparse(kw.value)
                 if re.search(r"RS\d{3}|ES\d{3}|PS\d{3}", algorithms + text):
                     problem = "performs an asymmetric (RS256-family) token decode"
-            elif name == "compare_digest" and _compares_a_bearer_credential(
-                node, owners.get(node)
-            ):
-                problem = "implements its own constant-time credential comparison"
             if not problem:
                 continue
             findings.append(
@@ -2551,26 +2549,63 @@ def _cd019_clause5(
                     check_id,
                     _SEVERITY,
                     _DIMENSION,
-                    f"CD-019 (5): {f.rel}:{node.lineno} {problem} outside the shared "
+                    f"CD-029 (1): {f.rel}:{node.lineno} {problem} outside the shared "
                     f"identity library (`{text[:120]}`). Verification has one "
                     f"implementation; see XSTACK-005.",
-                    "Delete the local primitive and call the shared library instead: "
-                    "identity.clerk verifies session JWTs against cached JWKS and "
-                    "identity.apikey compares named machine keys in constant time.",
+                    "Delete the local primitive and call identity.clerk, which "
+                    "verifies session JWTs against cached JWKS.",
                 )
             )
     return findings
 
 
-def _cd019_clause6(check_id: str, files: list[_PyFile]) -> list[Finding]:
-    """(6) Both populations are configured: Clerk issuers and machine keys.
+def _cd030_clause2(check_id: str, files: list[_PyFile]) -> list[Finding]:
+    """(2) The machine-key comparison is the shared library's, not local.
 
-    A service that configures only humans rejects every machine, and one
-    that configures only machines rejects every human. Both failures
-    look like a credential bug at the caller, which is why the rule
-    checks the configuration rather than waiting for the 401.
+    Scoped to the Bearer path by :func:`_compares_a_bearer_credential` —
+    a webhook secret or a body signature is not a credential this rule
+    governs.
     """
     findings: list[Finding] = []
+    for f in files:
+        if _in_identity_library(f):
+            continue
+        owners = _enclosing_functions(f.tree)
+        for node in ast.walk(f.tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if _call_name(node) != "compare_digest":
+                continue
+            if not _compares_a_bearer_credential(node, owners.get(node)):
+                continue
+            text = _unparse(node)
+            findings.append(
+                _finding(
+                    check_id,
+                    _SEVERITY,
+                    _DIMENSION,
+                    f"CD-030 (2): {f.rel}:{node.lineno} implements its own "
+                    f"constant-time credential comparison outside the shared "
+                    f"identity library (`{text[:120]}`). Verification has one "
+                    f"implementation; see XSTACK-005.",
+                    "Delete the local comparison and call identity.apikey, which "
+                    "compares named machine keys in constant time.",
+                )
+            )
+    return findings
+
+
+def _configured_names(
+    files: list[_PyFile], repo_path: Path | None
+) -> tuple[set[str], set[str], list[str], list[str]]:
+    """String literals, attribute names and f-string texts from Python
+    sources, plus the raw text of TypeScript/JavaScript sources.
+
+    The configuration clauses ask whether a variable name appears in
+    source at all. Python is read from the AST; TypeScript has no parser
+    here, so its source text is searched — which is all the question
+    needs.
+    """
     literals: set[str] = set()
     attributes: set[str] = set()
     joined_parts: list[str] = []
@@ -2582,53 +2617,91 @@ def _cd019_clause6(check_id: str, files: list[_PyFile]) -> list[Finding]:
                 attributes.add(node.attr)
             elif isinstance(node, ast.JoinedStr):
                 joined_parts.append(_unparse(node))
+    ts_texts: list[str] = []
+    if repo_path is not None:
+        for path in repo_path.rglob("*"):
+            if path.suffix not in _TS_SOURCE_SUFFIXES or not path.is_file():
+                continue
+            parts = set(path.parts)
+            if "node_modules" in parts or "dist" in parts or ".git" in parts:
+                continue
+            if ".test." in path.name or ".spec." in path.name:
+                continue
+            with contextlib.suppress(OSError):
+                ts_texts.append(path.read_text(encoding="utf-8", errors="ignore"))
+    return literals, attributes, joined_parts, ts_texts
 
-    def _seen(*candidates: str) -> bool:
-        for candidate in candidates:
-            if candidate in literals or candidate.lower() in attributes:
-                return True
-        return False
 
-    clerk_configured = _seen("CLERK_ISSUERS") or (
-        _seen("CLERK_ISSUER") and _seen("CLERK_JWKS_URL")
-    )
-    machine_configured = (
-        any(value.endswith("_API_KEY") for value in literals)
-        or any("_API_KEY" in part for part in joined_parts)
-        or any("_API_KEY" in value for value in literals)
-    )
+def _cd029_clause2(
+    check_id: str, files: list[_PyFile], repo_path: Path | None = None
+) -> list[Finding]:
+    """(2) The Clerk issuer set is configured.
 
-    if clerk_configured and machine_configured:
-        return findings
-    missing = []
-    if not clerk_configured:
-        missing.append(
-            "the Clerk issuer set (CLERK_ISSUERS, or CLERK_ISSUER together with "
-            "CLERK_JWKS_URL)"
-        )
-    if not machine_configured:
-        missing.append(
-            "the machine-key set built from per-machine <NAME>_API_KEY variables"
-        )
-    findings.append(
+    A JWKS URL alone proves a token was signed by a key it serves, not
+    who issued the token: the issuer is what ``iss`` is checked against.
+    """
+    literals, attributes, _joined, ts_texts = _configured_names(files, repo_path)
+
+    def _seen(name: str) -> bool:
+        if name in literals or name.lower() in attributes:
+            return True
+        pattern = re.compile(rf"\b{re.escape(name)}\b")
+        return any(pattern.search(text) for text in ts_texts)
+
+    if _seen("CLERK_ISSUERS") or (_seen("CLERK_ISSUER") and _seen("CLERK_JWKS_URL")):
+        return []
+    have = "CLERK_JWKS_URL alone" if _seen("CLERK_JWKS_URL") else "neither variable"
+    return [
         _finding(
             check_id,
             _SEVERITY,
             _DIMENSION,
-            "CD-019 (6): the service configures only one credential population — "
-            "no configuration was found for " + " and ".join(missing) + ".",
-            "Configure both populations at startup: build the Clerk issuer set from "
-            "CLERK_ISSUERS (or CLERK_ISSUER + CLERK_JWKS_URL) for humans, and the "
-            "machine-key set from the per-machine <MACHINE_NAME>_API_KEY environment "
-            "variables for machines. A service missing either rejects that whole "
-            "population.",
+            f"CD-029 (2): the Clerk issuer set is not configured — found {have}, "
+            f"but session verification needs CLERK_ISSUERS, or CLERK_ISSUER "
+            f"together with CLERK_JWKS_URL, so the token's iss can be checked.",
+            "Configure the issuer set at startup (CLERK_ISSUERS, or CLERK_ISSUER + "
+            "CLERK_JWKS_URL) and pass the issuer to the verifier — identity.clerk "
+            "in Python, verifyClerkToken's expectedIssuer argument in "
+            "common-typescript-utils.",
         )
-    )
-    return findings
+    ]
 
 
-def _cd019_clause7(check_id: str, files: list[_PyFile]) -> list[Finding]:
-    """(7) Verification is local — no outbound call on the credential path."""
+def _cd030_clause1(
+    check_id: str, files: list[_PyFile], repo_path: Path | None = None
+) -> list[Finding]:
+    """(1) The machine-key set is configured from per-machine variables.
+
+    A service that accepts machine callers but declares no key variable
+    rejects every machine, which looks like a credential bug at the
+    caller — the reason the rule checks configuration rather than
+    waiting for the 401.
+    """
+    literals, _attributes, joined_parts, ts_texts = _configured_names(files, repo_path)
+    if (
+        any("_API_KEY" in value for value in literals)
+        or any("_API_KEY" in part for part in joined_parts)
+        or any("_API_KEY" in text for text in ts_texts)
+    ):
+        return []
+    return [
+        _finding(
+            check_id,
+            _SEVERITY,
+            _DIMENSION,
+            "CD-030 (1): no machine-key set is configured — no per-machine "
+            "<NAME>_API_KEY variable is read anywhere in source, so every machine "
+            "caller is rejected.",
+            "Build the machine-key set at startup from the per-machine "
+            "<MACHINE_NAME>_API_KEY environment variables. If this API has no "
+            "machine callers, exempt CD-030 in evaluator.yaml with the reason "
+            "instead.",
+        )
+    ]
+
+
+def _cd029_clause3(check_id: str, files: list[_PyFile]) -> list[Finding]:
+    """(3) Verification is local — no outbound call on the credential path."""
     findings: list[Finding] = []
     for f, fn in _verification_functions(files):
         for node in ast.walk(fn):
@@ -2642,7 +2715,7 @@ def _cd019_clause7(check_id: str, files: list[_PyFile]) -> list[Finding]:
                     check_id,
                     _SEVERITY,
                     _DIMENSION,
-                    f"CD-019 (7): {f.rel}:{node.lineno} {fn.name}() makes an outbound "
+                    f"CD-029 (3): {f.rel}:{node.lineno} {fn.name}() makes an outbound "
                     f"HTTP call (`{text[:120]}`) inside the verification path. "
                     f"Verification is local: a session JWT is checked offline against "
                     f"cached JWKS and a machine key is compared in process.",
@@ -2655,10 +2728,10 @@ def _cd019_clause7(check_id: str, files: list[_PyFile]) -> list[Finding]:
     return findings
 
 
-def _cd019_clause8(
+def _cd030_clause3(
     check_id: str, repo_path: Path, files: list[_PyFile]
 ) -> list[Finding]:
-    """(8) The store holds names and grants, never key material."""
+    """(3) The store holds names and grants, never key material."""
     findings: list[Finding] = []
 
     def _report(rel: str, lineno: int, column: str, context: str) -> None:
@@ -2667,7 +2740,7 @@ def _cd019_clause8(
                 check_id,
                 _SEVERITY,
                 _DIMENSION,
-                f"CD-019 (8): {rel}:{lineno} persists key material — {context} column "
+                f"CD-030 (3): {rel}:{lineno} persists key material — {context} column "
                 f"{column!r} on a principal/machine/issuer table. The store holds "
                 f"names and grants only.",
                 "Drop the column. A machine's key lives in Doppler and reaches the "
@@ -2797,8 +2870,8 @@ def _cd019_clause8(
     return findings
 
 
-def _cd019_clause9(check_id: str, files: list[_PyFile]) -> list[Finding]:
-    """(9) The credential path never reads the machine name from the request.
+def _cd030_clause4(check_id: str, files: list[_PyFile]) -> list[Finding]:
+    """(4) The credential path never reads the machine name from the request.
 
     The key names the caller. A request that says which machine it is
     lets any holder of any key claim any name, which is the failure the
@@ -2815,7 +2888,7 @@ def _cd019_clause9(check_id: str, files: list[_PyFile]) -> list[Finding]:
                     check_id,
                     _SEVERITY,
                     _DIMENSION,
-                    f"CD-019 (9): {f.rel}:{lineno} {fn.name}() reads the caller's "
+                    f"CD-030 (4): {f.rel}:{lineno} {fn.name}() reads the caller's "
                     f"identity from the request on the credential path — {what}.",
                     "Delete the request-supplied name. The presented credential "
                     "identifies the caller: a named machine key resolves to its "
@@ -2843,7 +2916,7 @@ def _cd019_clause9(check_id: str, files: list[_PyFile]) -> list[Finding]:
                     check_id,
                     _SEVERITY,
                     _DIMENSION,
-                    f"CD-019 (9): {f.rel}:{fn.lineno} {fn.name}() takes the caller's "
+                    f"CD-030 (4): {f.rel}:{fn.lineno} {fn.name}() takes the caller's "
                     f"name from the request ({sources[0]}(...) -> {arg.arg!r}) on the "
                     f"credential path.",
                     "Remove the parameter and derive the machine name from the key "
@@ -2854,38 +2927,57 @@ def _cd019_clause9(check_id: str, files: list[_PyFile]) -> list[Finding]:
     return findings
 
 
+def _identity_files(repo_path: Path) -> list[_PyFile]:
+    """Python sources under ``src/`` and ``tests/``, tests included.
+
+    CD-019 (2) has its own, narrower exemption for test modules that mock
+    the auth layer, applied per file; the receiver rules drop tests.
+    """
+    files = _parse_python(repo_path / "src", repo_path, skip_tests=False)
+    tests_root = repo_path / "tests"
+    if tests_root.is_dir():
+        files = files + _parse_python(tests_root, repo_path, skip_tests=False)
+    return files
+
+
+def _dedupe_by_text(findings: list[Finding]) -> list[Finding]:
+    """Drop repeats of the same finding text.
+
+    The same violation can be reached from two clauses (a token
+    acquisition is both a retired symbol and a self-minted credential);
+    reporting it twice lengthens the remediation list without adding
+    information.
+    """
+    seen: set[str] = set()
+    unique: list[Finding] = []
+    for item in findings:
+        key = item.get("finding", "")
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
 def check_cd_019(repo_path: Path, *, repo_type: str = "") -> list[Finding]:
-    """CD-019: the bearer credential contract.
+    """CD-019: the bearer credential contract, caller side.
 
     Humans present a Clerk session JWT; machines present a named API key
     that lives in Doppler, arrives as ``<MACHINE_NAME>_API_KEY`` and is
     compared in process in constant time. Clerk M2M was removed
     outright: there is no token to mint and no ``m2m_tokens/verify``
-    endpoint to call. Credentials are routed structurally by dot count —
-    two dots is a session JWT, zero dots is a named key.
+    endpoint to call.
 
-    The catalog splits the rule by which side of the call the repo is
-    on. Steps (1)-(4) are the caller's obligations and steps (5)-(9) the
-    receiver's, and ``repo_type`` selects between them: ``"api-service"``
-    runs the receiver steps, anything else the caller steps. An
-    api-service that also makes outbound ecosystem calls is both, and
-    runs both halves — its outbound calls are as unattributable as any
-    cog's if it does not name itself.
-
-    Findings are deduplicated by text: the same violation can be reached
-    from two clauses (a token acquisition is both a retired symbol and a
-    self-minted credential), and reporting it twice would make the
-    remediation list longer without making it more informative.
+    Steps (1)-(4) are the caller's obligations. The receiver's are split
+    by population into CD-029 (Clerk sessions) and CD-030 (named machine
+    keys), so an API is held to the half it serves. ``repo_type`` still
+    matters here: an ``"api-service"`` that makes no outbound ecosystem
+    calls is not a caller, and runs only step (2) — retired mechanisms
+    are drift in any repo.
     """
     CHECK_ID = "CD-019"
     findings: list[Finding] = []
-    src = repo_path / "src"
-    # Tests are parsed too: CD-019 (2) has its own, narrower exemption for
-    # test modules that mock the auth layer, applied per file.
-    files = _parse_python(src, repo_path, skip_tests=False)
-    tests_root = repo_path / "tests"
-    if tests_root.is_dir():
-        files = files + _parse_python(tests_root, repo_path, skip_tests=False)
+    files = _identity_files(repo_path)
 
     is_receiver = repo_type == "api-service"
     machine_names: set[str] = set()
@@ -2897,44 +2989,56 @@ def check_cd_019(repo_path: Path, *, repo_type: str = "") -> list[Finding]:
         clause1_findings = []
 
     run_caller = (not is_receiver) or outbound
+    if outbound:
+        findings.extend(clause1_findings)
+    clauses = [lambda: _cd019_clause2(CHECK_ID, repo_path, files)]
     if run_caller:
-        if outbound:
-            findings.extend(clause1_findings)
-        for clause in (
-            lambda: _cd019_clause2(CHECK_ID, repo_path, files),
-            lambda: _cd019_clause3(CHECK_ID, files),
-        ):
-            try:
-                findings.extend(clause())
-            except Exception:
-                continue
-        if outbound:
-            with contextlib.suppress(Exception):
-                findings.extend(_cd019_clause4(CHECK_ID, repo_path, machine_names))
-
-    if is_receiver:
-        receiver_files = [f for f in files if not f.is_test]
-        clauses = [
-            lambda: _cd019_clause5(CHECK_ID, receiver_files, repo_path),
-            lambda: _cd019_clause6(CHECK_ID, receiver_files),
-            lambda: _cd019_clause7(CHECK_ID, receiver_files),
-            lambda: _cd019_clause8(CHECK_ID, repo_path, receiver_files),
-            lambda: _cd019_clause9(CHECK_ID, receiver_files),
-        ]
-        if not run_caller:
-            clauses.insert(0, lambda: _cd019_clause2(CHECK_ID, repo_path, files))
-        for clause in clauses:
-            try:
-                findings.extend(clause())
-            except Exception:
-                continue
-
-    seen: set[str] = set()
-    unique: list[Finding] = []
-    for item in findings:
-        key = item.get("finding", "")
-        if key in seen:
+        clauses.append(lambda: _cd019_clause3(CHECK_ID, files))
+    for clause in clauses:
+        try:
+            findings.extend(clause())
+        except Exception:
             continue
-        seen.add(key)
-        unique.append(item)
-    return unique
+    if outbound:
+        with contextlib.suppress(Exception):
+            findings.extend(_cd019_clause4(CHECK_ID, repo_path, machine_names))
+    return _dedupe_by_text(findings)
+
+
+def check_cd_029(repo_path: Path) -> list[Finding]:
+    """CD-029: receivers verify Clerk session JWTs locally, via the library."""
+    CHECK_ID = "CD-029"
+    files = [f for f in _identity_files(repo_path) if not f.is_test]
+    findings: list[Finding] = []
+    for clause in (
+        lambda: _cd029_clause1(CHECK_ID, files, repo_path),
+        lambda: _cd029_clause2(CHECK_ID, files, repo_path),
+        lambda: _cd029_clause3(CHECK_ID, files),
+    ):
+        try:
+            findings.extend(clause())
+        except Exception:
+            continue
+    return _dedupe_by_text(findings)
+
+
+def check_cd_030(repo_path: Path) -> list[Finding]:
+    """CD-030: receivers that accept machine callers verify named keys.
+
+    An API with no machine callers exempts this rule in evaluator.yaml;
+    the dispatcher then never calls it.
+    """
+    CHECK_ID = "CD-030"
+    files = [f for f in _identity_files(repo_path) if not f.is_test]
+    findings: list[Finding] = []
+    for clause in (
+        lambda: _cd030_clause1(CHECK_ID, files, repo_path),
+        lambda: _cd030_clause2(CHECK_ID, files),
+        lambda: _cd030_clause3(CHECK_ID, repo_path, files),
+        lambda: _cd030_clause4(CHECK_ID, files),
+    ):
+        try:
+            findings.extend(clause())
+        except Exception:
+            continue
+    return _dedupe_by_text(findings)

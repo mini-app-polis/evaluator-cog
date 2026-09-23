@@ -96,6 +96,8 @@ from evaluator_cog.engine.deterministic.identity import (
     check_auth_003,
     check_auth_004,
     check_cd_019,
+    check_cd_029,
+    check_cd_030,
 )
 from evaluator_cog.engine.deterministic.introspection import (
     check_eval_003,
@@ -175,6 +177,8 @@ __all__ = [
     "check_auth_004",
     "check_cd_017",
     "check_cd_019",
+    "check_cd_029",
+    "check_cd_030",
     "check_cd_020",
     "check_cd_022",
     "check_cd_023",
