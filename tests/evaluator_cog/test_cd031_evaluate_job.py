@@ -76,3 +76,14 @@ def test_flags_an_evaluate_job_that_does_not_wait_for_the_release(
 
 def test_flags_a_repo_with_no_workflows(tmp_path: Path) -> None:
     assert len(check_cd_031(tmp_path)) == 1
+
+
+def test_passes_the_shared_workflows_repo_calling_its_own_copy(
+    tmp_path: Path,
+) -> None:
+    """mini-app-polis/.github owns evaluate.yml and calls it by local path."""
+    local = _EVALUATE.format(needs="release").replace(
+        "mini-app-polis/.github/.github/workflows/evaluate.yml@v3",
+        "./.github/workflows/evaluate.yml",
+    )
+    assert check_cd_031(_ci(tmp_path, _RELEASE + local)) == []
