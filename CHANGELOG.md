@@ -1,3 +1,10 @@
+# [3.45.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.44.0...v3.45.0) (2026-09-23)
+
+
+### Features
+
+* **checks:** check CD-031 ([cbf8ce5](https://github.com/mini-app-polis/evaluator-cog/commit/cbf8ce5273404fe43931574f61e58f57a6b0a735))
+
 # [3.44.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.43.0...v3.44.0) (2026-09-23)
 
 
