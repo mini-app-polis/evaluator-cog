@@ -87,8 +87,8 @@ against rules that do not exist and must be removed:
 | AUTH-001 | Retired 2026-09 (ADR-008), superseded by AUTH-003 |
 | TEST-GAP-001 | Pre-existing. Not in the current catalog |
 
-**Implemented, and where they run.** EVAL-003, MONO-003, EVAL-007, XSTACK-006,
-XSTACK-007 and XSTACK-008 carry `applies_to: None` — they grade the inventory,
+**Implemented, and where they run.** EVAL-003, EVAL-007, XSTACK-006, XSTACK-007
+and XSTACK-008 carry `applies_to: None` — they grade the inventory,
 the stored findings and the catalog rather than any repository's source, so no
 per-repository job owns them. They run in `run_introspection()`, once per fleet
 pass, asked for by `POST /v1/evaluations/introspection`.
@@ -139,9 +139,8 @@ standards or evaluator release
                                                    + 1 message  → run_introspection()
 ```
 
-The API resolves the fleet from the registry and sends each repository its
-services already grouped, so a monorepo arrives as one message carrying every
-app in it. One `run_id` is minted for the whole pass and one catalog version
+The API resolves the fleet from the registry and sends one message per
+repository. One `run_id` is minted for the whole pass and one catalog version
 pinned, so every repository in it is graded against the same rules.
 
 ### From a repository's CI
@@ -185,26 +184,6 @@ curl -X POST https://api.kaianolevine.com/v1/evaluations/runs \
 `mode` defaults to `deterministic`, which costs no tokens. `mode: "llm"` runs
 the deterministic pass first (for `checked_rule_ids`) and then the soft-rule
 assessment.
-
-### Monorepos
-
-A monorepo is **one** job carrying every app in it. Sibling deduplication
-(ADR-0002) treats an identical finding on two apps as a single issue and cannot
-know that until every app has been evaluated, so they have to arrive together
-or not at all.
-
-A fleet pass gets this right: the API groups from the registry before sending,
-so deejaytools-com arrives as one message with both apps. A release-triggered
-`POST /v1/evaluations/runs` still names one repository and synthesises a single
-service from it, which is correct for a plain repo and why deejaytools-com is
-**not** wired to evaluate itself on release — the fleet pass covers it.
-
-The failure mode if the grouping is ever lost is worth knowing, because nothing
-raises: `monorepo_root`, the workspace `package.json` and `monorepo_context` all
-resolve to `None`, `_deduplicate_sibling_findings` never fires, and the same
-finding lands once per app looking like a clean run. The tell is a repository
-count — 16 active services group into 15 jobs, so a count of 16 means the
-grouping did not survive.
 
 ## Inputs and outputs
 

@@ -1,4 +1,4 @@
-"""Introspection rule checks (EVAL-003, MONO-003, EVAL-007 — drift & data quality)."""
+"""Introspection rule checks (EVAL-003, EVAL-007 — drift & data quality)."""
 
 from __future__ import annotations
 
@@ -198,103 +198,6 @@ def check_eval_003() -> list[Finding]:
                     + f". finding={text[:80]!r}",
                     "Ensure the finding is emitted via _finding() with a "
                     "proper rule_id and a concrete remediation string.",
-                )
-            )
-
-    return findings
-
-
-def check_mono_003(
-    *,
-    ecosystem: dict | None = None,
-) -> list[Finding]:
-    """MONO-003: Sibling findings with same root cause must be deduplicated."""
-    CHECK_ID = "MONO-003"
-    from collections import defaultdict
-
-    from mini_app_polis.api import KaianoApiClient
-
-    if ecosystem is None:
-        return []
-    monorepo_services: dict[str, str] = {}
-    for svc in ecosystem.get("services", []) or []:
-        if not isinstance(svc, dict):
-            continue
-        mono = svc.get("monorepo")
-        sid = svc.get("id")
-        if mono and sid:
-            monorepo_services[str(sid)] = str(mono)
-
-    if not monorepo_services:
-        return []
-
-    _PER_APP_EXPECTED = frozenset({"XSTACK-002"})
-
-    try:
-        api = KaianoApiClient.from_env("evaluator-cog")
-        service_ids = ",".join(monorepo_services.keys())
-        # `repos=` was never a parameter either — the API takes `repo=`, and
-        # the misspelling was silently dropped, as `lookback_days` was.
-        # Once the 422 was fixed this would have started returning every
-        # repo's rows unfiltered, which is worse than failing loudly.
-        response = _fetch_evaluations(api, f"/v1/evaluations?repo={service_ids}")
-    except Exception as exc:
-        return [
-            _finding(
-                "CHECKER",
-                "WARN",
-                "monorepo_coherence",
-                f"MONO-003: could not fetch pipeline_evaluations: {exc}",
-                "Check the request against /v1/evaluations' parameters before "
-                "suspecting connectivity — a 422 here is a bad query, not a "
-                "reachable-service problem.",
-            )
-        ]
-
-    if isinstance(response, dict):
-        rows = response.get("data") or response.get("items") or []
-    elif isinstance(response, list):
-        rows = response
-    else:
-        rows = []
-
-    buckets: dict[str, dict[tuple, list[dict]]] = defaultdict(lambda: defaultdict(list))
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        repo = str(row.get("repo") or "")
-        mono = monorepo_services.get(repo)
-        if not mono:
-            continue
-        rule_id = str(row.get("rule_id") or row.get("violation_id") or "")
-        if rule_id in _PER_APP_EXPECTED:
-            continue
-        key = (
-            rule_id,
-            str(row.get("finding") or ""),
-            str(row.get("standards_version") or ""),
-            str(row.get("run_id") or ""),
-        )
-        buckets[mono][key].append(row)
-
-    findings: list[Finding] = []
-    for mono_id, groups in buckets.items():
-        for key, group in groups.items():
-            if len(group) <= 1:
-                continue
-            rule_id, _text, _version, _run_id = key
-            affected = sorted({str(r.get("repo") or "") for r in group})
-            findings.append(
-                _finding(
-                    CHECK_ID,
-                    "WARN",
-                    "pipeline_consistency",
-                    f"Monorepo '{mono_id}' emitted {len(group)} duplicate "
-                    f"findings for rule {rule_id} across sibling apps "
-                    f"({', '.join(affected)}). Expected one collapsed "
-                    f"finding tagged with all affected service IDs.",
-                    f"Verify MONO-001 / MONO-002 dedup logic is invoked "
-                    f"for rule {rule_id} on this monorepo.",
                 )
             )
 

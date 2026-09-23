@@ -48,10 +48,7 @@ _CPU_KEY_TOKENS = ("cpu", "vcpu")
 def _rel(path: Path, repo_path: Path) -> str:
     """Repo-relative display path that is stable across runs.
 
-    Monorepo service roots are not always below ``repo_path`` — the
-    descriptor can sit at the monorepo root while the service is
-    evaluated at ``apps/<name>`` — so ``relative_to`` legitimately
-    raises.
+    ``relative_to`` raises when ``path`` is not below ``repo_path``.
 
     The fallback used to be the absolute path, which begins with the
     run's temporary download directory. That is not merely ugly: the
@@ -219,10 +216,7 @@ def _states_limit(data: dict[str, Any], tokens: tuple[str, ...]) -> bool:
     return False
 
 
-def check_cd_017(
-    repo_path: Path,
-    monorepo_path: Path | None = None,
-) -> list[Finding]:
+def check_cd_017(repo_path: Path) -> list[Finding]:
     """CD-017: the Railway restart policy is version-controlled and correct.
 
     A restart policy that lives only in the dashboard is invisible to
@@ -241,10 +235,6 @@ def check_cd_017(
     which defeats the purpose of committing the file in the first place:
     the deploy still is not reproducible from the repository.
 
-    Monorepo services keep their descriptor beside the service rather
-    than at the repository root, so ``monorepo_path`` is consulted first
-    and the root is the fallback.
-
     ``railway.toml`` counts. Railway accepts either spelling and CD-024
     already reads both; this check looked only for ``railway.json`` and
     so reported deejaytools-com, whose descriptor is a railway.toml, for
@@ -254,10 +244,7 @@ def check_cd_017(
     CHECK_ID = "CD-017"
     findings: list[Finding] = []
 
-    search_roots: list[Path] = []
-    if monorepo_path is not None:
-        search_roots.append(monorepo_path)
-    search_roots.append(repo_path)
+    search_roots: list[Path] = [repo_path]
 
     target: Path | None = None
     data: dict[str, Any] | None = None
@@ -288,10 +275,7 @@ def check_cd_017(
         )
         return findings
 
-    # Relative to the root it was actually found under: a monorepo
-    # service is evaluated at apps/<name>, and its descriptor may sit at
-    # the repo root above that, where _rel against the service directory
-    # gives up and prints an absolute container path.
+    # Relative to the root it was actually found under.
     rel = _rel(target, found_root)
     if data is None:
         findings.append(
@@ -534,7 +518,6 @@ def _check_cd_024_lambda(repo_path: Path) -> list[Finding]:
 
 def check_cd_024(
     repo_path: Path,
-    monorepo_path: Path | None = None,
     repo_type: str = "",
 ) -> list[Finding]:
     """CD-024: deployable services declare memory and CPU limits.
@@ -568,12 +551,6 @@ def check_cd_024(
     findings: list[Finding] = []
 
     descriptor, data, error = _load_platform_descriptor(repo_path)
-    if descriptor is None and monorepo_path is not None:
-        # A monorepo service is evaluated at apps/<name>; its platform
-        # descriptor may be the one at the repo root that governs the
-        # whole deploy. Reporting "no descriptor" for a service whose
-        # descriptor is one directory up says nothing true.
-        descriptor, data, error = _load_platform_descriptor(monorepo_path)
 
     if descriptor is None:
         findings.append(

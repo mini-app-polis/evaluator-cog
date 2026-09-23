@@ -4,7 +4,11 @@ Date: 2026-04-08
 
 ## Status
 
-Accepted
+Superseded (2026-09). The ecosystem no longer has a monorepo:
+`deejaytools-com` was split into `deejaytools-com` and `deejaytools-api`,
+and ecosystem-standards retired the MONO rules and the `monorepos:`
+registry. The deduplication, the MONO-003 check and every monorepo code
+path were removed. Kept as the record of why they existed.
 
 ## Context
 

@@ -23,7 +23,6 @@ from evaluator_cog.engine.deterministic import (
     check_eval_007,
     check_failed_prefix,
     check_healthchecks_integration,
-    check_mono_003,
     check_mypy_in_ci,
     check_naming_conventions,
     check_no_hardcoded_secrets,
@@ -57,7 +56,6 @@ from evaluator_cog.engine.deterministic import (
     run_all_checks,
 )
 from evaluator_cog.engine.evaluator_config import EvaluatorConfig
-from evaluator_cog.flows.conformance import _deduplicate_sibling_findings
 
 _TEST_RULE_CATALOG: dict[str, dict] = {
     "DOC-001": {"applies_to": ["all"], "modifies": [], "status": "requirement"},
@@ -395,14 +393,6 @@ def test_check_ci_accepts_pnpm_add_before_semantic_release(tmp_path: Path) -> No
     findings = check_ci(tmp_path)
     rule_ids = [f["rule_id"] for f in findings]
     assert "VER-006" not in rule_ids
-
-
-def test_check_env_example_finds_monorepo_location(tmp_path: Path) -> None:
-    """DOC-004 should not fire when .env.example is in apps/api/."""
-    (tmp_path / "apps" / "api").mkdir(parents=True)
-    (tmp_path / "apps" / "api" / ".env.example").write_text("DATABASE_URL=\n")
-    findings = check_env_example(tmp_path)
-    assert findings == []
 
 
 def test_check_env_example_fires_when_absent_everywhere(tmp_path: Path) -> None:
@@ -1230,36 +1220,13 @@ def test_check_split_package_identity_flags_undocumented_split(tmp_path: Path) -
     assert any(f["rule_id"] == "DOC-009" for f in findings)
 
 
-# ── Monorepo-aware check tests ─────────────────────────────────────────────
-
-
-def test_check_shared_library_used_ts_workspace_dep_satisfies(tmp_path: Path) -> None:
-    """XSTACK-001 not flagged when dep is in workspace root package.json."""
-    app_pkg = tmp_path / "package.json"
-    app_pkg.write_text('{"name": "app", "dependencies": {}}')
-    src = tmp_path / "src"
-    src.mkdir()
-    (src / "index.ts").write_text(
-        'import { createLogger } from "common-typescript-utils"'
-    )
-
-    workspace_text = '{"dependencies": {"common-typescript-utils": "^1.0.0"}}'
-
-    findings = check_shared_library_used(
-        tmp_path,
-        language="typescript",
-        workspace_package_json_text=workspace_text,
-    )
-    rule_ids = [f["rule_id"] for f in findings]
-    assert "XSTACK-001" not in rule_ids, (
-        "XSTACK-001 should not be flagged when dep is in workspace root (MONO-001)"
-    )
+# ── Shared library declaration ─────────────────────────────────────────────
 
 
 def test_check_shared_library_used_ts_flags_when_absent_everywhere(
     tmp_path: Path,
 ) -> None:
-    """XSTACK-001 flagged when dep absent from both app and workspace."""
+    """XSTACK-001 flagged when the shared library dep is absent."""
     app_pkg = tmp_path / "package.json"
     app_pkg.write_text('{"name": "app", "dependencies": {}}')
     src = tmp_path / "src"
@@ -1269,54 +1236,9 @@ def test_check_shared_library_used_ts_flags_when_absent_everywhere(
     findings = check_shared_library_used(
         tmp_path,
         language="typescript",
-        workspace_package_json_text='{"dependencies": {}}',
     )
     rule_ids = [f["rule_id"] for f in findings]
     assert "XSTACK-001" in rule_ids
-
-
-def test_check_pnpm_lockfile_uses_monorepo_root(tmp_path: Path) -> None:
-    """XSTACK-003 checks monorepo root when monorepo_root provided."""
-    app_dir = tmp_path / "apps" / "api"
-    app_dir.mkdir(parents=True)
-
-    (tmp_path / "pnpm-lock.yaml").write_text("")
-
-    findings = check_pnpm_lockfile(app_dir, monorepo_root=tmp_path)
-    assert not any("pnpm-lock.yaml not found" in f.get("finding", "") for f in findings)
-
-
-def test_deduplication_collapses_sibling_findings() -> None:
-    """Identical findings across siblings are collapsed into primary."""
-    shared_finding = {
-        "rule_id": "XSTACK-001",
-        "severity": "ERROR",
-        "dimension": "cross_repo_coherence",
-        "finding": "common-typescript-utils is not declared for this TypeScript service.",
-        "suggestion": "Depend on common-typescript-utils.",
-    }
-    unique_finding = {
-        "rule_id": "FE-002",
-        "severity": "ERROR",
-        "dimension": "structural_conformance",
-        "finding": "TypeScript setup missing for React web app.",
-        "suggestion": "Add TypeScript dependency.",
-    }
-
-    findings_by_service = {
-        "deejaytools-com-api": [dict(shared_finding)],
-        "deejaytools-com-app": [dict(shared_finding), dict(unique_finding)],
-    }
-
-    result = _deduplicate_sibling_findings(findings_by_service)
-
-    primary = result["deejaytools-com-api"]
-    assert len(primary) == 1
-    assert "also affects deejaytools-com-app" in primary[0]["finding"]
-
-    sibling = result["deejaytools-com-app"]
-    assert len(sibling) == 1
-    assert sibling[0]["rule_id"] == "FE-002"
 
 
 # ── Category A: trigger cog exclusion ─────────────────────────────────────
@@ -1421,50 +1343,6 @@ def test_cd002_not_dropped_without_cd010() -> None:
     result = _deduplicate_same_repo_findings(raw_findings)
     assert len(result) == 1
     assert result[0]["rule_id"] == "CD-002"
-
-
-# ── Category C: monorepo root file fallback ───────────────────────────────
-
-
-def test_check_readme_finds_at_monorepo_root(tmp_path: Path) -> None:
-    """check_readme should not flag absence if README exists at monorepo root."""
-    app_dir = tmp_path / "apps" / "api"
-    app_dir.mkdir(parents=True)
-    monorepo_root = tmp_path
-    (monorepo_root / "README.md").write_text("# Monorepo README")
-
-    findings = check_readme(app_dir, monorepo_root=monorepo_root)
-    assert not findings, "README at monorepo root should satisfy DOC-001"
-
-
-def test_check_changelog_finds_at_monorepo_root(tmp_path: Path) -> None:
-    """check_changelog should not flag absence if CHANGELOG exists at monorepo root."""
-    app_dir = tmp_path / "apps" / "api"
-    app_dir.mkdir(parents=True)
-    (tmp_path / "CHANGELOG.md").write_text("# Changelog")
-
-    findings = check_changelog(app_dir, monorepo_root=tmp_path)
-    assert not findings, "CHANGELOG at monorepo root should satisfy DOC-003"
-
-
-def test_check_releaserc_finds_at_monorepo_root(tmp_path: Path) -> None:
-    """check_releaserc should not flag absence if .releaserc.json exists at monorepo root."""
-    app_dir = tmp_path / "apps" / "api"
-    app_dir.mkdir(parents=True)
-    (tmp_path / ".releaserc.json").write_text('{"branches": ["main"]}')
-
-    findings = check_releaserc(app_dir, monorepo_root=tmp_path)
-    assert not findings, ".releaserc.json at monorepo root should satisfy VER-003"
-
-
-def test_check_readme_flags_absent_from_both(tmp_path: Path) -> None:
-    """check_readme should flag if README absent from BOTH app dir and monorepo root."""
-    app_dir = tmp_path / "apps" / "api"
-    app_dir.mkdir(parents=True)
-    monorepo_root = tmp_path
-
-    findings = check_readme(app_dir, monorepo_root=monorepo_root)
-    assert any(f["rule_id"] == "DOC-001" for f in findings)
 
 
 # ── Evaluator.yaml / EvaluatorConfig integration ────────────────────────────
@@ -1945,80 +1823,6 @@ def test_check_eval_003_flags_trivially_short_remediation() -> None:
         findings = check_eval_003()
 
     assert any("remediation too short" in f["finding"] for f in findings)
-
-
-def test_check_mono_003_flags_duplicate_sibling_findings() -> None:
-    ecosystem = {
-        "services": [
-            {"id": "deejaytools-com-api", "monorepo": "deejaytools-com"},
-            {"id": "deejaytools-com-app", "monorepo": "deejaytools-com"},
-        ]
-    }
-
-    fake_response = {
-        "data": [
-            {
-                "repo": "deejaytools-com-api",
-                "rule_id": "XSTACK-001",
-                "finding": "common-typescript-utils not declared",
-                "standards_version": "4.0.0",
-                "run_id": "r1",
-            },
-            {
-                "repo": "deejaytools-com-app",
-                "rule_id": "XSTACK-001",
-                "finding": "common-typescript-utils not declared",
-                "standards_version": "4.0.0",
-                "run_id": "r1",
-            },
-        ],
-    }
-
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
-        findings = check_mono_003(ecosystem=ecosystem)
-
-    assert any(f["rule_id"] == "MONO-003" for f in findings)
-    assert any("2 duplicate" in f["finding"] for f in findings)
-
-
-def test_check_mono_003_ignores_single_sibling_findings() -> None:
-    ecosystem = {
-        "services": [
-            {"id": "deejaytools-com-api", "monorepo": "deejaytools-com"},
-        ]
-    }
-    fake_response = {
-        "data": [
-            {
-                "repo": "deejaytools-com-api",
-                "rule_id": "XSTACK-001",
-                "finding": "x",
-                "standards_version": "4.0.0",
-                "run_id": "r1",
-            }
-        ]
-    }
-
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
-        findings = check_mono_003(ecosystem=ecosystem)
-
-    assert findings == []
 
 
 def test_check_eval_007_flags_unimplemented_rules() -> None:

@@ -237,39 +237,6 @@ def test_normalize_finding_empty_string_values_use_sentinel() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_conformance_prompt_includes_monorepo_context(tmp_path: Path) -> None:
-    """Monorepo context block appears in the prompt when monorepo_context is provided."""
-    (tmp_path / "README.md").write_text("# Test repo\n")
-
-    monorepo_ctx = {
-        "monorepo_id": "deejaytools-com",
-        "package_manager": "pnpm",
-        "workspace_deps": ["kaiano-ts-utils"],
-        "sibling_apps": [
-            {"service_id": "deejaytools-com-api", "path": "apps/api"},
-            {"service_id": "deejaytools-com-app", "path": "apps/app"},
-        ],
-    }
-
-    prompt = build_conformance_prompt(
-        repo_id="deejaytools-com-app",
-        service_type="worker",
-        language="typescript",
-        standards_version="3.0.1",
-        deterministic_findings=[],
-        standards_rules=[],
-        monorepo_context=monorepo_ctx,
-        repo_path=tmp_path,
-    )
-
-    assert "deejaytools-com" in prompt
-    assert "pnpm" in prompt
-    assert "kaiano-ts-utils" in prompt
-    assert "XSTACK-001" in prompt
-    assert "MONO-001" in prompt
-    assert "deejaytools-com-api" in prompt
-
-
 def test_build_conformance_prompt_truncates_long_readme(tmp_path: Path) -> None:
     """README files over 4000 chars are truncated and marked as such."""
     long_readme = "# Title\n" + ("x" * 4100)

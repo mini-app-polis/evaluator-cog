@@ -320,7 +320,6 @@ def check_terraform_versions_pinned(repo_path: Path) -> list[Finding]:
 def check_ci(
     repo_path: Path,
     exceptions: frozenset[str] | None = None,
-    monorepo_root: Path | None = None,
 ) -> list[Finding]:
     """
     Runs all CI checks in one pass.
@@ -329,8 +328,7 @@ def check_ci(
     CHECK_ID = "VER-003"
     findings = []
     _exc = exceptions or frozenset()
-    ci_root = monorepo_root or repo_path
-    ci = ci_root / ".github" / "workflows" / "ci.yml"
+    ci = repo_path / ".github" / "workflows" / "ci.yml"
     if not ci.exists():
         findings.append(
             _finding(
@@ -700,13 +698,11 @@ def check_gha_not_trigger_relay(repo_path: Path) -> list[Finding]:
 def check_migration_in_ci(
     repo_path: Path,
     language: str = "python",
-    monorepo_root: Path | None = None,
 ) -> list[Finding]:
     """API-011: CI runs database migrations on deploy.
 
     Python (Alembic): ci.yml contains 'alembic upgrade head' in a deploy job.
     TypeScript (Drizzle): ci.yml contains 'drizzle-kit push' or 'drizzle-kit migrate'.
-    For monorepo services, also checks the workspace root ci.yml.
     """
     findings: list[Finding] = []
 
@@ -715,11 +711,6 @@ def check_migration_in_ci(
     if ci.exists():
         with suppress(Exception):
             ci_texts.append(ci.read_text())
-    if monorepo_root is not None:
-        root_ci = monorepo_root / ".github" / "workflows" / "ci.yml"
-        if root_ci.exists():
-            with suppress(Exception):
-                ci_texts.append(root_ci.read_text())
 
     if not ci_texts:
         findings.append(
@@ -908,15 +899,11 @@ def check_three_layer_observability(
     return findings
 
 
-def check_pnpm_lockfile(
-    repo_path: Path,
-    monorepo_root: Path | None = None,
-) -> list[Finding]:
+def check_pnpm_lockfile(repo_path: Path) -> list[Finding]:
     """XSTACK-003: pnpm for all TypeScript projects."""
     CHECK_ID = "XSTACK-003"
     findings = []
-    check_root = monorepo_root or repo_path
-    if (check_root / "package-lock.json").exists():
+    if (repo_path / "package-lock.json").exists():
         findings.append(
             _finding(
                 "XSTACK-003",
@@ -926,7 +913,7 @@ def check_pnpm_lockfile(
                 "Migrate to pnpm: remove package-lock.json, run pnpm install, commit pnpm-lock.yaml.",
             )
         )
-    if (check_root / "yarn.lock").exists():
+    if (repo_path / "yarn.lock").exists():
         findings.append(
             _finding(
                 "XSTACK-003",
@@ -936,7 +923,7 @@ def check_pnpm_lockfile(
                 "Migrate to pnpm: remove yarn.lock, run pnpm install, commit pnpm-lock.yaml.",
             )
         )
-    if not (check_root / "pnpm-lock.yaml").exists():
+    if not (repo_path / "pnpm-lock.yaml").exists():
         findings.append(
             _finding(
                 "XSTACK-003",

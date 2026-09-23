@@ -178,22 +178,6 @@ def test_cd017_flags_every_broken_key_at_once(tmp_path: Path) -> None:
     assert len(findings) == 3
 
 
-def test_cd017_prefers_monorepo_path_over_repo_root(tmp_path: Path) -> None:
-    _railway(tmp_path, _good_deploy())
-    service = tmp_path / "services" / "api"
-    service.mkdir(parents=True)
-    _railway(service, {"deploy": {"restartPolicyType": "NEVER"}})
-    findings = check_cd_017(tmp_path, monorepo_path=service)
-    assert "NEVER" in _blob(findings)
-
-
-def test_cd017_falls_back_to_repo_root_for_monorepo_service(tmp_path: Path) -> None:
-    _railway(tmp_path, _good_deploy())
-    service = tmp_path / "services" / "api"
-    service.mkdir(parents=True)
-    assert check_cd_017(tmp_path, monorepo_path=service) == []
-
-
 # --- CD-022 ------------------------------------------------------------------
 
 _DIGEST_A = "sha256:" + "1" * 64
@@ -481,17 +465,17 @@ def test_cd024_remediation_strings_are_concrete(tmp_path: Path) -> None:
 def test_rel_never_renders_the_runs_temp_directory(tmp_path: Path) -> None:
     """A descriptor outside repo_path must not surface an absolute path.
 
-    The monorepo case: the descriptor sits at the monorepo root while the
-    service is evaluated at apps/<name>, so relative_to raises. Returning
+    When the descriptor is not below the path it is rendered against,
+    relative_to raises. Returning
     the absolute path put the run's temp download directory into the
     finding text — a different string every run, which means the finding
     can never be recognised as a repeat of itself.
     """
     from evaluator_cog.engine.deterministic.containers import _rel
 
-    monorepo_root = tmp_path / "tmpx3jsz49m" / "deejaytools-com"
-    service_root = monorepo_root / "apps" / "api"
-    descriptor = monorepo_root / "railway.toml"
+    repo_root = tmp_path / "tmpx3jsz49m" / "deejaytools-com"
+    service_root = repo_root / "apps" / "api"
+    descriptor = repo_root / "railway.toml"
 
     rendered = _rel(descriptor, service_root)
 

@@ -146,7 +146,7 @@ _FAKE_CATALOG = {
             "modifies": [],
             "status": "requirement",
         },
-        "MONO-001": {
+        "MOD-001": {
             "applies_to": ["api-service", "react-app"],
             "modifies": ["XSTACK-001"],
             "status": "requirement",
@@ -256,7 +256,7 @@ def test_dispatch_rule_modifier() -> None:
     cfg = _cfg_with_catalog(repo_type="api-service")
     result = cfg.resolve_dispatch("XSTACK-001")
     assert result.disposition.value == "run_modified"
-    assert result.modifier_rule_id == "MONO-001"
+    assert result.modifier_rule_id == "MOD-001"
 
 
 def test_dispatch_default_when_nothing_matches() -> None:

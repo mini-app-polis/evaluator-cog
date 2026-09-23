@@ -214,10 +214,8 @@ def _tracked_paths(repo_path: Path) -> set[str] | None:
     (the zipball download path), or git failed — and callers must not
     read that as "nothing is tracked".
 
-    The .git directory is looked for upward, not only at ``repo_path``:
-    a monorepo service is checked at ``apps/api`` while the working tree
-    lives at the repo root, and asking only at the service directory
-    would answer "cannot say" for every monorepo.
+    The .git directory is looked for upward, not only at ``repo_path``,
+    so a check handed a subdirectory still finds the working tree.
     """
     root: Path | None = None
     for candidate in (repo_path, *repo_path.parents):

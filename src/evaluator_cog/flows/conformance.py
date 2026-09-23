@@ -31,8 +31,8 @@ mode='llm':
   run_id prefix: 'conformance-{version}-{uuid}'
 
 The sweep additionally runs the applies_to-absent checks once per pass:
-  EVAL-003 and MONO-003 post with source='data_quality' (runtime
-  data-quality on stored findings and on the ecosystem inventory).
+  EVAL-003 posts with source='data_quality' (runtime data-quality on
+  stored findings).
   EVAL-007 posts with source='standards_drift' (catalog vs evaluator).
 These have no repository to attach to, so a per-repository invoke is not
 a place they could run.
@@ -226,7 +226,7 @@ class RunContext:
     #: a flagged one twice when two things went wrong with it.
     #:
     #: Holds whatever string the call site had — a declared service id in
-    #: most places, a monorepo repo name in :func:`_download_repo`. Only
+    #: most places, a repo name in :func:`_download_repo`. Only
     #: the intersection with declared service ids is ever counted, so the
     #: entries that name no service are ignored rather than skewing the
     #: total.
@@ -453,20 +453,6 @@ def _get_standards_version(*, ctx: RunContext) -> str:
     return version
 
 
-def _read_workspace_package_json(monorepo_root: Path) -> str:
-    """
-    Read the workspace root package.json text for XSTACK-001 monorepo check.
-    Returns empty string if not found.
-    """
-    pkg = monorepo_root / "package.json"
-    if pkg.exists():
-        try:
-            return pkg.read_text().lower()
-        except Exception:
-            pass
-    return ""
-
-
 def _fetch_catalog_schema(*, ctx: RunContext) -> dict:
     """Traits, repo types and statuses, in the shapes the dispatcher expects.
 
@@ -600,56 +586,6 @@ def _parse_check_exceptions(raw: list) -> tuple[list[str], dict[str, str]]:
                 if reason:
                     exception_reasons[rule_id] = reason
     return exception_ids, exception_reasons
-
-
-def _deduplicate_sibling_findings(
-    findings_by_service: dict[str, list[dict]],
-) -> dict[str, list[dict]]:
-    """
-    Given findings keyed by service_id, collapse findings that are identical
-    across siblings (same rule_id + same finding text) into the first sibling's
-    list only, tagged with a note that the sibling shares the same issue.
-
-    This keeps the API payload unchanged — we post to the first sibling's repo
-    with an updated finding text that names the affected sibling, and skip
-    posting the duplicate to the second sibling entirely.
-
-    Example: both deejaytools-com-api and deejaytools-com-app fail XSTACK-001
-    with identical finding text. Result: one finding posted under
-    deejaytools-com-api mentioning deejaytools-com-app, nothing posted under
-    deejaytools-com-app for that rule.
-    """
-    if len(findings_by_service) < 2:
-        return findings_by_service
-
-    service_ids = list(findings_by_service.keys())
-    primary_id = service_ids[0]
-    sibling_ids = service_ids[1:]
-
-    primary_index: dict[tuple[str, str], dict] = {}
-    for f in findings_by_service[primary_id]:
-        key = (str(f.get("rule_id", "")), str(f.get("finding", "")))
-        primary_index[key] = f
-
-    deduplicated = {
-        sid: list(findings) for sid, findings in findings_by_service.items()
-    }
-
-    for sibling_id in sibling_ids:
-        remaining = []
-        for f in findings_by_service[sibling_id]:
-            key = (str(f.get("rule_id", "")), str(f.get("finding", "")))
-            if key in primary_index:
-                primary_f = primary_index[key]
-                existing_finding = primary_f.get("finding", "")
-                tag = f"(also affects {sibling_id})"
-                if tag not in existing_finding:
-                    primary_f["finding"] = existing_finding + f" {tag}"
-            else:
-                remaining.append(f)
-        deduplicated[sibling_id] = remaining
-
-    return deduplicated
 
 
 #: Attempts per repo download, including the first. GitHub's secondary
@@ -896,9 +832,6 @@ def run_conformance_check(
     exception_reasons: dict[str, str] | None = None,
     standards_rules: list[dict] | None = None,
     run_id: str = "conformance",
-    monorepo_root: Path | None = None,
-    workspace_package_json_text: str | None = None,
-    monorepo_context: dict | None = None,
     post: bool = True,
     post_llm_only: bool = False,
     evaluator_config: EvaluatorConfig | None = None,
@@ -925,8 +858,6 @@ def run_conformance_check(
             cog_subtype=cog_subtype,
             check_exceptions=check_exceptions,
             exception_reasons=exception_reasons,
-            monorepo_root=monorepo_root,
-            workspace_package_json_text=workspace_package_json_text,
             evaluator_config=evaluator_config,
             rule_catalog=rule_catalog,
             catalog_schema=catalog_schema,
@@ -968,7 +899,6 @@ def run_conformance_check(
                 all_skipped_ids=evaluator_config.all_skipped_ids
                 if evaluator_config is not None
                 else None,
-                monorepo_context=monorepo_context,
                 repo_path=repo_path,
             )
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
@@ -1071,19 +1001,10 @@ def _run_standalone_conformance(
     rule_applies_to: dict[str, list[str]] | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
-    monorepo_root: Path | None = None,
-    workspace_package_json_text: str | None = None,
-    monorepo_context: dict | None = None,
     *,
     ctx: RunContext,
 ) -> None:
-    """Run full conformance for a single cloned service (posts immediately).
-
-    The monorepo parameters are pass-through. They exist so one function
-    serves both shapes — the monorepo branch of the flow used to call
-    ``run_conformance_check`` directly with them, which is how the two
-    paths drifted apart.
-    """
+    """Run full conformance for a single cloned service (posts immediately)."""
     repo_id = service.get("id", "")
     if not repo_id:
         return
@@ -1096,26 +1017,15 @@ def _run_standalone_conformance(
     check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
 
     # evaluator.yaml from the cloned repo, falling back to the ecosystem
-    # record. A monorepo app prefers the workspace root and falls back to
-    # its own path.
-    check_root = monorepo_root or repo_path
+    # record.
     evaluator_cfg = load_evaluator_config(
-        check_root,
+        repo_path,
         fallback_type=service.get("type") or dod_type,
         fallback_exceptions=check_exceptions,
         fallback_exception_reasons=exception_reasons,
         rule_catalog=rule_catalog,
         catalog_schema=catalog_schema,
     )
-    if monorepo_root and not (check_root / "evaluator.yaml").exists():
-        evaluator_cfg = load_evaluator_config(
-            repo_path,
-            fallback_type=service.get("type") or dod_type,
-            fallback_exceptions=check_exceptions,
-            fallback_exception_reasons=exception_reasons,
-            rule_catalog=rule_catalog,
-            catalog_schema=catalog_schema,
-        )
 
     standards_rules = _fetch_standards_for_service(service, evaluator_cfg, ctx=ctx)
     try:
@@ -1132,9 +1042,6 @@ def _run_standalone_conformance(
             exception_reasons=exception_reasons,
             standards_rules=standards_rules,
             run_id=run_id,
-            monorepo_root=monorepo_root,
-            workspace_package_json_text=workspace_package_json_text,
-            monorepo_context=monorepo_context,
             post=True,
             post_llm_only=True,
             evaluator_config=evaluator_cfg,
@@ -1280,8 +1187,6 @@ def _evaluate_service_deterministic(
     standards_version: str,
     run_id: str,
     prefect_log: Any,
-    monorepo_root: Path | None = None,
-    workspace_package_json_text: str | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
     *,
@@ -1293,12 +1198,8 @@ def _evaluate_service_deterministic(
     evaluated — in which case a not-evaluated row has already been posted,
     so the caller has nothing left to report.
 
-    Computing and delivering are separate because a monorepo cannot post as
-    it goes: sibling deduplication needs every service's findings before
-    any of them are sent. Splitting here is what lets one implementation
-    serve both shapes, rather than the monorepo path carrying its own copy
-    of this logic — which is where it lived, and where it had drifted into
-    swallowing a raising check.
+    Computing and delivering are separate so the caller decides when
+    findings are sent.
     """
     repo_id = service.get("id", "")
     if not repo_id:
@@ -1313,26 +1214,15 @@ def _evaluate_service_deterministic(
     check_exceptions, exception_reasons = _parse_check_exceptions(raw_exc)
 
     # evaluator.yaml from the cloned repo, falling back to the ecosystem
-    # record. For a monorepo app the root is preferred and the app path is
-    # the fallback, since a workspace usually governs its apps.
-    check_root = monorepo_root or repo_path
+    # record.
     evaluator_cfg = load_evaluator_config(
-        check_root,
+        repo_path,
         fallback_type=service.get("type") or dod_type,
         fallback_exceptions=check_exceptions,
         fallback_exception_reasons=exception_reasons,
         rule_catalog=rule_catalog,
         catalog_schema=catalog_schema,
     )
-    if monorepo_root and not (check_root / "evaluator.yaml").exists():
-        evaluator_cfg = load_evaluator_config(
-            repo_path,
-            fallback_type=service.get("type") or dod_type,
-            fallback_exceptions=check_exceptions,
-            fallback_exception_reasons=exception_reasons,
-            rule_catalog=rule_catalog,
-            catalog_schema=catalog_schema,
-        )
 
     prefect_log.info(
         "deterministic: %s using config from %s", repo_id, evaluator_cfg.source
@@ -1348,8 +1238,6 @@ def _evaluate_service_deterministic(
             cog_subtype=cog_subtype,
             check_exceptions=check_exceptions,
             exception_reasons=exception_reasons,
-            monorepo_root=monorepo_root,
-            workspace_package_json_text=workspace_package_json_text,
             evaluator_config=evaluator_cfg,
             rule_catalog=rule_catalog,
             catalog_schema=catalog_schema,
@@ -1388,8 +1276,6 @@ def _run_standalone_deterministic(
     standards_version: str,
     run_id: str,
     prefect_log: Any,
-    monorepo_root: Path | None = None,
-    workspace_package_json_text: str | None = None,
     rule_applies_to: dict[str, list[str]] | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
@@ -1398,8 +1284,7 @@ def _run_standalone_deterministic(
 ) -> None:
     """Evaluate one service and post immediately.
 
-    The standalone shape: nothing to deduplicate against, so compute and
-    deliver in one step.
+    Computes and delivers in one step.
     """
     repo_id = service.get("id", "")
     if not repo_id:
@@ -1410,8 +1295,6 @@ def _run_standalone_deterministic(
         standards_version,
         run_id,
         prefect_log,
-        monorepo_root=monorepo_root,
-        workspace_package_json_text=workspace_package_json_text,
         rule_catalog=rule_catalog,
         catalog_schema=catalog_schema,
         ctx=ctx,
@@ -1430,10 +1313,10 @@ def _run_standalone_deterministic(
 
 
 #: How many checks carry ``applies_to: None`` (ADR-004): EVAL-003,
-#: MONO-003, XSTACK-006, XSTACK-007, XSTACK-008 and EVAL-007. Declared so
-#: a run can say "five of six ran" rather than reporting a partial pass as
-#: a whole one. Adding a check to the lane means changing this too.
-_APPLIES_TO_ABSENT_CHECKS = 6
+#: XSTACK-006, XSTACK-007, XSTACK-008 and EVAL-007. Declared so a run can
+#: say "four of five ran" rather than reporting a partial pass as a whole
+#: one. Adding a check to the lane means changing this too.
+_APPLIES_TO_ABSENT_CHECKS = 5
 
 
 def _run_applies_to_absent_checks(
@@ -1450,14 +1333,13 @@ def _run_applies_to_absent_checks(
 
     Returns how many of them completed. Each is wrapped individually — a
     check that raises is logged and the rest still run — so the count is
-    the only thing that distinguishes "six checks found nothing" from "six
+    the only thing that distinguishes "five checks found nothing" from "five
     checks all blew up", which are the same silence from outside.
     """
     completed = 0
     from evaluator_cog.engine.deterministic import (
         check_eval_003,
         check_eval_007,
-        check_mono_003,
         check_xstack_006,
         check_xstack_007,
         check_xstack_008,
@@ -1482,25 +1364,6 @@ def _run_applies_to_absent_checks(
     except Exception as exc:
         prefect_log.warning("EVAL-003: check failed: %s", exc)
 
-    # MONO-003 — monorepo dedup integrity of ecosystem.yaml inventory
-    try:
-        mono_003_findings = check_mono_003(ecosystem=ecosystem)
-        if mono_003_findings:
-            _post_tracked(
-                "MONO-003",
-                prefect_log,
-                ctx=ctx,
-                findings=mono_003_findings,
-                run_id=run_id,
-                repo="ecosystem-standards",
-                flow_name="mono-003",
-                source="data_quality",
-                standards_version=standards_version,
-            )
-        completed += 1
-    except Exception as exc:
-        prefect_log.warning("MONO-003: check failed: %s", exc)
-
     # XSTACK-006 / XSTACK-007 — cross-repo coherence.
     #
     # Both carry `applies_to: None`, so resolve_dispatch returns
@@ -1508,7 +1371,7 @@ def _run_applies_to_absent_checks(
     # per-repo path. That is correct: their read sources are the GitHub
     # org listing and the ecosystem.yaml registry, not any one repo's
     # source tree. This lane is where a rule with no single repo subject
-    # belongs, which is why EVAL-003 and MONO-003 already live here.
+    # belongs, which is why EVAL-003 already lives here.
     #
     # The registry passed in is the one fetched for this run, not a
     # cached copy — XSTACK-006 requires reading it at the version under
@@ -1606,12 +1469,7 @@ class EvaluationEvent:
     scheduled sweep and an HTTP invoke without knowing which it is.
 
     A repository, not a service: ``services`` is every service the
-    repository carries, so a monorepo is one event covering all of its
-    apps. That is not a convenience. Sibling deduplication treats an
-    identical finding on two apps as one issue, and it cannot know that
-    until every app in the workspace has been evaluated — so they have to
-    arrive together or not at all. A standalone repo is the same shape
-    with one service in it.
+    repository carries — in practice, one.
     """
 
     org: str
@@ -1620,8 +1478,6 @@ class EvaluationEvent:
     services: tuple[dict, ...]
     run_id: str
     mode: str = "deterministic"
-    #: The monorepo registry record, when this repository is one.
-    monorepo: dict | None = None
     #: The catalog version the dispatcher pinned, when it pinned one.
     #:
     #: Empty for a release-triggered evaluation, which resolves the
@@ -1701,9 +1557,7 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
         root = _download_repo(event.repo, tmp_dir, event.ref, event.org, ctx=ctx)
         if root is None:
             # One failed download hides every service inside it. The row
-            # goes against each of them rather than against the repository,
-            # which for a monorepo is not something the report has a column
-            # for.
+            # goes against each of them rather than against the repository.
             for service_id in service_ids:
                 log.warning(
                     "%s: skipping %s — could not download %s@%s",
@@ -1744,58 +1598,11 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                 result.not_evaluated.append(service_id)
             return result
 
-        monorepo_root = root if event.monorepo else None
-        workspace_package_json_text = (
-            _read_workspace_package_json(root) if event.monorepo else None
-        )
-        monorepo_context = (
-            {
-                "monorepo_id": event.monorepo.get("id"),
-                "package_manager": event.monorepo.get("package_manager", "pnpm"),
-                "workspace_deps": event.monorepo.get("workspace_deps", []),
-                "sibling_apps": [
-                    {
-                        "service_id": app.get("service_id") or app.get("id"),
-                        "path": app.get("path"),
-                    }
-                    for app in event.monorepo.get("apps", [])
-                ],
-            }
-            if event.monorepo
-            else None
-        )
-
         findings_by_service: dict[str, list[dict[str, Any]]] = {}
 
         for service in event.services:
             service_id = str(service.get("id") or "")
             if not service_id:
-                continue
-
-            service_path = str(service.get("monorepo_path") or "")
-            repo_path = root / service_path if service_path else root
-
-            if not repo_path.is_dir():
-                log.warning(
-                    "%s: declared path '%s' not found in %s for %s",
-                    event.mode,
-                    service_path,
-                    event.repo,
-                    service_id,
-                )
-                _report_issue("declared_path_missing", service_id, ctx=ctx)
-                _post_not_evaluated(
-                    service_id,
-                    f"its declared path '{service_path}' does not exist in "
-                    f"{event.repo}",
-                    ctx=ctx,
-                    run_id=event.run_id,
-                    flow_name=flow_name,
-                    source=source,
-                    standards_version=standards_version,
-                    prefect_log=log,
-                )
-                result.not_evaluated.append(service_id)
                 continue
 
             log.info("%s: processing %s", event.mode, service_id)
@@ -1804,28 +1611,23 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                 if run_llm:
                     _run_standalone_conformance(
                         service,
-                        repo_path,
+                        root,
                         standards_version,
                         event.run_id,
                         log,
                         rule_applies_to=rule_applies_to,
                         rule_catalog=rule_catalog,
                         catalog_schema=catalog_schema,
-                        monorepo_root=monorepo_root,
-                        workspace_package_json_text=workspace_package_json_text,
-                        monorepo_context=monorepo_context,
                         ctx=ctx,
                     )
                     result.evaluated.append(service_id)
                 else:
                     computed = _evaluate_service_deterministic(
                         service,
-                        repo_path,
+                        root,
                         standards_version,
                         event.run_id,
                         log,
-                        monorepo_root=monorepo_root,
-                        workspace_package_json_text=workspace_package_json_text,
                         rule_catalog=rule_catalog,
                         catalog_schema=catalog_schema,
                         ctx=ctx,
@@ -1861,12 +1663,6 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                 result.not_evaluated.append(service_id)
 
         if not run_llm:
-            # Deduplicate before delivering: an identical finding on two
-            # siblings is one issue, and that is only knowable once every
-            # sibling has run. A single-service repository falls straight
-            # through.
-            if len(findings_by_service) > 1:
-                findings_by_service = _deduplicate_sibling_findings(findings_by_service)
             for service_id, service_findings in findings_by_service.items():
                 _post_service_findings(
                     service_id,
@@ -1958,7 +1754,7 @@ def run_introspection(
 ) -> None:
     """Run the checks that are scoped to no repository at all.
 
-    EVAL-003, MONO-003, XSTACK-006, XSTACK-007, XSTACK-008 and EVAL-007
+    EVAL-003, XSTACK-006, XSTACK-007, XSTACK-008 and EVAL-007
     carry ``applies_to: None`` (ADR-004). They grade the inventory, the
     stored findings and the catalog itself, so there is no per-repository
     invocation any of them belongs to — which is why they lived at the tail

@@ -27,7 +27,7 @@ evaluator-cog/
           config.py             # env vars / settings / shared-library use
           testing.py            # TestClient / fixtures / mock / respx
           meta.py               # META-001..007 — catalog self-checks
-          introspection.py      # EVAL-003, MONO-003, EVAL-007
+          introspection.py      # EVAL-003, EVAL-007
         llm.py              # soft rule assessment, prompt builders, response parsing
         evaluator_config.py # per-repo evaluator.yaml loader
         api_client.py       # posts findings to api-kaianolevine-com
@@ -42,9 +42,9 @@ evaluator-cog/
 | `conformance` (deterministic) | `conformance_deterministic` | `POST /invoke` on a repository's release, or `POST /sweep` (`mode='deterministic'`) | Structural — file/AST/YAML rule checks |
 | `conformance` (LLM) | `conformance_llm` | `POST /invoke` or `POST /sweep` with `mode='llm'` | Structural — soft rule assessment by Claude |
 | introspection (EVAL-007) | `standards_drift` | Runs once per **sweep** | Catalog vs evaluator drift |
-| introspection (EVAL-003, MONO-003) | `data_quality` | Runs once per **sweep** | Quality of stored findings; ecosystem.yaml inventory integrity |
+| introspection (EVAL-003) | `data_quality` | Runs once per **sweep** | Quality of stored findings |
 
-The three introspection checks scope to no repository (ADR-004 in
+The two introspection checks scope to no repository (ADR-004 in
 ecosystem-standards), so a per-repository `/invoke` is not a place they could run.
 They go with the sweep, which is what a standards-catalog or evaluator release
 triggers.
