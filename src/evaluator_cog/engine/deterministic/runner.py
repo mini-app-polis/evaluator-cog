@@ -50,6 +50,7 @@ from evaluator_cog.engine.deterministic.containers import (
 )
 from evaluator_cog.engine.deterministic.delivery import (
     check_canonical_ci_job_names,
+    check_cd_031,
     check_ci,
     check_gha_not_trigger_relay,
     check_migration_in_ci,
@@ -845,6 +846,9 @@ def run_all_checks(
 
     # cd_readiness — packaging.
     _run(check_cd_020, "CD-020")
+
+    # cd_readiness — a release requests its own evaluation.
+    _run(check_cd_031, "CD-031")
 
     # structural_conformance — the identity contract. CD-019 is the
     # caller's side and needs the resolved repo type to tell a caller from

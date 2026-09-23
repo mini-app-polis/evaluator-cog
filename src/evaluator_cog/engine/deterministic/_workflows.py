@@ -89,6 +89,8 @@ class Job:
     job_id: str
     uses: str = ""
     continue_on_error: bool = False
+    #: Job ids this job waits for. ``needs:`` may be a string or a list.
+    needs: list[str] = field(default_factory=list)
     steps: list[Step] = field(default_factory=list)
 
 
@@ -171,11 +173,19 @@ def load_workflows(repo_path: Path) -> list[Workflow]:
                 if not isinstance(job_data, dict):
                     continue
                 job_coe = _truthy(job_data.get("continue-on-error"))
+                raw_needs = job_data.get("needs")
+                if isinstance(raw_needs, str):
+                    needs = [raw_needs]
+                elif isinstance(raw_needs, list):
+                    needs = [str(n) for n in raw_needs if isinstance(n, str)]
+                else:
+                    needs = []
                 job = Job(
                     workflow=rel,
                     job_id=str(job_id),
                     uses=str(job_data.get("uses") or ""),
                     continue_on_error=job_coe,
+                    needs=needs,
                 )
                 raw_steps = job_data.get("steps")
                 if isinstance(raw_steps, list):
