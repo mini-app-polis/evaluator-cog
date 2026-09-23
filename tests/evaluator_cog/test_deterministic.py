@@ -769,6 +769,39 @@ def test_check_tailwind_and_shadcn_and_forms() -> None:
     assert check_react_hook_form_zod(passing) == []
 
 
+def test_check_tailwind_accepts_tailwind_4_css_import() -> None:
+    """Tailwind 4 has no config file; the CSS import is the configuration."""
+    repo = _make_repo(
+        {
+            "package.json": '{"dependencies":{"tailwindcss":"4"}}\n',
+            "src/index.css": "@import 'tailwindcss';\n",
+        }
+    )
+    assert check_tailwind(repo) == []
+
+
+def test_check_tailwind_accepts_tailwind_4_vite_plugin() -> None:
+    repo = _make_repo(
+        {
+            "package.json": (
+                '{"dependencies":{"tailwindcss":"4","@tailwindcss/vite":"4"}}\n'
+            ),
+        }
+    )
+    assert check_tailwind(repo) == []
+
+
+def test_check_tailwind_still_flags_the_dependency_alone() -> None:
+    """A dependency with no configuration of either kind is not a setup."""
+    repo = _make_repo(
+        {
+            "package.json": '{"dependencies":{"tailwindcss":"4"}}\n',
+            "src/index.css": "body { margin: 0; }\n",
+        }
+    )
+    assert any(f["rule_id"] == "FE-003" for f in check_tailwind(repo))
+
+
 def test_check_shared_library_python_flags_missing() -> None:
     repo = _make_repo({"pyproject.toml": "[project]\nname='x'\n"})
     findings = check_shared_library_used(repo, language="python")

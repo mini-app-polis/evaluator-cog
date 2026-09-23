@@ -67,8 +67,38 @@ def check_vite_react_ts(repo_path: Path) -> list[Finding]:
     return findings
 
 
+#: Tailwind 4 is configured in CSS rather than a tailwind.config.* file:
+#: ``@import "tailwindcss"`` in a stylesheet, wired into the build by the
+#: Vite or PostCSS plugin.
+_TAILWIND_V4_PLUGINS = ("@tailwindcss/vite", "@tailwindcss/postcss")
+_TAILWIND_V4_IMPORT = re.compile(r"""@import\s+["']tailwindcss["']""")
+
+
+def _has_tailwind_v4_setup(repo_path: Path, pkg_text: str) -> bool:
+    """True when the repo configures Tailwind 4 the CSS-first way."""
+    if any(plugin in pkg_text for plugin in _TAILWIND_V4_PLUGINS):
+        return True
+    src = repo_path / "src"
+    if not src.is_dir():
+        return False
+    for css in src.rglob("*.css"):
+        if "node_modules" in css.parts:
+            continue
+        with suppress(OSError, UnicodeDecodeError):
+            if _TAILWIND_V4_IMPORT.search(css.read_text(encoding="utf-8")):
+                return True
+    return False
+
+
 def check_tailwind(repo_path: Path) -> list[Finding]:
-    """FE-003: Tailwind CSS for styling."""
+    """FE-003: Tailwind CSS for styling.
+
+    A setup counts when ``tailwindcss`` is a dependency and it is configured
+    either the Tailwind 3 way (a ``tailwind.config.*`` file, or
+    ``@astrojs/tailwind``) or the Tailwind 4 way (the Vite or PostCSS plugin,
+    or ``@import "tailwindcss"`` in a stylesheet). Tailwind 4 has no config
+    file, so requiring one reported every upgraded app as having no Tailwind.
+    """
     CHECK_ID = "FE-003"
     findings = []
     pkg = repo_path / "package.json"
@@ -87,6 +117,7 @@ def check_tailwind(repo_path: Path) -> list[Finding]:
         or (repo_path / "tailwind.config.ts").exists()
         or (repo_path / "tailwind.config.mjs").exists()
         or has_astro_tailwind
+        or _has_tailwind_v4_setup(repo_path, pkg_text)
     )
     has_tailwind_signal = '"tailwindcss"' in pkg_text or has_astro_tailwind
     if not has_tailwind_signal or not has_cfg:
@@ -96,7 +127,9 @@ def check_tailwind(repo_path: Path) -> list[Finding]:
                 "WARN",
                 "structural_conformance",
                 "Tailwind CSS setup is incomplete or absent.",
-                "Add tailwindcss dependency and tailwind.config.*.",
+                "Add the tailwindcss dependency and configure it: a "
+                'tailwind.config.* (Tailwind 3) or @import "tailwindcss" '
+                "in a stylesheet with @tailwindcss/vite (Tailwind 4).",
             )
         )
     if "styled-components" in pkg_text or "emotion" in pkg_text:
