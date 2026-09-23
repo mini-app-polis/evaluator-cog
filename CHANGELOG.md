@@ -1,3 +1,10 @@
+# [3.44.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.43.0...v3.44.0) (2026-09-23)
+
+
+### Features
+
+* **checks:** check CD-029 and CD-030 separately from CD-019 ([b5f4eef](https://github.com/mini-app-polis/evaluator-cog/commit/b5f4eef8561b2a3f510cf19fc582f3a7f5c14dd6))
+
 # [3.43.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.42.0...v3.43.0) (2026-09-23)
 
 
