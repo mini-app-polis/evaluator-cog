@@ -1,3 +1,10 @@
+## [3.45.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.45.0...v3.45.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **checks:** accept a local evaluate.yml call in CD-031 ([d90d736](https://github.com/mini-app-polis/evaluator-cog/commit/d90d736e06b4c7abdb21ae06a84e27b68d82735c))
+
 # [3.45.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.44.0...v3.45.0) (2026-09-23)
 
 
