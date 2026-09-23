@@ -77,7 +77,7 @@ def check_split_package_identity(repo_path: Path) -> list[Finding]:
     """DOC-009: Split package identity documented at entry point."""
     CHECK_ID = "DOC-009"
 
-    findings = []
+    findings: list[Finding] = []
     pyproject = repo_path / "pyproject.toml"
     src = repo_path / "src"
     readme = repo_path / "README.md"
@@ -123,7 +123,7 @@ def check_readme_running_locally(
 ) -> list[Finding]:
     """DOC-013: README Running locally section is complete."""
     CHECK_ID = "DOC-013"
-    findings = []
+    findings: list[Finding] = []
     readme = repo_path / "README.md"
     if not readme.exists():
         return findings

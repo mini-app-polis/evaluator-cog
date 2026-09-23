@@ -25,7 +25,7 @@ def check_healthchecks_integration(
 ) -> list[Finding]:
     """CD-007: Healthchecks.io for trigger cogs."""
     CHECK_ID = "CD-007"
-    findings = []
+    findings: list[Finding] = []
     if cog_subtype != "trigger":
         return findings
     env_example = repo_path / ".env.example"

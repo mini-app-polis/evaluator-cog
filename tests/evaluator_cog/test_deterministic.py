@@ -693,8 +693,100 @@ def test_check_respx_passes_when_present_and_mocked() -> None:
     assert check_respx_for_http_mocking(repo) == []
 
 
-def test_check_mypy_in_ci_skips_when_no_tool_mypy() -> None:
-    repo = _make_repo({"pyproject.toml": "[project]\nname='x'\n"})
+_MYPY_CONFIG = "[project]\nname='x'\n[tool.mypy]\npython_version='3.11'\n"
+_NO_MYPY_CONFIG = "[project]\nname='x'\n"
+_CI_NO_MYPY = "name: CI\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+_CI_INLINE_MYPY = (
+    "name: CI\njobs:\n  test:\n    steps:\n      - run: uv run mypy src/\n"
+)
+_CI_SHARED_MYPY = (
+    "name: CI\njobs:\n  test:\n"
+    "    uses: mini-app-polis/.github/.github/workflows/python-test.yml@v3\n"
+    '    with:\n      typecheck: "uv run mypy src/"\n'
+)
+
+
+def test_check_mypy_in_ci_flags_repo_with_no_config_and_no_ci_step() -> None:
+    """The case the old [tool.mypy] gate made invisible."""
+    repo = _make_repo(
+        {
+            "pyproject.toml": _NO_MYPY_CONFIG,
+            ".github/workflows/ci.yml": _CI_NO_MYPY,
+        }
+    )
+    findings = check_mypy_in_ci(repo)
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "TEST-012"
+    assert findings[0]["finding"].startswith("Nothing typechecks this repo")
+    assert "exemption" in findings[0]["suggestion"]
+
+
+def test_check_mypy_in_ci_flags_repo_with_no_workflows_at_all() -> None:
+    repo = _make_repo({"pyproject.toml": _NO_MYPY_CONFIG})
+    findings = check_mypy_in_ci(repo)
+    assert [f["finding"][:25] for f in findings] == ["Nothing typechecks this r"]
+
+
+def test_check_mypy_in_ci_flags_ci_step_without_config() -> None:
+    """Running mypy on its defaults pins nothing about what is checked."""
+    repo = _make_repo(
+        {
+            "pyproject.toml": _NO_MYPY_CONFIG,
+            ".github/workflows/ci.yml": _CI_INLINE_MYPY,
+        }
+    )
+    findings = check_mypy_in_ci(repo)
+    assert len(findings) == 1
+    assert "nothing pins what is checked" in findings[0]["finding"]
+
+
+def test_check_mypy_in_ci_passes_inline_step_with_config() -> None:
+    repo = _make_repo(
+        {
+            "pyproject.toml": _MYPY_CONFIG,
+            ".github/workflows/ci.yml": _CI_INLINE_MYPY,
+        }
+    )
+    assert check_mypy_in_ci(repo) == []
+
+
+def test_check_mypy_in_ci_passes_shared_workflow_typecheck_input() -> None:
+    repo = _make_repo(
+        {
+            "pyproject.toml": _MYPY_CONFIG,
+            ".github/workflows/ci.yml": _CI_SHARED_MYPY,
+        }
+    )
+    assert check_mypy_in_ci(repo) == []
+
+
+def test_check_mypy_in_ci_ignores_mypy_mentioned_only_in_a_comment() -> None:
+    repo = _make_repo(
+        {
+            "pyproject.toml": _MYPY_CONFIG,
+            ".github/workflows/ci.yml": "# TODO: add mypy\n" + _CI_NO_MYPY,
+        }
+    )
+    findings = check_mypy_in_ci(repo)
+    assert len(findings) == 1
+    assert "is configured but mypy is not run" in findings[0]["finding"]
+
+
+def test_check_mypy_in_ci_ignores_commented_out_tool_mypy() -> None:
+    repo = _make_repo(
+        {
+            "pyproject.toml": "[project]\nname='x'\n# [tool.mypy]\n",
+            ".github/workflows/ci.yml": _CI_INLINE_MYPY,
+        }
+    )
+    findings = check_mypy_in_ci(repo)
+    assert len(findings) == 1
+    assert "nothing pins what is checked" in findings[0]["finding"]
+
+
+def test_check_mypy_in_ci_skips_repo_without_pyproject() -> None:
+    """A TypeScript shared-library is in applies_to scope but not Python."""
+    repo = _make_repo({"package.json": '{"name":"lib"}\n'})
     assert check_mypy_in_ci(repo) == []
 
 
@@ -706,7 +798,9 @@ def test_check_mypy_in_ci_flags_missing_ci_step() -> None:
         }
     )
     findings = check_mypy_in_ci(repo)
-    assert any(f["rule_id"] == "TEST-012" for f in findings)
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "TEST-012"
+    assert "is configured but mypy is not run" in findings[0]["finding"]
 
 
 def test_check_astro_framework_flags_missing_package() -> None:

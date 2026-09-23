@@ -159,7 +159,7 @@ def _delegates_coverage(repo_path: Path) -> bool:
 def check_pytest_coverage_in_ci(repo_path: Path) -> list[Finding]:
     """TEST-006: pytest coverage measured in CI, inline or by delegation."""
     CHECK_ID = "TEST-006"
-    findings = []
+    findings: list[Finding] = []
     ci = repo_path / ".github" / "workflows" / "ci.yml"
     if not ci.exists():
         return findings
@@ -390,7 +390,7 @@ def check_no_print_statements(repo_path: Path) -> list[Finding]:
     """CD-003: No print() statements in production code paths."""
     CHECK_ID = "CD-003"
 
-    findings = []
+    findings: list[Finding] = []
     src = repo_path / "src"
     if not src.is_dir():
         return findings
@@ -424,7 +424,7 @@ def check_no_hardcoded_urls(repo_path: Path) -> list[Finding]:
     CHECK_ID = "FE-007"
     import re
 
-    findings = []
+    findings: list[Finding] = []
     pattern = re.compile(r"https?://(localhost|.*railway\.app|.*up\.railway\.app)")
     src = repo_path / "src"
     if not src.is_dir():
@@ -494,7 +494,7 @@ def _stdlib_logging_is_primary(text: str) -> bool:
 def check_structured_logging(repo_path: Path) -> list[Finding]:
     """CD-009: Structured logging via shared library."""
     CHECK_ID = "CD-009"
-    findings = []
+    findings: list[Finding] = []
     src = repo_path / "src"
     if not src.is_dir():
         return findings
