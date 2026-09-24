@@ -1,3 +1,10 @@
+# [3.47.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.46.0...v3.47.0) (2026-09-24)
+
+
+### Features
+
+* load worker secrets from SSM Parameter Store ([bbf9b22](https://github.com/mini-app-polis/evaluator-cog/commit/bbf9b22896eeb7f712f2ea22777989f9718c8a2a))
+
 # [3.46.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.45.3...v3.46.0) (2026-09-23)
 
 
