@@ -1,3 +1,10 @@
+# [3.48.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.47.0...v3.48.0) (2026-09-24)
+
+
+### Features
+
+* check the pipeline cogs' infrastructure in mini-app-polis/infra ([ca6bce5](https://github.com/mini-app-polis/evaluator-cog/commit/ca6bce5a88b49929824a07c167663571e9dba99e))
+
 # [3.47.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.46.0...v3.47.0) (2026-09-24)
 
 
