@@ -36,6 +36,15 @@ data "aws_iam_policy_document" "worker" {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.worker.arn}:*"]
   }
+
+  # Its own secrets, by name (secrets.tf). GetParameters and nothing wider:
+  # not GetParametersByPath, which would reach every secret Doppler syncs.
+  # No KMS grant — SecureStrings under the AWS-managed aws/ssm key are
+  # decryptable by any principal in the account that may read them via SSM.
+  statement {
+    actions   = ["ssm:GetParameters"]
+    resources = local.ssm_parameter_arns
+  }
 }
 
 resource "aws_iam_role_policy" "worker" {
@@ -108,14 +117,15 @@ resource "aws_lambda_function" "worker" {
   # limits that prefect.concurrency held.
   reserved_concurrent_executions = var.reserved_concurrency
 
+  # Configuration only. Secrets are not here: the SSM_* entries name the
+  # parameters the worker loads itself at cold start (secrets.tf).
   environment {
     variables = {
-      KAIANO_API_BASE_URL   = var.kaiano_api_base_url
-      EVALUATOR_COG_API_KEY = var.evaluator_cog_api_key
-      GITHUB_TOKEN          = var.github_token
-      SENTRY_DSN_EVALUATOR  = var.sentry_dsn
-      ANTHROPIC_API_KEY     = var.anthropic_api_key
-      ENVIRONMENT           = "production"
+      KAIANO_API_BASE_URL     = var.kaiano_api_base_url
+      ENVIRONMENT             = "production"
+      SSM_PREFIX              = local.ssm_prefix
+      SSM_PARAMETERS          = jsonencode(local.ssm_parameters)
+      SSM_OPTIONAL_PARAMETERS = jsonencode(local.ssm_optional_parameters)
     }
   }
 

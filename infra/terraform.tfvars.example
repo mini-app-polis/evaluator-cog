@@ -1,10 +1,7 @@
 # Copy to terraform.tfvars (gitignored) and fill in.
 #
-# Non-secret settings only. The four secrets — evaluator_cog_api_key,
-# github_token, sentry_dsn, anthropic_api_key — come from Doppler through
-# the ./tf wrapper and must NOT appear here; tfvars wins over the
-# environment, so a value left here silently overrides Doppler, and ./tf
-# refuses to run while one is set.
+# Non-secret settings only. Secrets live in Doppler, sync to SSM Parameter
+# Store, and are read by the worker at cold start — see secrets.tf.
 
 alert_email         = "you@example.com"
 kaiano_api_base_url = "https://api.kaianolevine.com"

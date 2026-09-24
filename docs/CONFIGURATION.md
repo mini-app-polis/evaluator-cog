@@ -54,13 +54,13 @@ call to the API. See ecosystem-standards CD-019.
 EVALUATOR_COG_API_KEY=YOUR_EVALUATOR_COG_API_KEY
 ```
 
-## SENTRY_DSN_EVALUATOR
+## SENTRY_DSN
 
 Sentry DSN for error tracking. Initialised once per cold start, in
 `adapters/lambda_worker`.
 
 ```
-SENTRY_DSN_EVALUATOR=your-sentry-dsn
+SENTRY_DSN=your-sentry-dsn
 ```
 
 ## GITHUB_TOKEN

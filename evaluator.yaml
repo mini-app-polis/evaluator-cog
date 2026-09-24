@@ -35,7 +35,7 @@ exemptions:
     reason: "evaluator_config.py uses stdlib logging intentionally — it is a pure utility module loaded during unit tests where the mini_app_polis shared logger is unavailable. CD-009 does not apply to test-safe utility modules."
   - rule: CD-010
     reason: >
-      sentry_sdk.init() is present with SENTRY_DSN_EVALUATOR in the entry
+      sentry_sdk.init() is present with SENTRY_DSN in the entry
       point, src/evaluator_cog/adapters/lambda_worker.py, called at import
       rather than per invocation so a warm container initialises once. The
       LLM conformance pass cannot read source content directly and

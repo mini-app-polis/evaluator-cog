@@ -7,7 +7,7 @@ dependencies = [
     # 5.10.0 is the floor, not a preference: RunReport.run_id lands there,
     # and below it conformance.py sets an attribute nothing reads — every run
     # report goes out as "local-run", silently.
-    "miniapppolis-common-utils>=5.10.0,<6",
+    "miniapppolis-common-utils>=5.13.1,<6",
     "boto3>=1.34,<2",
     "httpx>=0.27",
     # Direct: models.py defines the finding schema with it. It used to

@@ -42,7 +42,7 @@ log = logger_mod.get_logger()
 # invocations, so this runs once per cold start — initialising on every
 # call would pay the setup repeatedly and register duplicate integrations.
 sentry_sdk.init(
-    dsn=os.getenv("SENTRY_DSN_EVALUATOR"),
+    dsn=os.getenv("SENTRY_DSN"),
     environment=os.getenv("ENVIRONMENT", "production"),
 )
 
