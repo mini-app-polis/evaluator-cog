@@ -41,6 +41,10 @@ from evaluator_cog.engine.deterministic._shared import (
     _finding,
     _tracked_paths,
 )
+from evaluator_cog.engine.deterministic._terraform import (
+    declares_terraform,
+    terraform_root,
+)
 from evaluator_cog.engine.deterministic._workflows import (
     Step,
     Workflow,
@@ -826,6 +830,7 @@ _DEPENDABOT_ECOSYSTEMS: dict[str, tuple[str, ...]] = {
     "Python": ("uv", "pip", "poetry", "pipenv"),
     "JavaScript": ("npm", "pnpm", "yarn", "bun"),
     "GitHub Actions": ("github-actions",),
+    "Terraform": ("terraform",),
 }
 
 
@@ -893,6 +898,12 @@ def _used_ecosystems(root: Path) -> list[str]:
         p.suffix in (".yml", ".yaml") for p in workflows.iterdir() if p.is_file()
     ):
         used.append("GitHub Actions")
+    # The provider lock is a Terraform root's lockfile: providers pinned by
+    # version and hash, which go stale like any other dependency.
+    if (root / ".terraform.lock.hcl").is_file() or (
+        root / "infra" / ".terraform.lock.hcl"
+    ).is_file():
+        used.append("Terraform")
     return used
 
 
@@ -1016,11 +1027,10 @@ def check_sec_007(repo_path: Path) -> list[Finding]:
     return findings
 
 
-#: Tracked paths under ``infra/`` that must never exist. State is the one
-#: that matters: ``terraform.tfstate`` records every attribute Terraform
-#: set, and for a Lambda that is the function's whole environment — every
-#: Doppler secret it runs with, in plaintext. tfvars and a saved plan carry
-#: the values they were built with.
+#: Tracked Terraform files that must never exist. State is the one that
+#: matters: ``terraform.tfstate`` records every attribute Terraform set, and
+#: for a Lambda configured the old way that was its whole environment. tfvars
+#: and a saved plan carry the values they were built with.
 _FORBIDDEN_INFRA_PATTERNS = (
     "*.tfstate",
     "*.tfstate.*",
@@ -1032,13 +1042,12 @@ _FORBIDDEN_INFRA_PATTERNS = (
 )
 
 
-def _infra_is_declared(repo_path: Path) -> bool:
-    infra = repo_path / "infra"
-    return infra.is_dir() and any(infra.rglob("*.tf"))
-
-
-def check_sec_008(repo_path: Path) -> list[Finding]:
+def check_sec_008(repo_path: Path, repo_type: str = "") -> list[Finding]:
     """SEC-008: Terraform state, variables and saved plans are never committed.
+
+    Where to look follows the repository: an ``infrastructure`` repository
+    is a Terraform root, so the whole repository and its root .gitignore;
+    anything else keeps its Terraform in ``infra/``.
 
     Two modes, because the repository arrives two ways. Against a working
     tree, ``git ls-files`` says what is committed and a local state file
@@ -1054,19 +1063,20 @@ def check_sec_008(repo_path: Path) -> list[Finding]:
     CHECK_ID = "SEC-008"
     import fnmatch
 
-    if not _infra_is_declared(repo_path):
+    if not declares_terraform(repo_path, repo_type):
         return []
+    root = terraform_root(repo_path, repo_type)
+    prefix = "" if root == repo_path else root.relative_to(repo_path).as_posix() + "/"
+    where = prefix or "the repository"
 
     findings: list[Finding] = []
     tracked = _tracked_paths(repo_path)
     if tracked is None:
         candidates = [
-            f.relative_to(repo_path).as_posix()
-            for f in (repo_path / "infra").rglob("*")
-            if f.is_file()
+            f.relative_to(repo_path).as_posix() for f in root.rglob("*") if f.is_file()
         ]
     else:
-        candidates = [p for p in sorted(tracked) if p.startswith("infra/")]
+        candidates = [p for p in sorted(tracked) if p.startswith(prefix)]
 
     offenders = sorted(
         {
@@ -1074,7 +1084,8 @@ def check_sec_008(repo_path: Path) -> list[Finding]:
             for path in candidates
             for pattern in _FORBIDDEN_INFRA_PATTERNS
             if fnmatch.fnmatch(path.split("/")[-1], pattern)
-            or fnmatch.fnmatch(path, f"infra/{pattern}")
+            or fnmatch.fnmatch(path, f"{prefix}{pattern}")
+            or fnmatch.fnmatch(path, f"*/{pattern}")
         }
     )
     if offenders:
@@ -1086,9 +1097,7 @@ def check_sec_008(repo_path: Path) -> list[Finding]:
                 "Terraform state, variable or plan files are committed: "
                 + ", ".join(offenders[:5])
                 + (f" (+{len(offenders) - 5} more)" if len(offenders) > 5 else "")
-                + ". State records every attribute Terraform set, which for "
-                "a Lambda is its whole environment — every secret it runs "
-                "with, in plaintext.",
+                + ". State records every attribute Terraform set, in plaintext.",
                 "Remove them from the index (git rm --cached) and rotate "
                 "anything they exposed. Only the .tf sources, "
                 "terraform.tfvars.example and .terraform.lock.hcl belong in "
@@ -1096,17 +1105,16 @@ def check_sec_008(repo_path: Path) -> list[Finding]:
             )
         )
 
-    if not (repo_path / "infra" / ".gitignore").exists():
+    if not (root / ".gitignore").exists():
         findings.append(
             _finding(
                 CHECK_ID,
                 "ERROR",
                 "security_posture",
-                "infra/ declares Terraform but has no .gitignore.",
-                "Add infra/.gitignore covering *.tfstate, *.tfstate.*, "
+                f"{where} declares Terraform but has no .gitignore beside it.",
+                f"Add {prefix}.gitignore covering *.tfstate, *.tfstate.*, "
                 "terraform.tfvars, *.auto.tfvars, tfplan and .terraform/. "
-                "With local state that file is the whole of the control; a "
-                "repo clean without one is clean by luck.",
+                "A repository clean without one is clean by luck.",
             )
         )
     return findings

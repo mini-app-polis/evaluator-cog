@@ -15,8 +15,10 @@ from evaluator_cog.engine.deterministic._shared import (
 )
 from evaluator_cog.engine.deterministic._terraform import (
     dead_letter_queue_names,
-    infra_resources,
+    declares_terraform,
     of_type,
+    terraform_resources,
+    terraform_root,
 )
 
 #: CD-026's canonical job names.
@@ -199,32 +201,46 @@ def _delegates_terraform(repo_path: Path) -> bool:
     return False
 
 
-def check_terraform_checked_in_ci(repo_path: Path) -> list[Finding]:
-    """CD-027: a repo that declares infrastructure as code checks it in CI."""
+def _workflow_texts(repo_path: Path) -> str:
+    """Every workflow under .github/workflows, concatenated."""
+    workflows = repo_path / ".github" / "workflows"
+    if not workflows.is_dir():
+        return ""
+    return "\n".join(
+        f.read_text(errors="replace")
+        for f in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])
+    )
+
+
+def check_terraform_checked_in_ci(
+    repo_path: Path, repo_type: str = ""
+) -> list[Finding]:
+    """CD-027: a repo that declares infrastructure as code checks it in CI.
+
+    Any workflow counts, not only ci.yml: mini-app-polis/infra checks its
+    Terraform in terraform.yml, beside the plan it gates.
+    """
     CHECK_ID = "CD-027"
-    infra = repo_path / "infra"
-    if not infra.is_dir() or not any(infra.rglob("*.tf")):
+    if not declares_terraform(repo_path, repo_type):
         return []
-    ci = repo_path / ".github" / "workflows" / "ci.yml"
-    if not ci.exists():
-        # CD-026 and check_ci report an absent ci.yml. A second finding
+    text = _workflow_texts(repo_path)
+    if not text:
+        # CD-026 and check_ci report an absent workflow. A second finding
         # naming Terraform would send the reader to the wrong file.
         return []
-    text = ci.read_text(errors="replace")
     inline = "terraform fmt" in text and "terraform validate" in text
     if inline or _delegates_terraform(repo_path):
         return []
+    where = "The repository" if repo_type == "infrastructure" else "infra/"
     return [
         _finding(
             CHECK_ID,
             "WARN",
             "cd_readiness",
-            "infra/ declares Terraform, but ci.yml neither runs "
-            "`terraform fmt -check` and `terraform validate` nor passes a "
-            "terraform-dir to the shared python-test.yml.",
-            "Pass `terraform-dir: infra` to the test job. Neither fmt nor "
-            "validate needs state or credentials, so CI can own that half "
-            "while applying stays on a workstation.",
+            f"{where} declares Terraform, but no workflow runs "
+            "`terraform fmt -check` and `terraform validate`, and none passes "
+            "a terraform-dir to the shared python-test.yml.",
+            "Run both on every push. Neither needs state or credentials.",
         )
     ]
 
@@ -247,33 +263,39 @@ def _required_provider_blocks(tf_text: str) -> list[str]:
 
 
 def _runs_terraform_in_ci(repo_path: Path) -> bool:
-    """True when ci.yml checks Terraform — inline, or by delegation (CD-027)."""
-    ci = repo_path / ".github" / "workflows" / "ci.yml"
-    if not ci.exists():
-        return False
-    text = ci.read_text(errors="replace")
+    """True when some workflow runs Terraform — inline, or by delegation (CD-027)."""
+    text = _workflow_texts(repo_path)
     inline = "terraform fmt" in text or "terraform validate" in text
     return inline or _delegates_terraform(repo_path)
 
 
-def check_terraform_versions_pinned(repo_path: Path) -> list[Finding]:
+def check_terraform_versions_pinned(
+    repo_path: Path, repo_type: str = ""
+) -> list[Finding]:
     """CD-028: Terraform versions pinned, lock committed, lock covers CI's platform."""
     CHECK_ID = "CD-028"
-    infra = repo_path / "infra"
-    if not infra.is_dir() or not any(infra.rglob("*.tf")):
+    if not declares_terraform(repo_path, repo_type):
         return []
+    infra = terraform_root(repo_path, repo_type)
+    label = "the repository root" if repo_type == "infrastructure" else "infra/"
 
     findings: list[Finding] = []
 
     def fail(message: str, suggestion: str) -> None:
         findings.append(_finding(CHECK_ID, "WARN", "cd_readiness", message, suggestion))
 
-    tf_text = "\n".join(
-        f.read_text(errors="replace") for f in sorted(infra.glob("*.tf"))
+    # The root's own files carry the pin; modules' required_providers are
+    # read too, since a module that leaves a provider unpinned widens what
+    # the root can resolve.
+    tf_files = sorted(infra.glob("*.tf"))
+    module_files = sorted((infra / "modules").rglob("*.tf"))
+    tf_text = "\n".join(f.read_text(errors="replace") for f in tf_files)
+    providers_text = "\n".join(
+        f.read_text(errors="replace") for f in [*tf_files, *module_files]
     )
     if not re.search(r"(?m)^\s*required_version\s*=", tf_text):
         fail(
-            "No infra/*.tf sets required_version in its terraform block.",
+            f"No .tf file in {label} sets required_version in its terraform block.",
             'Pin the Terraform version (e.g. required_version = ">= 1.6") so '
             "the workstation and CI agree on what is running the stack.",
         )
@@ -283,7 +305,7 @@ def check_terraform_versions_pinned(repo_path: Path) -> list[Finding]:
     # the non-greedy form stops at the first inner `}` — so the extent is
     # found by counting braces, and the provider entries inside it (which
     # nest no further) are then read with one.
-    for block in _required_provider_blocks(tf_text):
+    for block in _required_provider_blocks(providers_text):
         for name, body in re.findall(r"(\w+)\s*=\s*\{([^{}]*)\}", block):
             if "source" in body and not re.search(r"(?m)^\s*version\s*=", body):
                 fail(
@@ -296,9 +318,9 @@ def check_terraform_versions_pinned(repo_path: Path) -> list[Finding]:
     lock = infra / ".terraform.lock.hcl"
     if not lock.exists():
         fail(
-            "infra/.terraform.lock.hcl is not committed.",
+            f".terraform.lock.hcl is not committed in {label}.",
             "Commit it. It holds provider versions and checksums and no "
-            "values — it is the one generated file in infra/ that belongs "
+            "values — it is the one generated Terraform file that belongs "
             "in the repository (SEC-008 covers the ones that do not).",
         )
         return findings
@@ -307,7 +329,7 @@ def check_terraform_versions_pinned(repo_path: Path) -> list[Finding]:
         platforms = lock.read_text(errors="replace").count("h1:")
         if platforms < 2:
             fail(
-                f"ci.yml runs Terraform, but .terraform.lock.hcl carries "
+                f"CI runs Terraform, but .terraform.lock.hcl carries "
                 f"{platforms} platform hash(es) — it has only ever been "
                 f"written on one operating system.",
                 "Record the runner's platform too: `terraform providers lock "
@@ -327,10 +349,15 @@ def check_ci(
     Covers: VER-003, VER-005, VER-006.
     """
     CHECK_ID = "VER-003"
-    findings = []
+    findings: list[Finding] = []
     _exc = exceptions or frozenset()
     ci = repo_path / ".github" / "workflows" / "ci.yml"
     if not ci.exists():
+        # Reported as VER-003, so it answers to VER-003's scope like the
+        # checks below: a type the rule does not apply to — one with no
+        # releases — is not told it lacks the workflow that cuts them.
+        if "VER-003" in _exc:
+            return findings
         findings.append(
             _finding(
                 "VER-003",
@@ -753,11 +780,8 @@ def check_migration_in_ci(
     return findings
 
 
-def _dlq_alarm_notifies(repo_path: Path) -> bool:
-    """True when infra/ alarms on a dead-letter queue and the alarm has an action."""
-    resources = infra_resources(repo_path)
-    if not resources:
-        return False
+def _dlq_alarm_notifies(resources: list) -> bool:
+    """True when some alarm watches a dead-letter queue and has an action."""
     dlqs = dead_letter_queue_names(resources)
     for alarm in of_type(resources, "aws_cloudwatch_metric_alarm"):
         actions = (alarm.attr("alarm_actions") or "").replace(" ", "")
@@ -766,6 +790,33 @@ def _dlq_alarm_notifies(repo_path: Path) -> bool:
         if any(f"aws_sqs_queue.{name}." in alarm.body for name in dlqs):
             return True
     return False
+
+
+def check_cd_010_infrastructure(repo_path: Path) -> list[Finding]:
+    """CD-010's liveness layer for the pipeline cogs, where it is declared.
+
+    A queue-driven worker has no process to be alive between jobs, so a
+    liveness ping has nothing to report; a job that failed every retry is
+    the event a person has to hear about. That alarm is declared once, in
+    mini-app-polis/infra's cog module (ADR-010), so it is checked there and
+    not in each cog.
+    """
+    resources = terraform_resources(repo_path, "infrastructure") or []
+    if not of_type(resources, "aws_lambda_event_source_mapping"):
+        return []
+    if _dlq_alarm_notifies(resources):
+        return []
+    return [
+        _finding(
+            "CD-010",
+            "ERROR",
+            "cd_readiness",
+            "Layer 1 missing: no aws_cloudwatch_metric_alarm on a dead-letter "
+            "queue has alarm_actions.",
+            "Alarm on the DLQ's ApproximateNumberOfMessagesVisible and point "
+            "alarm_actions at an SNS topic someone is subscribed to.",
+        )
+    ]
 
 
 def check_three_layer_observability(
@@ -801,23 +852,9 @@ def check_three_layer_observability(
         with suppress(Exception):
             package_json_text = package_json.read_text()
 
-    # Layer 1 for a queue-driven pipeline cog: an alarm on the dead-letter
-    # queue that notifies someone. There is no process to be alive between
-    # jobs, so a liveness ping has nothing to report; a job that failed
-    # every retry is the event a person has to hear about.
-    if cog_subtype == "pipeline" and not _dlq_alarm_notifies(repo_path):
-        findings.append(
-            _finding(
-                "CD-010",
-                "ERROR",
-                "cd_readiness",
-                "Layer 1 missing: no aws_cloudwatch_metric_alarm on the "
-                "dead-letter queue with alarm_actions in infra/*.tf.",
-                "Alarm on the DLQ's ApproximateNumberOfMessagesVisible and "
-                "point alarm_actions at an SNS topic someone is subscribed "
-                "to. Copy deejay-cog's infra/account.tf.",
-            )
-        )
+    # Layer 1 for a queue-driven pipeline cog is an alarm on its dead-letter
+    # queue, declared in mini-app-polis/infra and checked there
+    # (check_cd_010_infrastructure, ADR-010). The cog carries layers 2 and 3.
 
     # Layer 1: Healthchecks — the always-on trigger worker.
     if cog_subtype == "trigger":
@@ -949,9 +986,10 @@ def check_cd_031(repo_path: Path) -> list[Finding]:
     """CD-031: every release requests its own conformance evaluation.
 
     (1) A push-triggered workflow has a job calling the shared evaluate.yml.
-    (2) That job's ``needs:`` reaches, directly or transitively, a job that
-    runs semantic-release — so it evaluates the released tree, not the
-    one before it.
+    (2) That job's ``needs:`` reaches, directly or transitively, the job
+    that ships the change — one that runs semantic-release, or, for a
+    Terraform root with no releases, one that runs ``terraform apply`` — so
+    it evaluates what shipped, not the tree before it.
     """
     from evaluator_cog.engine.deterministic._workflows import load_workflows
 
@@ -995,7 +1033,10 @@ def check_cd_031(repo_path: Path) -> list[Finding]:
         job = by_id.get(job_id)
         if job is None:
             return False
-        if any(step.run_invokes("semantic-release") for step in job.steps):
+        if any(
+            step.run_invokes("semantic-release") or step.run_invokes("terraform apply")
+            for step in job.steps
+        ):
             return True
         return any(_releases(n, by_id, seen) for n in job.needs)
 
@@ -1011,10 +1052,11 @@ def check_cd_031(repo_path: Path) -> list[Finding]:
             "cd_readiness",
             f"{wf.rel}::{job.job_id} calls evaluate.yml but does not run after the "
             f"release — its needs ({', '.join(job.needs) or 'none'}) reach no job "
-            f"that runs semantic-release, so it can evaluate the tree before the "
-            f"release produced it.",
+            f"that runs semantic-release or terraform apply, so it can evaluate "
+            f"the tree before the change shipped.",
             "Make the evaluate job depend on the release job (`needs: release`), "
-            "or on the deploy job that itself needs the release.",
+            "on the deploy job that itself needs the release, or — in a "
+            "Terraform root — on the apply job.",
         )
     )
     return findings

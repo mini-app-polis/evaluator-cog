@@ -1,8 +1,12 @@
 """A reader for the few Terraform facts the runtime rules need.
 
-Pipeline cogs own their infrastructure in ``infra/*.tf`` (PIPE-016), so
-the rules that describe that runtime — the queue, its dead-letter queue,
-the function and the mapping between them — are read from there.
+Where the Terraform is depends on the repository. An ``infrastructure``
+repository (mini-app-polis/infra) is a Terraform root: its ``.tf`` files
+are at the repository root, with modules under ``modules/``. It declares
+every pipeline cog's runtime — the queue, its dead-letter queue, the
+function and the mapping between them — through one ``module`` block per
+cog (ADR-010). Any other repository that carries Terraform does so in
+``infra/``.
 
 This is not an HCL parser, and deliberately so. The checks ask a handful
 of questions — is this resource declared, does its block set this
@@ -96,34 +100,79 @@ def _block_end(text: str, open_brace: int) -> int:
     return len(text)
 
 
-def infra_resources(repo_path: Path) -> list[Resource] | None:
-    """Every resource declared in ``infra/*.tf``; None when there is no infra/.
+def terraform_root(repo_path: Path, repo_type: str = "") -> Path:
+    """Where a repository's Terraform lives: its root, or ``infra/``."""
+    return repo_path if repo_type == "infrastructure" else repo_path / "infra"
 
-    None and an empty list are different answers: a repository without
-    ``infra/`` has not started owning its runtime, one with an empty
-    ``infra/`` has started and declared nothing.
-    """
-    infra = repo_path / "infra"
-    if not infra.is_dir():
-        return None
+
+def _tf_files(root: Path, *, recursive: bool) -> list[Path]:
+    """The ``.tf`` files under ``root``, skipping ``.terraform/`` caches."""
+    if not root.is_dir():
+        return []
+    found = root.rglob("*.tf") if recursive else root.glob("*.tf")
+    return sorted(f for f in found if ".terraform" not in f.relative_to(root).parts)
+
+
+def declares_terraform(repo_path: Path, repo_type: str = "") -> bool:
+    """True when the repository's Terraform root holds any ``.tf`` file."""
+    return bool(_tf_files(terraform_root(repo_path, repo_type), recursive=True))
+
+
+def _blocks(
+    repo_path: Path, root: Path, pattern: re.Pattern[str], *, recursive: bool
+) -> list[Resource]:
     found: list[Resource] = []
-    for tf in sorted(infra.glob("*.tf")):
+    for tf in _tf_files(root, recursive=recursive):
         try:
             text = _strip_comments(tf.read_text(errors="replace"))
         except OSError:
             continue
-        for m in _RESOURCE.finditer(text):
+        rel = tf.relative_to(repo_path).as_posix()
+        for m in pattern.finditer(text):
             start = m.end() - 1
             end = _block_end(text, start)
             found.append(
                 Resource(
-                    type=m.group("type"),
+                    type=m.groupdict().get("type") or "module",
                     name=m.group("name"),
                     body=text[start + 1 : end],
-                    file=f"infra/{tf.name}",
+                    file=rel,
                 )
             )
     return found
+
+
+def terraform_resources(repo_path: Path, repo_type: str = "") -> list[Resource] | None:
+    """Every resource the repository's Terraform declares; None when it has none.
+
+    For an ``infrastructure`` repository that includes its modules, where
+    the resources every cog shares are declared once. For anything else it
+    is ``infra/*.tf``.
+
+    None and an empty list are different answers: a repository with no
+    Terraform root has not started owning infrastructure, one with an
+    empty root has started and declared nothing.
+    """
+    root = terraform_root(repo_path, repo_type)
+    recursive = repo_type == "infrastructure"
+    if not root.is_dir() or (recursive and not _tf_files(root, recursive=True)):
+        return None
+    return _blocks(repo_path, root, _RESOURCE, recursive=recursive)
+
+
+_MODULE = re.compile(r'^\s*module\s+"(?P<name>[\w-]+)"\s*\{', re.M)
+
+
+def module_calls(repo_path: Path, repo_type: str = "") -> list[Resource]:
+    """The ``module`` blocks in the Terraform root's own ``.tf`` files.
+
+    Returned as ``Resource`` with ``type == "module"``, so ``attr`` reads
+    their arguments — ``source``, and the inputs a caller sets. Modules'
+    own nested calls are not included: the root is where each cog's
+    settings are decided.
+    """
+    root = terraform_root(repo_path, repo_type)
+    return _blocks(repo_path, root, _MODULE, recursive=False)
 
 
 def of_type(resources: list[Resource], rtype: str) -> list[Resource]:
@@ -146,24 +195,20 @@ def dead_letter_queue_names(resources: list[Resource]) -> set[str]:
 _VARIABLE = re.compile(r'^\s*variable\s+"(?P<name>[\w-]+)"\s*\{', re.M)
 
 
-def variable_defaults(repo_path: Path) -> dict[str, str]:
-    """The ``default = ...`` of every ``variable`` block in ``infra/*.tf``.
+def variable_defaults(repo_path: Path, repo_type: str = "") -> dict[str, str]:
+    """The ``default = ...`` of every ``variable`` block in the Terraform root.
 
-    A rule that compares two numbers in the stack — PIPE-018's
-    reservation against the mapping's ceiling — reads them as they are
-    written, and they are usually written as ``var.reserved_concurrency``.
-    A variable's default is the value the stack applies with unless
+    A rule that compares two numbers in the stack reads them as they are
+    written, and they are usually written as ``var.something``. A
+    variable's default is the value the stack applies with unless
     ``terraform.tfvars`` overrides it, and tfvars is not in the
     repository, so the default is the only value a check can see.
 
     Returns the raw right-hand side, unparsed: the caller decides what
     counts as a number.
     """
-    infra = repo_path / "infra"
-    if not infra.is_dir():
-        return {}
     defaults: dict[str, str] = {}
-    for tf in sorted(infra.glob("*.tf")):
+    for tf in _tf_files(terraform_root(repo_path, repo_type), recursive=False):
         try:
             text = _strip_comments(tf.read_text(errors="replace"))
         except OSError:

@@ -190,6 +190,19 @@ def test_resolve_language_detects_python_from_pyproject(tmp_path) -> None:
     assert _resolve_language({"id": "a-cog"}, tmp_path) == "python"
 
 
+def test_resolve_language_detects_a_terraform_root(tmp_path) -> None:
+    """mini-app-polis/infra: .tf at the root, no Python or Node manifest."""
+    (tmp_path / "versions.tf").write_text("terraform {}\n")
+    assert _resolve_language({"id": "infra"}, tmp_path) == "hcl"
+
+
+def test_resolve_language_prefers_a_manifest_to_terraform(tmp_path) -> None:
+    """A repository with code keeps its language even beside a .tf file."""
+    (tmp_path / "versions.tf").write_text("terraform {}\n")
+    (tmp_path / "pyproject.toml").write_text("")
+    assert _resolve_language({"id": "a-cog"}, tmp_path) == "python"
+
+
 def test_resolve_language_defaults_to_python(tmp_path) -> None:
     assert _resolve_language({"id": "unknown"}, tmp_path) == "python"
 

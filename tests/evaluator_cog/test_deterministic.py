@@ -2155,6 +2155,38 @@ def test_sec_007_catches_the_half_configured_case(tmp_path) -> None:
     assert "github-actions" in findings[0]["finding"]
 
 
+def test_sec_007_a_terraform_lock_means_terraform(tmp_path) -> None:
+    """Provider versions go stale too; covering only Actions leaves them manual."""
+    from evaluator_cog.engine.deterministic.security import check_sec_007
+
+    actions_only = (
+        "version: 2\n"
+        "updates:\n"
+        '  - package-ecosystem: "github-actions"\n'
+        '    directory: "/"\n'
+        '    schedule: {interval: "weekly"}\n'
+    )
+    repo = _sec007_repo(
+        tmp_path,
+        files={
+            ".terraform.lock.hcl": 'provider "registry.terraform.io/hashicorp/aws" {}\n',
+            ".github/workflows/terraform.yml": "name: terraform\n",
+            ".github/dependabot.yml": actions_only,
+        },
+    )
+    findings = check_sec_007(repo)
+    assert len(findings) == 1
+    assert "does not cover Terraform" in findings[0]["finding"]
+
+    (repo / ".github/dependabot.yml").write_text(
+        actions_only
+        + '  - package-ecosystem: "terraform"\n'
+        + '    directory: "/"\n'
+        + '    schedule: {interval: "weekly"}\n'
+    )
+    assert check_sec_007(repo) == []
+
+
 def test_sec_007_accepts_any_tool_that_delivers_updates(tmp_path) -> None:
     """The rule is that updates arrive, not which tool delivers them."""
     from evaluator_cog.engine.deterministic.security import check_sec_007
