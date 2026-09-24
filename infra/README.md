@@ -1,5 +1,11 @@
 # The AWS foundation: one queue, one function
 
+> **Secrets no longer pass through Terraform.** Doppler syncs them to SSM
+> Parameter Store (`/mini-app-polis/prd/`) and the worker loads the names in
+> `secrets.tf` at cold start. The `./tf` wrapper is gone; run `terraform`
+> directly. Anything below about the wrapper, `TF_VAR_*` or secret variables
+> describes the old arrangement. This directory moves to `mini-app-polis/infra`.
+
 Terraform for the minimum AWS footprint needed to run evaluator-cog as a
 queue worker. The companion ticket is
 [../docs/aws-foundation.md](../docs/aws-foundation.md); this is its
@@ -61,8 +67,8 @@ out of Doppler and hands them to Terraform as `TF_VAR_*`. Use it instead of
 bare `terraform` for anything that reads variables:
 
 ```bash
-./tf plan -out tfplan
-./tf apply tfplan
+terraform plan -out tfplan
+terraform apply tfplan
 ```
 
 A secret placed in `terraform.tfvars` would win over the environment, so the
@@ -92,7 +98,7 @@ cp terraform.tfvars.example terraform.tfvars   # non-secret settings only
 terraform init
 terraform fmt -check
 terraform validate
-./tf plan -out tfplan
+terraform plan -out tfplan
 ```
 
 1. **Account, billing alarm, MFA on root.** The budget is in `account.tf`

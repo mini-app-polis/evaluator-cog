@@ -111,32 +111,6 @@ variable "kaiano_api_base_url" {
   type        = string
 }
 
-variable "evaluator_cog_api_key" {
-  description = "This cog's own named API key (CD-019). No fallback — unset or wrong means 401 on every call."
-  type        = string
-  sensitive   = true
-}
-
-variable "github_token" {
-  description = "Read access to mini-app-polis repos. Unset means 60 unauthenticated requests/hour and repos silently throttled out of runs."
-  type        = string
-  sensitive   = true
-}
-
-variable "sentry_dsn" {
-  description = "Sentry DSN for the worker."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "anthropic_api_key" {
-  description = "Only the llm mode needs this; the release path is deterministic and costs no tokens."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "create_github_oidc_provider" {
   description = <<-DESC
     False when the account already has the GitHub OIDC provider — there can
