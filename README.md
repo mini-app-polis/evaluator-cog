@@ -87,11 +87,15 @@ against rules that do not exist and must be removed:
 | AUTH-001 | Retired 2026-09 (ADR-008), superseded by AUTH-003 |
 | TEST-GAP-001 | Pre-existing. Not in the current catalog |
 
-**Implemented, and where they run.** EVAL-003, EVAL-007, XSTACK-006, XSTACK-007
-and XSTACK-008 carry `applies_to: None` — they grade the inventory,
+**Implemented, and where they run.** EVAL-003, EVAL-007, XSTACK-006 and
+XSTACK-008 carry `applies_to: None` — they grade the inventory,
 the stored findings and the catalog rather than any repository's source, so no
 per-repository job owns them. They run in `run_introspection()`, once per fleet
-pass, asked for by `POST /v1/evaluations/introspection`.
+pass, asked for by `POST /v1/evaluations/introspection`. Their findings are
+filed against whoever has to act: EVAL-003 under evaluator-cog (it grades the
+evaluator's own output), the rest under ecosystem-standards. XSTACK-007
+(shared-library pins) is a per-repo check: the stale pin is the consuming
+repo's to fix, so its own evaluation reports it and its own release clears it.
 
 XSTACK-008 is the odd one: it reports which registered repositories failed to
 resolve, which it reads from the rows a pass wrote. It grades the **previous**
