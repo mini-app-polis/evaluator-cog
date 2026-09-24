@@ -2,10 +2,10 @@
 
 Environment variables from `.env.example`. One section per variable.
 
-The worker runs on AWS Lambda. Terraform owns the function's environment
-(`infra/worker.tf`), so on the deployed worker these values come from
-`infra/terraform.tfvars` rather than from a `.env` file — the file is for
-running the handler locally.
+The worker runs on AWS Lambda, declared in mini-app-polis/infra. On the
+deployed worker, secrets are loaded at cold start from SSM Parameter Store
+(synced from Doppler; `cogs.tf` there lists the names) and the rest is set
+by Terraform — the `.env` file is for running the handler locally.
 
 ## ANTHROPIC_API_KEY
 
