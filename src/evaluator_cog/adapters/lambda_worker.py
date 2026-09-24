@@ -14,7 +14,7 @@ and a failed job is silently discarded, which is the property the queue
 was introduced to remove.
 
 ``ReportBatchItemFailures`` is already configured on the mapping
-(``function_response_types`` in ``infra/worker.tf``), so this response
+(``function_response_types`` in mini-app-polis/infra's cog-worker module), so this response
 shape is expected rather than optional. Raising instead would fail the
 whole batch — identical behaviour at ``batch_size = 1``, and wrong the
 moment that is tuned, because one bad record would redeliver every record

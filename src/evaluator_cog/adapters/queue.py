@@ -17,7 +17,7 @@ a worker killed mid-evaluation — all of them leave the message on the
 queue, and SQS redelivers once the visibility timeout expires.
 
 **An unrecognised message type is a producer bug.** This queue is
-evaluator-cog's alone — one prefix per cog in ``infra/``. A shared fleet
+evaluator-cog's alone — one queue per cog, named from the cog in mini-app-polis/infra. A shared fleet
 queue was considered and cannot work, because SQS has no selective
 receive: a consumer takes whatever it is handed, so an unrecognised type
 would send another cog's job to this cog's dead-letter queue. Refusing it
@@ -59,8 +59,8 @@ log = logger_mod.get_logger()
 #: Must match api-kaianolevine-com's evaluation_dispatch. A mismatch is a
 #: message this consumer refuses rather than misreads.
 #:
-#: This queue is evaluator-cog's alone — `infra/` names it from
-#: `name_prefix`, one prefix per cog. A shared fleet queue was considered
+#: This queue is evaluator-cog's alone — mini-app-polis/infra names it
+#: from the cog, one queue per cog. A shared fleet queue was considered
 #: and cannot work: SQS has no selective receive, so a consumer takes
 #: whatever it is handed, and an unrecognised type would send another
 #: cog's job to *this* cog's dead-letter queue. The type check below is
