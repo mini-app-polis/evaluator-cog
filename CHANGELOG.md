@@ -1,3 +1,10 @@
+# [3.49.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.48.0...v3.49.0) (2026-09-24)
+
+
+### Features
+
+* XSTACK-007 runs per repo from registry metadata; EVAL-003 filed under evaluator-cog ([1769a3a](https://github.com/mini-app-polis/evaluator-cog/commit/1769a3ac81a1bee86e4bd5e28b4bdb9b5c7fd242))
+
 # [3.48.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.47.0...v3.48.0) (2026-09-24)
 
 
