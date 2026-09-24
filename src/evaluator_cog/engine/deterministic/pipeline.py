@@ -13,9 +13,9 @@ from evaluator_cog.engine.deterministic._shared import (
     production_python_text,
 )
 from evaluator_cog.engine.deterministic._terraform import (
-    infra_resources,
+    module_calls,
     of_type,
-    variable_defaults,
+    terraform_resources,
 )
 
 
@@ -353,44 +353,27 @@ def _declares_prefect(repo_path: Path) -> bool:
     return _PREFECT_REQUIREMENT.search(_declared_dependency_text(repo_path)) is not None
 
 
-_RUNTIME_RESOURCES = (
-    "aws_sqs_queue",
-    "aws_lambda_function",
-    "aws_lambda_event_source_mapping",
-)
-
-
 def check_pipe_016(repo_path: Path) -> list[Finding]:
-    """PIPE-016: the cog runs on Lambda behind its own queue, and not on Prefect."""
-    findings: list[Finding] = []
-    resources = infra_resources(repo_path) or []
-    declared = {r.type for r in resources}
-    missing = [t for t in _RUNTIME_RESOURCES if t not in declared]
-    if missing:
-        where = "infra/*.tf" if (repo_path / "infra").is_dir() else "infra/ (absent)"
-        findings.append(
-            _finding(
-                "PIPE-016",
-                "ERROR",
-                "structural_conformance",
-                f"{where} does not declare {', '.join(missing)}.",
-                "Own the runtime in infra/: the cog's SQS queue, its Lambda "
-                "function, and the event source mapping between them. Copy "
-                "deejay-cog's infra/ (ADR-009).",
-            )
+    """PIPE-016: the cog has left Prefect.
+
+    The other half of the rule — the cog runs on Lambda behind its own
+    queue — is declared in mini-app-polis/infra, not in the cog (ADR-010),
+    and each evaluation reads only its own repository. A cog with no module
+    block there has no function to deploy to, so its deploy job fails; that
+    failure is the check for the declaration.
+    """
+    if not _declares_prefect(repo_path):
+        return []
+    return [
+        _finding(
+            "PIPE-016",
+            "ERROR",
+            "structural_conformance",
+            "prefect is still a declared dependency.",
+            "Remove prefect: pipeline cogs run on Lambda behind a queue "
+            "(ADR-009). A cog that still declares it has not finished moving.",
         )
-    if _declares_prefect(repo_path):
-        findings.append(
-            _finding(
-                "PIPE-016",
-                "ERROR",
-                "structural_conformance",
-                "prefect is still a declared dependency.",
-                "Remove prefect: pipeline cogs run on Lambda behind a queue "
-                "(ADR-009). A cog that still declares it has not finished moving.",
-            )
-        )
-    return findings
+    ]
 
 
 _INT_LITERAL = re.compile(r"^\d+$")
@@ -414,55 +397,65 @@ def _visibility_outlasts_timeout(visibility: str | None, timeout: str | None) ->
     return False
 
 
-def check_pipe_017(repo_path: Path) -> list[Finding]:
-    """PIPE-017: a failed job is handed back per record, retried, and dead-lettered."""
+def check_pipe_017(repo_path: Path, repo_type: str = "") -> list[Finding]:
+    """PIPE-017: a failed job is handed back per record, retried, and dead-lettered.
+
+    Two halves, in the two repositories that own them (ADR-010). The
+    infrastructure half — ReportBatchItemFailures on the mapping, a redrive
+    policy to a dead-letter queue, a visibility timeout that outlasts the
+    function — is declared once, in mini-app-polis/infra's cog module. The
+    code half — the handler names the records that failed — is in the cog.
+    """
+
     findings: list[Finding] = []
-    resources = infra_resources(repo_path)
-    if resources is None:
-        # PIPE-016 reports the absent infra/. Four more findings saying
-        # the same thing would bury it.
-        return findings
 
     def fail(message: str, suggestion: str) -> None:
         findings.append(
             _finding("PIPE-017", "ERROR", "pipeline_reliability", message, suggestion)
         )
 
-    mappings = of_type(resources, "aws_lambda_event_source_mapping")
-    if not any(
-        "ReportBatchItemFailures" in (m.attr("function_response_types") or "")
-        for m in mappings
-    ):
-        fail(
-            "The event source mapping does not set function_response_types = "
-            '["ReportBatchItemFailures"].',
-            "Set it, so a failed record is handed back alone instead of the "
-            "mapping deleting it (or redelivering its whole batch).",
-        )
+    if repo_type == "infrastructure":
+        resources = terraform_resources(repo_path, repo_type)
+        if not resources:
+            return findings
+        mappings = of_type(resources, "aws_lambda_event_source_mapping")
+        if not mappings:
+            return findings
+        if not any(
+            "ReportBatchItemFailures" in (m.attr("function_response_types") or "")
+            for m in mappings
+        ):
+            fail(
+                "The event source mapping does not set function_response_types = "
+                '["ReportBatchItemFailures"].',
+                "Set it, so a failed record is handed back alone instead of the "
+                "mapping deleting it (or redelivering its whole batch).",
+            )
 
-    queues = of_type(resources, "aws_sqs_queue")
-    redriven = [q for q in queues if "deadLetterTargetArn" in (q.body or "")]
-    if not redriven:
-        fail(
-            "No aws_sqs_queue sets a redrive_policy with a deadLetterTargetArn.",
-            "Give the work queue a redrive policy to a dead-letter queue; "
-            "without one a poison message retries forever.",
-        )
+        queues = of_type(resources, "aws_sqs_queue")
+        redriven = [q for q in queues if "deadLetterTargetArn" in (q.body or "")]
+        if not redriven:
+            fail(
+                "No aws_sqs_queue sets a redrive_policy with a deadLetterTargetArn.",
+                "Give the work queue a redrive policy to a dead-letter queue; "
+                "without one a poison message retries forever.",
+            )
 
-    functions = of_type(resources, "aws_lambda_function")
-    timeout = functions[0].attr("timeout") if functions else None
-    work_queues = redriven or queues
-    if work_queues and not any(
-        _visibility_outlasts_timeout(q.attr("visibility_timeout_seconds"), timeout)
-        for q in work_queues
-    ):
-        fail(
-            "The work queue's visibility_timeout_seconds is not derived from, "
-            "or longer than, the function's timeout.",
-            "Derive it from the function's timeout variable (e.g. "
-            "var.worker_timeout_seconds + 60) so SQS never redelivers a job "
-            "that is still running.",
-        )
+        functions = of_type(resources, "aws_lambda_function")
+        timeout = functions[0].attr("timeout") if functions else None
+        work_queues = redriven or queues
+        if work_queues and not any(
+            _visibility_outlasts_timeout(q.attr("visibility_timeout_seconds"), timeout)
+            for q in work_queues
+        ):
+            fail(
+                "The work queue's visibility_timeout_seconds is not derived from, "
+                "or longer than, the function's timeout.",
+                "Derive it from the function's timeout variable (e.g. "
+                "var.timeout_seconds + 60) so SQS never redelivers a job "
+                "that is still running.",
+            )
+        return findings
 
     src = repo_path / "src"
     returns_failures = src.is_dir() and any(
@@ -479,91 +472,46 @@ def check_pipe_017(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def _concurrency_int(value: str | None, defaults: dict[str, str]) -> int | None:
-    """The number behind a concurrency setting, or None when it is not one.
+def _is_set(value: str | None) -> bool:
+    return value is not None and value.strip() not in ("", "null")
 
-    ``reserved_concurrent_executions = 1`` reads directly;
-    ``= var.reserved_concurrency`` reads through the variable's default,
-    which is the value the stack applies with when nothing overrides it.
-    Anything else — an expression, a variable with no default — is not a
-    number this check may compare, and saying nothing is right.
+
+def check_pipe_018(repo_path: Path, repo_type: str = "infrastructure") -> list[Finding]:
+    """PIPE-018: each cog's concurrency ceiling is stated once.
+
+    Read from the module calls in mini-app-polis/infra (ADR-010), where each
+    cog's settings are decided: every call to the cog-worker module sets
+    exactly one of ``reserved_concurrency`` (a positive reservation — the
+    only way to get 1) or ``max_concurrency`` (the mapping's ceiling, at
+    least 2). The module refuses a plan that breaks this; the check makes
+    the same statement visible in evaluations.
     """
-    if value is None:
-        return None
-    value = value.strip()
-    if _INT_LITERAL.match(value):
-        return int(value)
-    var = re.fullmatch(r"var\.([\w-]+)", value)
-    if var:
-        default = (defaults.get(var.group(1)) or "").strip()
-        if _INT_LITERAL.match(default):
-            return int(default)
-    return None
-
-
-def check_pipe_018(repo_path: Path) -> list[Finding]:
-    """PIPE-018: how many jobs may run at once is stated in infra/, once."""
-    resources = infra_resources(repo_path)
-    if resources is None:
-        return []
-    ceilings = [
-        c
-        for m in of_type(resources, "aws_lambda_event_source_mapping")
-        if m.has_block("scaling_config")
-        for c in [m.attr("maximum_concurrency")]
-        if c
-    ]
-    reservations = [
-        r
-        for f in of_type(resources, "aws_lambda_function")
-        for r in [f.attr("reserved_concurrent_executions")]
-        if r and r.strip() != "-1"
-    ]
-    if not ceilings and not reservations:
-        return [
-            _finding(
-                "PIPE-018",
-                "WARN",
-                "pipeline_reliability",
-                "infra/ states no concurrency ceiling: neither "
-                "scaling_config.maximum_concurrency on the event source mapping "
-                "nor reserved_concurrent_executions on the function.",
-                "Set scaling_config { maximum_concurrency = N } on the mapping "
-                "(minimum 2), or reserved_concurrent_executions on the function "
-                "when the job needs to run alone.",
-            )
-        ]
-
-    # Both set. AWS refuses to create a mapping whose maximum concurrency
-    # exceeds the function's reservation, so the pair is only applyable
-    # while the mapping predates the reservation — it fails the day
-    # anything recreates it. Only a pair this check can read as two
-    # numbers is reported; an expression it cannot resolve is not a
-    # finding.
-    defaults = variable_defaults(repo_path)
-    for ceiling in ceilings:
-        for reservation in reservations:
-            top = _concurrency_int(ceiling, defaults)
-            floor = _concurrency_int(reservation, defaults)
-            if top is None or floor is None or floor >= top:
-                continue
-            return [
+    findings: list[Finding] = []
+    for call in module_calls(repo_path, repo_type):
+        if "cog-worker" not in (call.attr("source") or ""):
+            continue
+        # -1 is the module's default and means unreserved; 0 would stop the
+        # function entirely. Anything else — a positive literal, or an
+        # expression this check cannot evaluate — states a reservation.
+        reserved = (call.attr("reserved_concurrency") or "").strip()
+        reserves = _is_set(reserved) and reserved != "-1" and reserved != "0"
+        caps = _is_set(call.attr("max_concurrency"))
+        if reserves == caps:
+            state = "both" if reserves else "neither"
+            findings.append(
                 _finding(
                     "PIPE-018",
                     "WARN",
                     "pipeline_reliability",
-                    f"infra/ sets both reserved_concurrent_executions = "
-                    f"{reservation} ({floor}) on the function and "
-                    f"scaling_config.maximum_concurrency = {ceiling} ({top}) on "
-                    f"the event source mapping. AWS rejects a mapping maximum "
-                    f"above the function's reservation.",
-                    "Keep one. A reservation of 1 means no scaling_config at "
-                    "all, because the mapping's maximum cannot go below 2; "
-                    "above 1, drop the reservation and let the mapping hold "
-                    "the ceiling.",
+                    f'module "{call.name}" in {call.file} sets {state} of '
+                    "reserved_concurrency and max_concurrency.",
+                    "Set exactly one: reserved_concurrency = 1 for a cog that "
+                    "must run alone (the mapping's ceiling cannot go below 2), "
+                    "or max_concurrency = N for a ceiling above that. AWS "
+                    "rejects a mapping maximum above the function's reservation.",
                 )
-            ]
-    return []
+            )
+    return findings
 
 
 _REMAINING_TIME = "get_remaining_time_in_millis"

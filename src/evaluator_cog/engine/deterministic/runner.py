@@ -50,6 +50,7 @@ from evaluator_cog.engine.deterministic.containers import (
 )
 from evaluator_cog.engine.deterministic.delivery import (
     check_canonical_ci_job_names,
+    check_cd_010_infrastructure,
     check_cd_031,
     check_ci,
     check_gha_not_trigger_relay,
@@ -253,6 +254,7 @@ def run_all_checks(
         # FastAPI (Python) and Hono (TypeScript) API services.
         is_api_service = cfg.is_api_service
         is_frontend = cfg.is_frontend
+        is_infrastructure = cfg.is_infrastructure
     else:
         # Legacy path — used during migration when evaluator.yaml is absent
         is_python = language == "python" or dod_type in (
@@ -266,6 +268,7 @@ def run_all_checks(
         is_fastapi = dod_type == "new_fastapi_service"
         is_api_service = dod_type in ("new_fastapi_service", "new_hono_service")
         is_frontend = dod_type in ("new_frontend_site", "new_react_app")
+        is_infrastructure = False
 
     # Legacy skip list is still used by a handful of checker functions that
     # accept "exceptions" lists directly.
@@ -482,10 +485,16 @@ def run_all_checks(
     _run(check_release_commit_message, "VER-009")
     _run(check_release_gated_on_security, "CD-025")
     _run(check_canonical_ci_job_names, "CD-026")
-    # CD-027 skips a repo with no infra/*.tf, so it is safe to run
-    # everywhere rather than gated on a repo type.
-    _run(check_terraform_checked_in_ci, "CD-027")
-    _run(check_terraform_versions_pinned, "CD-028")
+    # CD-027/CD-028 skip a repo with no Terraform, so they are safe to run
+    # everywhere; the repo type says where its Terraform root is.
+    _run(
+        lambda p: check_terraform_checked_in_ci(p, repo_type=_repo_type_for_checks),
+        "CD-027",
+    )
+    _run(
+        lambda p: check_terraform_versions_pinned(p, repo_type=_repo_type_for_checks),
+        "CD-028",
+    )
 
     _mark_checked("XSTACK-001")
     if (evaluator_config is None and "XSTACK-001" not in _exceptions) or (
@@ -597,8 +606,13 @@ def run_all_checks(
         _run(check_inputs_not_deleted, "PIPE-005")
         _run(check_pipe_016, "PIPE-016")
         _run(check_pipe_017, "PIPE-017")
-        _run(check_pipe_018, "PIPE-018")
         _run(check_pipe_020, "PIPE-020")
+    # The pipeline cogs' runtime is declared in mini-app-polis/infra
+    # (ADR-010): PIPE-017's infrastructure half and PIPE-018 are checked
+    # there, once, rather than in each cog.
+    if is_infrastructure:
+        _run(lambda p: check_pipe_017(p, repo_type="infrastructure"), "PIPE-017")
+        _run(check_pipe_018, "PIPE-018")
     if is_trigger_cog:
         _run(check_pipe_019, "PIPE-019")
     if is_pipeline_cog or is_trigger_cog:
@@ -701,6 +715,10 @@ def run_all_checks(
             )
 
         _run(_cd_010_check, "CD-010")
+    # CD-010's liveness layer for pipeline cogs — the dead-letter-queue
+    # alarm — is declared in mini-app-polis/infra and checked there.
+    if is_infrastructure:
+        _run(check_cd_010_infrastructure, "CD-010")
 
     # CD-014 — static-site deploy target
     if _is_static:
@@ -810,7 +828,7 @@ def run_all_checks(
     _run(check_sec_004, "SEC-004")
     _run(check_sec_005, "SEC-005")
     _run(check_sec_006, "SEC-006")
-    _run(check_sec_008, "SEC-008")
+    _run(lambda p: check_sec_008(p, repo_type=_repo_type_for_checks), "SEC-008")
     _run(check_sec_007, "SEC-007")
 
     # operational_readiness — only OPS-002 is checkable.
@@ -837,8 +855,8 @@ def run_all_checks(
     _run(check_cd_017, "CD-017")
     _run(check_cd_022, "CD-022")
     _run(check_cd_023, "CD-023")
-    # CD-024 reads a pipeline cog's limits from infra/*.tf and everything
-    # else's from its Railway descriptor, so it needs the resolved type.
+    # CD-024 reads the pipeline cogs' limits in mini-app-polis/infra and
+    # everything else's from its Railway descriptor, so it needs the type.
     _run(
         lambda p: check_cd_024(p, repo_type=_repo_type_for_checks),
         "CD-024",

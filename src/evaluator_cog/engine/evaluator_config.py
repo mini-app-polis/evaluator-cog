@@ -95,6 +95,7 @@ VALID_REPO_TYPES = {
     "react-app",
     "standards-repo",
     "shared-workflows",
+    "infrastructure",
 }
 
 # Valid traits per index.yaml schema.traits (migration fallback).
@@ -323,6 +324,8 @@ class EvaluatorConfig:
             "standards-repo",
         ):
             return "python"
+        if self.repo_type == "infrastructure":
+            return "hcl"
         return "typescript"
 
     @property
@@ -369,6 +372,11 @@ class EvaluatorConfig:
     def is_standards_repo(self) -> bool:
         """True when repo_type == 'standards-repo'."""
         return self.repo_type == "standards-repo"
+
+    @property
+    def is_infrastructure(self) -> bool:
+        """True when repo_type == 'infrastructure' — a Terraform root, at the repo's root."""
+        return self.repo_type == "infrastructure"
 
     @property
     def is_frontend(self) -> bool:

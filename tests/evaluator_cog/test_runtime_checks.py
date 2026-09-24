@@ -1,12 +1,13 @@
-"""Deterministic checks for the queue-and-Lambda runtime (ADR-009).
+"""Deterministic checks for the queue-and-Lambda runtime (ADR-009, ADR-010).
 
-PIPE-007 (call-site retry), PIPE-016 (Lambda behind its own queue),
-PIPE-017 (per-record failure, redrive, visibility), PIPE-018 (concurrency
-ceiling, stated once), PIPE-019 (trigger cogs go through the API),
-PIPE-020 (a run stops before the function timeout), CD-027 (Terraform
-checked in CI), CD-028 (versions pinned, lock committed), SEC-008
-(state and tfvars never committed), and the pipeline-cog branches of
-CD-010 (DLQ alarm as Layer 1) and CD-024 (function limits).
+The runtime is split between two kinds of repository, each evaluated on its
+own (ADR-010). A pipeline cog carries its code: PIPE-016 (Prefect is gone),
+PIPE-017's code half (the handler names failed records), PIPE-020, PIPE-007.
+mini-app-polis/infra — type ``infrastructure`` — carries every cog's
+Terraform: PIPE-017's infrastructure half, PIPE-018 (one concurrency ceiling
+per cog), CD-010's dead-letter-queue alarm, CD-024 (limits), CD-027 (checked
+in CI), CD-028 (pinned, locked) and SEC-008 (no state committed). PIPE-019 is
+the trigger cogs'.
 """
 
 from __future__ import annotations
@@ -17,11 +18,14 @@ import pytest
 
 from evaluator_cog.engine.deterministic._terraform import (
     dead_letter_queue_names,
-    infra_resources,
+    module_calls,
     of_type,
+    terraform_resources,
 )
 from evaluator_cog.engine.deterministic.containers import check_cd_024
 from evaluator_cog.engine.deterministic.delivery import (
+    check_cd_010_infrastructure,
+    check_ci,
     check_terraform_checked_in_ci,
     check_terraform_versions_pinned,
     check_three_layer_observability,
@@ -36,26 +40,29 @@ from evaluator_cog.engine.deterministic.pipeline import (
 )
 from evaluator_cog.engine.deterministic.security import check_sec_008
 
+INFRA = "infrastructure"
+MOD = "modules/cog-worker"
+
 _QUEUE_TF = """
 resource "aws_sqs_queue" "dlq" {
-  name = "${var.name_prefix}-jobs-dlq" # braces inside a string
+  name = "${var.name}-jobs-dlq" # braces inside a string
 }
 
 resource "aws_sqs_queue" "jobs" {
-  name                       = "${var.name_prefix}-jobs"
-  visibility_timeout_seconds = var.worker_timeout_seconds + 60
+  name                       = "${var.name}-jobs"
+  visibility_timeout_seconds = var.timeout_seconds + 60
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.dlq.arn
-    maxReceiveCount     = 3
+    maxReceiveCount     = var.max_receive_count
   })
 }
 """
 
 _WORKER_TF = """
 resource "aws_lambda_function" "worker" {
-  function_name = "demo-worker"
-  timeout       = var.worker_timeout_seconds
-  memory_size   = 1024
+  function_name = "${var.name}-worker"
+  timeout       = var.timeout_seconds
+  memory_size   = var.memory_mb
   environment {
     variables = {
       REDIRECT = "http://127.0.0.1:8888/callback" // a comment after a URL
@@ -67,8 +74,11 @@ resource "aws_lambda_event_source_mapping" "jobs" {
   event_source_arn        = aws_sqs_queue.jobs.arn
   function_name           = aws_lambda_function.worker.arn
   function_response_types = ["ReportBatchItemFailures"]
-  scaling_config {
-    maximum_concurrency = 2
+  dynamic "scaling_config" {
+    for_each = var.max_concurrency == null ? [] : [var.max_concurrency]
+    content {
+      maximum_concurrency = scaling_config.value
+    }
   }
 }
 """
@@ -86,7 +96,7 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
 
 _VERSIONS_TF = """
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.11"
 
   required_providers {
     aws = {
@@ -97,16 +107,46 @@ terraform {
 }
 """
 
+_COGS_TF = """
+module "alpha" {
+  source          = "./modules/cog-worker"
+  name            = "alpha"
+  timeout_seconds = 300
+  memory_mb       = 1024
+  max_concurrency = 4
+}
+
+module "beta" {
+  source               = "./modules/cog-worker"
+  name                 = "beta"
+  timeout_seconds      = 900
+  memory_mb            = 512
+  reserved_concurrency = 1
+}
+"""
+
 #: Two platforms' hashes, which is what a stack checked in CI needs.
 _LOCK_HCL = """
 provider "registry.terraform.io/hashicorp/aws" {
-  version     = "5.82.2"
+  version     = "5.100.0"
   constraints = "~> 5.0"
   hashes = [
     "h1:darwin_arm64_placeholder",
     "h1:linux_amd64_placeholder",
   ]
 }
+"""
+
+_TERRAFORM_YML = """
+name: terraform
+on: [pull_request]
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - run: terraform fmt -check -recursive -diff
+      - run: terraform init
+      - run: terraform validate
 """
 
 _HANDLER = (
@@ -120,9 +160,7 @@ name: CI
 on: [push]
 jobs:
   test:
-    uses: mini-app-polis/.github/.github/workflows/python-test.yml@v1
-    with:
-      terraform-dir: infra
+    uses: mini-app-polis/.github/.github/workflows/python-test.yml@v3
 """
 
 
@@ -133,17 +171,30 @@ def _write(repo: Path, rel: str, body: str) -> None:
 
 
 def _lambda_cog(repo: Path, **overrides: str) -> Path:
-    """A pipeline cog that satisfies every runtime rule, with parts replaceable."""
+    """A pipeline cog that satisfies its runtime rules: code only, no infra/."""
     files = {
-        "infra/queue.tf": _QUEUE_TF,
-        "infra/worker.tf": _WORKER_TF,
-        "infra/account.tf": _ALARM_TF,
         "src/demo_cog/worker.py": _HANDLER,
         ".github/workflows/ci.yml": _CI_YML,
-        "infra/versions.tf": _VERSIONS_TF,
-        "infra/.terraform.lock.hcl": _LOCK_HCL,
-        "infra/.gitignore": "*.tfstate\n*.tfstate.*\nterraform.tfvars\ntfplan\n",
         "pyproject.toml": '[project]\nname = "demo-cog"\ndependencies = ["httpx"]\n',
+    }
+    files.update(overrides)
+    for rel, body in files.items():
+        _write(repo, rel, body)
+    return repo
+
+
+def _infra_repo(repo: Path, **overrides: str) -> Path:
+    """An infrastructure repository that satisfies every rule scoped to it."""
+    files = {
+        "versions.tf": _VERSIONS_TF,
+        "cogs.tf": _COGS_TF,
+        f"{MOD}/queue.tf": _QUEUE_TF,
+        f"{MOD}/worker.tf": _WORKER_TF,
+        f"{MOD}/alarm.tf": _ALARM_TF,
+        f"{MOD}/versions.tf": _VERSIONS_TF,
+        ".terraform.lock.hcl": _LOCK_HCL,
+        ".gitignore": ".terraform/\n*.tfstate\n*.tfstate.*\ntfplan\n",
+        ".github/workflows/terraform.yml": _TERRAFORM_YML,
     }
     files.update(overrides)
     for rel, body in files.items():
@@ -159,42 +210,64 @@ def _messages(findings: list[dict]) -> str:
 
 
 def test_reader_sees_through_strings_and_comments(tmp_path: Path) -> None:
-    resources = infra_resources(_lambda_cog(tmp_path))
+    resources = terraform_resources(_infra_repo(tmp_path), INFRA)
     assert resources is not None
-    assert [(r.type, r.name) for r in resources] == [
+    assert sorted((r.type, r.name) for r in resources) == [
         ("aws_cloudwatch_metric_alarm", "dlq_not_empty"),
+        ("aws_lambda_event_source_mapping", "jobs"),
+        ("aws_lambda_function", "worker"),
         ("aws_sqs_queue", "dlq"),
         ("aws_sqs_queue", "jobs"),
-        ("aws_lambda_function", "worker"),
-        ("aws_lambda_event_source_mapping", "jobs"),
     ]
     fn = of_type(resources, "aws_lambda_function")[0]
     # The URL's `//` is not a comment, so the closing braces after it survive
     # and the function's block ends where it should.
-    assert fn.attr("memory_size") == "1024"
+    assert fn.attr("memory_size") == "var.memory_mb"
+    assert fn.file == f"{MOD}/worker.tf"
     assert "ReportBatchItemFailures" not in fn.body
     assert dead_letter_queue_names(resources) == {"dlq"}
 
 
-def test_reader_distinguishes_no_infra_from_empty_infra(tmp_path: Path) -> None:
-    assert infra_resources(tmp_path) is None
+def test_reader_reads_the_module_calls_at_the_root(tmp_path: Path) -> None:
+    calls = module_calls(_infra_repo(tmp_path), INFRA)
+    assert [(c.name, c.attr("source")) for c in calls] == [
+        ("alpha", '"./modules/cog-worker"'),
+        ("beta", '"./modules/cog-worker"'),
+    ]
+    assert calls[1].attr("reserved_concurrency") == "1"
+
+
+def test_reader_skips_the_terraform_cache(tmp_path: Path) -> None:
+    repo = _infra_repo(
+        tmp_path,
+        **{".terraform/modules/x/main.tf": 'resource "aws_sqs_queue" "cached" {}\n'},
+    )
+    names = {r.name for r in terraform_resources(repo, INFRA) or []}
+    assert "cached" not in names
+
+
+def test_reader_distinguishes_no_terraform_from_empty(tmp_path: Path) -> None:
+    """Other repository types keep Terraform in infra/, and may have none."""
+    assert terraform_resources(tmp_path) is None
     (tmp_path / "infra").mkdir()
-    assert infra_resources(tmp_path) == []
+    assert terraform_resources(tmp_path) == []
+    _write(tmp_path, "infra/queue.tf", _QUEUE_TF)
+    assert [r.name for r in terraform_resources(tmp_path) or []] == ["dlq", "jobs"]
 
 
-# --- the reference cogs pass everything ---------------------------------------
+# --- the reference repositories pass everything -------------------------------
 
 
-def test_compliant_lambda_cog_passes_every_runtime_rule(tmp_path: Path) -> None:
+def test_compliant_lambda_cog_passes_its_runtime_rules(tmp_path: Path) -> None:
     repo = _lambda_cog(tmp_path)
     assert check_pipe_016(repo) == []
     assert check_pipe_017(repo) == []
-    assert check_pipe_018(repo) == []
     assert check_pipe_020(repo) == []
+    # Declared in mini-app-polis/infra, so not the cog's to answer for.
+    assert check_cd_024(repo, repo_type="pipeline-cog") == []
     assert check_terraform_checked_in_ci(repo) == []
     assert check_terraform_versions_pinned(repo) == []
     assert check_sec_008(repo) == []
-    assert check_cd_024(repo, repo_type="pipeline-cog") == []
     layer1 = [
         f
         for f in check_three_layer_observability(repo, cog_subtype="pipeline")
@@ -203,30 +276,24 @@ def test_compliant_lambda_cog_passes_every_runtime_rule(tmp_path: Path) -> None:
     assert layer1 == []
 
 
+def test_compliant_infra_repo_passes_every_rule_scoped_to_it(tmp_path: Path) -> None:
+    repo = _infra_repo(tmp_path)
+    assert check_pipe_017(repo, repo_type=INFRA) == []
+    assert check_pipe_018(repo, repo_type=INFRA) == []
+    assert check_cd_010_infrastructure(repo) == []
+    assert check_cd_024(repo, repo_type=INFRA) == []
+    assert check_terraform_checked_in_ci(repo, repo_type=INFRA) == []
+    assert check_terraform_versions_pinned(repo, repo_type=INFRA) == []
+    assert check_sec_008(repo, repo_type=INFRA) == []
+
+
 # --- PIPE-016 -----------------------------------------------------------------
 
 
-def test_pipe016_names_every_missing_resource_when_infra_is_absent(
-    tmp_path: Path,
-) -> None:
-    findings = check_pipe_016(tmp_path)
-    assert len(findings) == 1
-    text = findings[0]["finding"]
-    assert "infra/ (absent)" in text
-    for rtype in (
-        "aws_sqs_queue",
-        "aws_lambda_function",
-        "aws_lambda_event_source_mapping",
-    ):
-        assert rtype in text
-
-
-def test_pipe016_names_only_the_missing_mapping(tmp_path: Path) -> None:
-    worker_without_mapping = _WORKER_TF.split('resource "aws_lambda_event_source')[0]
-    repo = _lambda_cog(tmp_path, **{"infra/worker.tf": worker_without_mapping})
-    text = _messages(check_pipe_016(repo))
-    assert "aws_lambda_event_source_mapping" in text
-    assert "aws_sqs_queue," not in text
+def test_pipe016_does_not_look_for_infra_in_the_cog(tmp_path: Path) -> None:
+    """The runtime is declared in mini-app-polis/infra (ADR-010)."""
+    assert check_pipe_016(_lambda_cog(tmp_path)) == []
+    assert not (tmp_path / "infra").exists()
 
 
 @pytest.mark.parametrize(
@@ -259,9 +326,29 @@ def test_pipe016_ignores_packages_that_merely_start_with_prefect(
 # --- PIPE-017 -----------------------------------------------------------------
 
 
-def test_pipe017_is_silent_without_infra(tmp_path: Path) -> None:
-    """PIPE-016 reports the missing infra/; four echoes of it would bury it."""
-    assert check_pipe_017(tmp_path) == []
+def test_pipe017_cog_half_flags_a_handler_that_never_returns_failures(
+    tmp_path: Path,
+) -> None:
+    handler = "def lambda_handler(event, context):\n    return None\n"
+    repo = _lambda_cog(tmp_path, **{"src/demo_cog/worker.py": handler})
+    findings = check_pipe_017(repo)
+    assert len(findings) == 1
+    assert "batchItemFailures" in findings[0]["finding"]
+
+
+def test_pipe017_infra_half_ignores_source(tmp_path: Path) -> None:
+    """The infrastructure repository has no handler to read."""
+    assert check_pipe_017(_infra_repo(tmp_path), repo_type=INFRA) == []
+
+
+def test_pipe017_infra_half_is_silent_without_a_mapping(tmp_path: Path) -> None:
+    repo = _infra_repo(
+        tmp_path,
+        **{
+            f"{MOD}/worker.tf": _WORKER_TF.split('resource "aws_lambda_event_source')[0]
+        },
+    )
+    assert check_pipe_017(repo, repo_type=INFRA) == []
 
 
 def test_pipe017_flags_mapping_without_report_batch_item_failures(
@@ -270,8 +357,8 @@ def test_pipe017_flags_mapping_without_report_batch_item_failures(
     worker = _WORKER_TF.replace(
         '  function_response_types = ["ReportBatchItemFailures"]\n', ""
     )
-    repo = _lambda_cog(tmp_path, **{"infra/worker.tf": worker})
-    findings = check_pipe_017(repo)
+    repo = _infra_repo(tmp_path, **{f"{MOD}/worker.tf": worker})
+    findings = check_pipe_017(repo, repo_type=INFRA)
     assert len(findings) == 1
     assert "ReportBatchItemFailures" in findings[0]["finding"]
 
@@ -279,136 +366,100 @@ def test_pipe017_flags_mapping_without_report_batch_item_failures(
 def test_pipe017_flags_queue_without_redrive(tmp_path: Path) -> None:
     queue = (
         'resource "aws_sqs_queue" "jobs" {\n'
-        "  visibility_timeout_seconds = var.worker_timeout_seconds + 60\n"
+        "  visibility_timeout_seconds = var.timeout_seconds + 60\n"
         "}\n"
     )
-    repo = _lambda_cog(tmp_path, **{"infra/queue.tf": queue})
-    assert "redrive_policy" in _messages(check_pipe_017(repo))
+    repo = _infra_repo(tmp_path, **{f"{MOD}/queue.tf": queue})
+    assert "redrive_policy" in _messages(check_pipe_017(repo, repo_type=INFRA))
 
 
 @pytest.mark.parametrize(
     ("visibility", "timeout", "passes"),
     [
-        ("var.worker_timeout_seconds + 60", "var.worker_timeout_seconds", True),
+        ("var.timeout_seconds + 60", "var.timeout_seconds", True),
         ("960", "900", True),
         ("900", "900", False),
         ("300", "900", False),
         # Referencing the variable alone is not "derived": equal is not longer.
-        ("var.worker_timeout_seconds", "var.worker_timeout_seconds", False),
+        ("var.timeout_seconds", "var.timeout_seconds", False),
         # A literal against a variable cannot be confirmed from source.
-        ("960", "var.worker_timeout_seconds", False),
-        ("var.visibility", "var.worker_timeout_seconds", False),
+        ("960", "var.timeout_seconds", False),
+        ("var.visibility", "var.timeout_seconds", False),
     ],
 )
 def test_pipe017_visibility_timeout_must_outlast_the_function(
     tmp_path: Path, visibility: str, timeout: str, passes: bool
 ) -> None:
-    queue = _QUEUE_TF.replace("var.worker_timeout_seconds + 60", visibility)
+    queue = _QUEUE_TF.replace("var.timeout_seconds + 60", visibility)
     worker = _WORKER_TF.replace(
-        "timeout       = var.worker_timeout_seconds", f"timeout       = {timeout}"
+        "timeout       = var.timeout_seconds", f"timeout       = {timeout}"
     )
-    repo = _lambda_cog(tmp_path, **{"infra/queue.tf": queue, "infra/worker.tf": worker})
-    flagged = "visibility_timeout_seconds" in _messages(check_pipe_017(repo))
+    repo = _infra_repo(
+        tmp_path, **{f"{MOD}/queue.tf": queue, f"{MOD}/worker.tf": worker}
+    )
+    flagged = "visibility_timeout_seconds" in _messages(
+        check_pipe_017(repo, repo_type=INFRA)
+    )
     assert flagged is not passes
-
-
-def test_pipe017_flags_handler_that_never_returns_batch_item_failures(
-    tmp_path: Path,
-) -> None:
-    handler = "def lambda_handler(event, context):\n    return None\n"
-    repo = _lambda_cog(tmp_path, **{"src/demo_cog/worker.py": handler})
-    assert "batchItemFailures" in _messages(check_pipe_017(repo))
 
 
 # --- PIPE-018 -----------------------------------------------------------------
 
 
-def _without_scaling_config(worker: str) -> str:
-    return worker.replace("  scaling_config {\n    maximum_concurrency = 2\n  }\n", "")
-
-
-def test_pipe018_flags_no_ceiling(tmp_path: Path) -> None:
-    repo = _lambda_cog(
-        tmp_path, **{"infra/worker.tf": _without_scaling_config(_WORKER_TF)}
+def _one_cog(**settings: str) -> str:
+    body = "".join(f"  {k} = {v}\n" for k, v in settings.items())
+    return (
+        'module "gamma" {\n  source = "./modules/cog-worker"\n'
+        '  name = "gamma"\n' + body + "}\n"
     )
-    findings = check_pipe_018(repo)
+
+
+def test_pipe018_flags_a_cog_with_no_ceiling(tmp_path: Path) -> None:
+    repo = _infra_repo(tmp_path, **{"cogs.tf": _one_cog()})
+    findings = check_pipe_018(repo, repo_type=INFRA)
     assert len(findings) == 1
-    assert findings[0]["rule_id"] == "PIPE-018"
+    assert 'module "gamma"' in findings[0]["finding"]
+    assert "neither" in findings[0]["finding"]
 
 
-def test_pipe018_accepts_reserved_concurrency_instead(tmp_path: Path) -> None:
-    worker = _without_scaling_config(_WORKER_TF).replace(
-        "  memory_size   = 1024\n",
-        "  memory_size   = 1024\n  reserved_concurrent_executions = 1\n",
-    )
-    assert check_pipe_018(_lambda_cog(tmp_path, **{"infra/worker.tf": worker})) == []
-
-
-def test_pipe018_does_not_count_unreserved_minus_one(tmp_path: Path) -> None:
-    """-1 is Lambda's spelling of "no reservation", not a ceiling."""
-    worker = _without_scaling_config(_WORKER_TF).replace(
-        "  memory_size   = 1024\n",
-        "  memory_size   = 1024\n  reserved_concurrent_executions = -1\n",
-    )
-    assert check_pipe_018(_lambda_cog(tmp_path, **{"infra/worker.tf": worker}))
-
-
-def test_pipe018_flags_a_reservation_below_the_mapping_ceiling(
-    tmp_path: Path,
-) -> None:
-    """AWS rejects this pair at create time; the stack only applies until it is."""
-    worker = _WORKER_TF.replace(
-        "  memory_size   = 1024\n",
-        "  memory_size   = 1024\n  reserved_concurrent_executions = 1\n",
-    )
-    findings = check_pipe_018(_lambda_cog(tmp_path, **{"infra/worker.tf": worker}))
-    assert len(findings) == 1
-    text = findings[0]["finding"]
-    assert "reserved_concurrent_executions = 1" in text
-    assert "maximum_concurrency = 2" in text
-
-
-def test_pipe018_reads_a_reservation_through_its_variable_default(
-    tmp_path: Path,
-) -> None:
-    """The reservation is written as var.reserved_concurrency in every cog."""
-    worker = _WORKER_TF.replace(
-        "  memory_size   = 1024\n",
-        "  memory_size   = 1024\n"
-        "  reserved_concurrent_executions = var.reserved_concurrency\n",
-    )
-    variables = 'variable "reserved_concurrency" {\n  default = 1\n}\n'
-    repo = _lambda_cog(
+def test_pipe018_flags_a_cog_with_both(tmp_path: Path) -> None:
+    """AWS rejects a mapping maximum above the function's reservation."""
+    repo = _infra_repo(
         tmp_path,
-        **{"infra/worker.tf": worker, "infra/variables.tf": variables},
+        **{"cogs.tf": _one_cog(reserved_concurrency="1", max_concurrency="2")},
     )
-    assert "AWS rejects" in _messages(check_pipe_018(repo))
+    assert "both" in _messages(check_pipe_018(repo, repo_type=INFRA))
 
 
-def test_pipe018_accepts_a_reservation_above_the_mapping_ceiling(
-    tmp_path: Path,
+@pytest.mark.parametrize("value", ["-1", "0"])
+def test_pipe018_does_not_count_an_unreserving_value(
+    tmp_path: Path, value: str
 ) -> None:
-    """The pair is only wrong when the reservation is the lower of the two."""
-    worker = _WORKER_TF.replace(
-        "  memory_size   = 1024\n",
-        "  memory_size   = 1024\n  reserved_concurrent_executions = 10\n",
-    )
-    assert check_pipe_018(_lambda_cog(tmp_path, **{"infra/worker.tf": worker})) == []
+    """-1 is "no reservation"; 0 stops the function. Neither is a ceiling."""
+    repo = _infra_repo(tmp_path, **{"cogs.tf": _one_cog(reserved_concurrency=value)})
+    assert check_pipe_018(repo, repo_type=INFRA)
 
 
-def test_pipe018_says_nothing_about_a_pair_it_cannot_read(tmp_path: Path) -> None:
-    """A variable with no default is not a number this check may compare."""
-    worker = _WORKER_TF.replace(
-        "  memory_size   = 1024\n",
-        "  memory_size   = 1024\n"
-        "  reserved_concurrent_executions = var.reserved_concurrency\n",
-    )
-    variables = 'variable "reserved_concurrency" {\n  type = number\n}\n'
-    repo = _lambda_cog(
-        tmp_path,
-        **{"infra/worker.tf": worker, "infra/variables.tf": variables},
-    )
-    assert check_pipe_018(repo) == []
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"reserved_concurrency": "1"},
+        {"max_concurrency": "4"},
+        {"reserved_concurrency": "-1", "max_concurrency": "4"},
+        {"max_concurrency": "4", "reserved_concurrency": "null"},
+    ],
+)
+def test_pipe018_accepts_exactly_one_ceiling(
+    tmp_path: Path, settings: dict[str, str]
+) -> None:
+    repo = _infra_repo(tmp_path, **{"cogs.tf": _one_cog(**settings)})
+    assert check_pipe_018(repo, repo_type=INFRA) == []
+
+
+def test_pipe018_only_reads_calls_to_the_cog_module(tmp_path: Path) -> None:
+    other = 'module "network" {\n  source = "./modules/network"\n}\n'
+    repo = _infra_repo(tmp_path, **{"cogs.tf": _COGS_TF + other})
+    assert check_pipe_018(repo, repo_type=INFRA) == []
 
 
 # --- PIPE-020 -----------------------------------------------------------------
@@ -445,39 +496,34 @@ def test_pipe020_says_nothing_about_a_repo_with_no_source(tmp_path: Path) -> Non
 # --- CD-027 -------------------------------------------------------------------
 
 
-def test_cd027_flags_infra_that_ci_never_checks(tmp_path: Path) -> None:
-    ci = _CI_YML.replace("    with:\n      terraform-dir: infra\n", "")
-    findings = check_terraform_checked_in_ci(
-        _lambda_cog(tmp_path, **{".github/workflows/ci.yml": ci})
-    )
+def test_cd027_accepts_terraform_checked_in_any_workflow(tmp_path: Path) -> None:
+    """mini-app-polis/infra checks Terraform in terraform.yml, not ci.yml."""
+    repo = _infra_repo(tmp_path)
+    assert not (repo / ".github/workflows/ci.yml").exists()
+    assert check_terraform_checked_in_ci(repo, repo_type=INFRA) == []
+
+
+def test_cd027_flags_terraform_that_no_workflow_checks(tmp_path: Path) -> None:
+    workflow = _TERRAFORM_YML.replace("      - run: terraform validate\n", "")
+    repo = _infra_repo(tmp_path, **{".github/workflows/terraform.yml": workflow})
+    findings = check_terraform_checked_in_ci(repo, repo_type=INFRA)
     assert len(findings) == 1
-    assert "terraform-dir" in findings[0]["finding"]
+    assert "The repository declares Terraform" in findings[0]["finding"]
 
 
-def test_cd027_accepts_terraform_run_inline(tmp_path: Path) -> None:
-    ci = """
-name: CI
-on: [push]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - run: terraform fmt -check -recursive
-      - run: terraform validate
-"""
-    repo = _lambda_cog(tmp_path, **{".github/workflows/ci.yml": ci})
-    assert check_terraform_checked_in_ci(repo) == []
-
-
-def test_cd027_skips_a_repo_with_no_terraform(tmp_path: Path) -> None:
+def test_cd027_accepts_delegation_to_the_shared_workflow(tmp_path: Path) -> None:
+    """A repository keeping Terraform in infra/ may hand it to python-test.yml."""
+    _write(tmp_path, "infra/queue.tf", _QUEUE_TF)
     _write(
         tmp_path,
         ".github/workflows/ci.yml",
-        _CI_YML.replace(
-            "      terraform-dir: infra\n", "      python-version: '3.11'\n"
-        ),
+        _CI_YML + "    with:\n      terraform-dir: infra\n",
     )
     assert check_terraform_checked_in_ci(tmp_path) == []
+
+
+def test_cd027_skips_a_repo_with_no_terraform(tmp_path: Path) -> None:
+    assert check_terraform_checked_in_ci(_lambda_cog(tmp_path)) == []
 
 
 # --- PIPE-019 -----------------------------------------------------------------
@@ -609,35 +655,42 @@ def test_pipe007_ignores_calls_through_shared_clients(tmp_path: Path) -> None:
     assert check_retry_logic(repo) == []
 
 
-# --- CD-010 and CD-024, pipeline-cog branches --------------------------------
+# --- CD-010 and CD-024 --------------------------------------------------------
 
 
-def _layer1(repo: Path) -> list[dict]:
-    return [
-        f
-        for f in check_three_layer_observability(repo, cog_subtype="pipeline")
-        if "Layer 1" in f["finding"]
-    ]
+def test_cd010_pipeline_cog_does_not_carry_the_dlq_layer(tmp_path: Path) -> None:
+    """The alarm is declared in mini-app-polis/infra and checked there."""
+    findings = check_three_layer_observability(
+        _lambda_cog(tmp_path), cog_subtype="pipeline"
+    )
+    assert not any("Layer 1" in f["finding"] for f in findings)
 
 
-def test_cd010_pipeline_layer1_is_not_healthchecks(tmp_path: Path) -> None:
-    """A queue-driven cog has nothing to ping between jobs."""
-    repo = _lambda_cog(tmp_path)
-    assert "HEALTHCHECKS" not in (repo / "pyproject.toml").read_text()
-    assert _layer1(repo) == []
-
-
-def test_cd010_pipeline_flags_alarm_without_actions(tmp_path: Path) -> None:
+def test_cd010_infra_flags_alarm_without_actions(tmp_path: Path) -> None:
     alarm = _ALARM_TF.replace("[aws_sns_topic.alerts.arn]", "[]")
-    repo = _lambda_cog(tmp_path, **{"infra/account.tf": alarm})
-    assert len(_layer1(repo)) == 1
+    repo = _infra_repo(tmp_path, **{f"{MOD}/alarm.tf": alarm})
+    findings = check_cd_010_infrastructure(repo)
+    assert len(findings) == 1
+    assert "Layer 1" in findings[0]["finding"]
 
 
-def test_cd010_pipeline_flags_alarm_on_the_work_queue(tmp_path: Path) -> None:
+def test_cd010_infra_flags_alarm_on_the_work_queue(tmp_path: Path) -> None:
     """An alarm on the work queue fires on ordinary backlog, not on failure."""
     alarm = _ALARM_TF.replace("aws_sqs_queue.dlq.name", "aws_sqs_queue.jobs.name")
-    repo = _lambda_cog(tmp_path, **{"infra/account.tf": alarm})
-    assert len(_layer1(repo)) == 1
+    repo = _infra_repo(tmp_path, **{f"{MOD}/alarm.tf": alarm})
+    assert len(check_cd_010_infrastructure(repo)) == 1
+
+
+def test_cd010_infra_without_a_queue_worker_has_nothing_to_alarm_on(
+    tmp_path: Path,
+) -> None:
+    repo = _infra_repo(
+        tmp_path,
+        **{
+            f"{MOD}/worker.tf": _WORKER_TF.split('resource "aws_lambda_event_source')[0]
+        },
+    )
+    assert check_cd_010_infrastructure(repo) == []
 
 
 def test_cd010_trigger_still_needs_healthchecks(tmp_path: Path) -> None:
@@ -646,19 +699,28 @@ def test_cd010_trigger_still_needs_healthchecks(tmp_path: Path) -> None:
     assert any("HEALTHCHECKS_URL" in f["finding"] for f in findings)
 
 
-def test_cd024_pipeline_reads_the_function_not_railway(tmp_path: Path) -> None:
-    worker = _WORKER_TF.replace("  memory_size   = 1024\n", "")
-    repo = _lambda_cog(tmp_path, **{"infra/worker.tf": worker})
-    findings = check_cd_024(repo, repo_type="pipeline-cog")
+def test_cd024_pipeline_cog_is_answered_in_infra(tmp_path: Path) -> None:
+    """Not a Railway finding, and not the cog's: its limits are in infra."""
+    assert check_cd_024(tmp_path, repo_type="pipeline-cog") == []
+
+
+def test_cd024_infra_flags_a_function_without_limits(tmp_path: Path) -> None:
+    worker = _WORKER_TF.replace("  memory_size   = var.memory_mb\n", "")
+    repo = _infra_repo(tmp_path, **{f"{MOD}/worker.tf": worker})
+    findings = check_cd_024(repo, repo_type=INFRA)
     assert len(findings) == 1
     assert "memory_size" in findings[0]["finding"]
     assert "railway" not in findings[0]["finding"].lower()
 
 
-def test_cd024_pipeline_without_a_function(tmp_path: Path) -> None:
-    findings = check_cd_024(tmp_path, repo_type="pipeline-cog")
+def test_cd024_infra_flags_a_cog_without_its_limits(tmp_path: Path) -> None:
+    repo = _infra_repo(
+        tmp_path, **{"cogs.tf": _one_cog(max_concurrency="4", memory_mb="512")}
+    )
+    findings = check_cd_024(repo, repo_type=INFRA)
     assert len(findings) == 1
-    assert "aws_lambda_function" in findings[0]["finding"]
+    assert 'module "gamma"' in findings[0]["finding"]
+    assert "timeout_seconds" in findings[0]["finding"]
 
 
 def test_cd024_other_types_still_read_railway(tmp_path: Path) -> None:
@@ -670,21 +732,32 @@ def test_cd024_other_types_still_read_railway(tmp_path: Path) -> None:
 
 
 def test_cd028_flags_a_provider_with_no_version(tmp_path: Path) -> None:
-    versions = _VERSIONS_TF.replace('    version = "~> 5.0"\n', "")
-    repo = _lambda_cog(tmp_path, **{"infra/versions.tf": versions})
-    assert "no version constraint" in _messages(check_terraform_versions_pinned(repo))
+    versions = _VERSIONS_TF.replace('      version = "~> 5.0"\n', "")
+    repo = _infra_repo(tmp_path, **{"versions.tf": versions})
+    text = _messages(check_terraform_versions_pinned(repo, repo_type=INFRA))
+    assert "no version constraint" in text
+
+
+def test_cd028_reads_the_modules_providers_too(tmp_path: Path) -> None:
+    """An unpinned provider in a module widens what the root can resolve."""
+    versions = _VERSIONS_TF.replace('      version = "~> 5.0"\n', "")
+    repo = _infra_repo(tmp_path, **{f"{MOD}/versions.tf": versions})
+    text = _messages(check_terraform_versions_pinned(repo, repo_type=INFRA))
+    assert "no version constraint" in text
 
 
 def test_cd028_flags_a_missing_required_version(tmp_path: Path) -> None:
-    versions = _VERSIONS_TF.replace('  required_version = ">= 1.6"\n', "")
-    repo = _lambda_cog(tmp_path, **{"infra/versions.tf": versions})
-    assert "required_version" in _messages(check_terraform_versions_pinned(repo))
+    versions = _VERSIONS_TF.replace('  required_version = ">= 1.11"\n', "")
+    repo = _infra_repo(tmp_path, **{"versions.tf": versions})
+    text = _messages(check_terraform_versions_pinned(repo, repo_type=INFRA))
+    assert "required_version" in text
+    assert "the repository root" in text
 
 
 def test_cd028_flags_an_uncommitted_lock(tmp_path: Path) -> None:
-    repo = _lambda_cog(tmp_path)
-    (repo / "infra" / ".terraform.lock.hcl").unlink()
-    findings = check_terraform_versions_pinned(repo)
+    repo = _infra_repo(tmp_path)
+    (repo / ".terraform.lock.hcl").unlink()
+    findings = check_terraform_versions_pinned(repo, repo_type=INFRA)
     assert len(findings) == 1
     assert ".terraform.lock.hcl" in findings[0]["finding"]
 
@@ -694,8 +767,8 @@ def test_cd028_flags_a_single_platform_lock_when_ci_runs_terraform(
 ) -> None:
     """The failure all three cogs hit the day Terraform reached CI."""
     lock = _LOCK_HCL.replace('    "h1:linux_amd64_placeholder",\n', "")
-    repo = _lambda_cog(tmp_path, **{"infra/.terraform.lock.hcl": lock})
-    text = _messages(check_terraform_versions_pinned(repo))
+    repo = _infra_repo(tmp_path, **{".terraform.lock.hcl": lock})
+    text = _messages(check_terraform_versions_pinned(repo, repo_type=INFRA))
     assert "1 platform hash" in text
 
 
@@ -703,58 +776,78 @@ def test_cd028_accepts_a_single_platform_lock_when_ci_does_not(
     tmp_path: Path,
 ) -> None:
     """A stack applied only from one workstation needs only that platform."""
-    lock = _LOCK_HCL.replace('    "h1:linux_amd64_placeholder",\n', "")
-    ci = _CI_YML.replace("    with:\n      terraform-dir: infra\n", "")
-    repo = _lambda_cog(
+    repo = _infra_repo(
         tmp_path,
-        **{"infra/.terraform.lock.hcl": lock, ".github/workflows/ci.yml": ci},
+        **{
+            ".terraform.lock.hcl": _LOCK_HCL.replace(
+                '    "h1:linux_amd64_placeholder",\n', ""
+            )
+        },
     )
-    assert check_terraform_versions_pinned(repo) == []
+    (repo / ".github/workflows/terraform.yml").unlink()
+    assert check_terraform_versions_pinned(repo, repo_type=INFRA) == []
 
 
 def test_cd028_skips_a_repo_with_no_terraform(tmp_path: Path) -> None:
-    assert check_terraform_versions_pinned(tmp_path) == []
+    assert check_terraform_versions_pinned(_lambda_cog(tmp_path)) == []
 
 
 # --- SEC-008 ------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "name",
+    "path",
     [
         "terraform.tfstate",
         "terraform.tfstate.backup",
         "terraform.tfvars",
         "prod.auto.tfvars",
         "tfplan",
+        f"{MOD}/terraform.tfstate",
     ],
 )
 def test_sec008_flags_a_committed_state_or_variable_file(
-    tmp_path: Path, name: str
+    tmp_path: Path, path: str
 ) -> None:
     """No .git here, so every file present is tracked by construction."""
-    repo = _lambda_cog(tmp_path, **{f"infra/{name}": "x = 1\n"})
-    findings = check_sec_008(repo)
+    repo = _infra_repo(tmp_path, **{path: "x = 1\n"})
+    findings = check_sec_008(repo, repo_type=INFRA)
     assert len(findings) == 1
-    assert name in findings[0]["finding"]
+    assert path in findings[0]["finding"]
     assert findings[0]["severity"] == "ERROR"
 
 
 def test_sec008_does_not_flag_the_committed_template_or_lock(tmp_path: Path) -> None:
-    repo = _lambda_cog(
-        tmp_path,
-        **{"infra/terraform.tfvars.example": 'name_prefix = "demo"\n'},
+    repo = _infra_repo(
+        tmp_path, **{"terraform.tfvars.example": 'region = "us-east-1"\n'}
     )
-    assert check_sec_008(repo) == []
+    assert check_sec_008(repo, repo_type=INFRA) == []
 
 
-def test_sec008_requires_an_infra_gitignore(tmp_path: Path) -> None:
-    repo = _lambda_cog(tmp_path)
-    (repo / "infra" / ".gitignore").unlink()
-    findings = check_sec_008(repo)
+def test_sec008_requires_a_gitignore_at_the_terraform_root(tmp_path: Path) -> None:
+    repo = _infra_repo(tmp_path)
+    (repo / ".gitignore").unlink()
+    findings = check_sec_008(repo, repo_type=INFRA)
     assert len(findings) == 1
     assert ".gitignore" in findings[0]["finding"]
 
 
+def test_sec008_still_reads_infra_for_other_types(tmp_path: Path) -> None:
+    _write(tmp_path, "infra/queue.tf", _QUEUE_TF)
+    _write(tmp_path, "infra/.gitignore", "*.tfstate\n")
+    _write(tmp_path, "infra/terraform.tfstate", "{}")
+    assert "infra/terraform.tfstate" in _messages(check_sec_008(tmp_path))
+
+
 def test_sec008_skips_a_repo_with_no_terraform(tmp_path: Path) -> None:
-    assert check_sec_008(tmp_path) == []
+    assert check_sec_008(_lambda_cog(tmp_path)) == []
+
+
+# --- VER-003 scope ------------------------------------------------------------
+
+
+def test_ver003_missing_ci_yml_respects_the_rules_scope(tmp_path: Path) -> None:
+    """An infrastructure repository has no releases and no ci.yml to cut them."""
+    repo = _infra_repo(tmp_path)
+    assert check_ci(repo, exceptions=frozenset({"VER-003"})) == []
+    assert "ci.yml not found" in _messages(check_ci(repo))

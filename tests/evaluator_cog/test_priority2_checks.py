@@ -1024,10 +1024,11 @@ def test_cd010_layer1_passes_per_service_env_without_hostname(tmp_path: Path) ->
     assert not any("Layer 1" in f["finding"] for f in findings)
 
 
-def test_cd010_layer1_fails_pipeline_without_healthchecks_signals(
+def test_cd010_layer1_is_not_the_pipeline_cogs_to_answer(
     tmp_path: Path,
 ) -> None:
-    """CD-010 Layer 1: pipeline without env key or source ref still errors."""
+    """CD-010 Layer 1 for a pipeline cog is its DLQ alarm, declared and checked
+    in mini-app-polis/infra (ADR-010) — not a Healthchecks ping in the cog."""
     from evaluator_cog.engine.deterministic import check_three_layer_observability
 
     (tmp_path / ".env.example").write_text("SENTRY_DSN=\n", encoding="utf-8")
@@ -1039,7 +1040,7 @@ def test_cd010_layer1_fails_pipeline_without_healthchecks_signals(
     findings = check_three_layer_observability(
         tmp_path, cog_subtype="pipeline", language="python"
     )
-    assert any("Layer 1" in f["finding"] for f in findings)
+    assert not any("Layer 1" in f["finding"] for f in findings)
 
 
 # --- XSTACK-002 (TS exclusions) ------------------------------------------------

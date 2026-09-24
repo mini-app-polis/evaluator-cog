@@ -563,13 +563,15 @@ def _fetch_standards_for_service(
 
 
 def _resolve_language(service: dict, repo_path: Path) -> str:
-    """The language a service's checks run as: "python" or "typescript".
+    """The language a service's checks run as: "python", "typescript" or "hcl".
 
     A registry record declares it. A release-triggered event does not — it
     names a repository and nothing else — so the repository's manifest
-    decides: pyproject.toml means Python, package.json means TypeScript.
-    Defaulting to Python instead graded every TypeScript repository that
-    evaluates on release against the FastAPI rules.
+    decides: pyproject.toml means Python, package.json means TypeScript,
+    and a Terraform root (``.tf`` at the repository root, as in
+    mini-app-polis/infra) means HCL. Defaulting to Python instead graded
+    every TypeScript repository that evaluates on release against the
+    FastAPI rules.
     """
     declared = str(service.get("language") or "").strip()
     if not declared:
@@ -577,6 +579,8 @@ def _resolve_language(service: dict, repo_path: Path) -> str:
             declared = "python"
         elif (repo_path / "package.json").is_file():
             declared = "typescript"
+        elif any(repo_path.glob("*.tf")):
+            declared = "hcl"
         else:
             declared = "python"
     return "typescript" if declared == "astro" else declared

@@ -87,3 +87,34 @@ def test_passes_the_shared_workflows_repo_calling_its_own_copy(
         "./.github/workflows/evaluate.yml",
     )
     assert check_cd_031(_ci(tmp_path, _RELEASE + local)) == []
+
+
+_APPLY = """
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - run: terraform plan -out tfplan
+  apply:
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          terraform plan -out tfplan
+          terraform apply tfplan
+"""
+
+
+def test_passes_a_terraform_root_evaluating_after_its_apply(tmp_path: Path) -> None:
+    """mini-app-polis/infra has no releases; a change ships when it is applied."""
+    repo = _ci(tmp_path, _APPLY + _EVALUATE.format(needs="[plan, apply]"))
+    assert check_cd_031(repo) == []
+
+
+def test_flags_a_terraform_root_evaluating_after_only_the_plan(
+    tmp_path: Path,
+) -> None:
+    """A plan changes nothing, so evaluating after it grades the old state."""
+    repo = _ci(tmp_path, _APPLY + _EVALUATE.format(needs="plan"))
+    findings = check_cd_031(repo)
+    assert len(findings) == 1
+    assert "terraform apply" in findings[0]["finding"]
