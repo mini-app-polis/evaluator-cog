@@ -1335,10 +1335,10 @@ def _run_standalone_deterministic(
 
 
 #: How many checks carry ``applies_to: None`` (ADR-004): EVAL-003,
-#: XSTACK-006, XSTACK-007, XSTACK-008 and EVAL-007. Declared so a run can
-#: say "four of five ran" rather than reporting a partial pass as a whole
-#: one. Adding a check to the lane means changing this too.
-_APPLIES_TO_ABSENT_CHECKS = 5
+#: XSTACK-006, XSTACK-008 and EVAL-007. Declared so a run can say "three
+#: of four ran" rather than reporting a partial pass as a whole one.
+#: Adding a check to the lane means changing this too.
+_APPLIES_TO_ABSENT_CHECKS = 4
 
 
 def _run_applies_to_absent_checks(
@@ -1363,11 +1363,16 @@ def _run_applies_to_absent_checks(
         check_eval_003,
         check_eval_007,
         check_xstack_006,
-        check_xstack_007,
         check_xstack_008,
     )
 
-    # EVAL-003 — finding quality (runtime data-quality on stored findings)
+    # EVAL-003 — finding quality (runtime data-quality on stored findings).
+    #
+    # Runs here because it reads stored findings rather than any one
+    # repository, but it grades evaluator-cog's output, and the fix is
+    # always in evaluator-cog — so the finding is filed there. This lane
+    # files a finding under ecosystem-standards only when it is about the
+    # registry or spans repositories.
     try:
         eval_003_findings = check_eval_003()
         if eval_003_findings:
@@ -1377,7 +1382,7 @@ def _run_applies_to_absent_checks(
                 ctx=ctx,
                 findings=eval_003_findings,
                 run_id=run_id,
-                repo="ecosystem-standards",
+                repo="evaluator-cog",
                 flow_name="eval-003",
                 source="data_quality",
                 standards_version=standards_version,
@@ -1386,23 +1391,20 @@ def _run_applies_to_absent_checks(
     except Exception as exc:
         prefect_log.warning("EVAL-003: check failed: %s", exc)
 
-    # XSTACK-006 / XSTACK-007 — cross-repo coherence.
+    # XSTACK-006 — every repo carrying an evaluator.yaml is registered.
     #
-    # Both carry `applies_to: None`, so resolve_dispatch returns
-    # SKIP_SCOPE for them on every repo and they can never run on the
-    # per-repo path. That is correct: their read sources are the GitHub
-    # org listing and the ecosystem.yaml registry, not any one repo's
-    # source tree. This lane is where a rule with no single repo subject
-    # belongs, which is why EVAL-003 already lives here.
+    # `applies_to: None`, so resolve_dispatch returns SKIP_SCOPE for it on
+    # every repo and it can never run on the per-repo path. That is
+    # correct: its read sources are the GitHub org listing and the
+    # ecosystem.yaml registry, not any one repo's source tree, and the fix
+    # is always a registry entry. XSTACK-007 used to run here too; it is a
+    # question about one repository's pins, and runs per repository now.
     #
     # The registry passed in is the one fetched for this run, not a
     # cached copy — XSTACK-006 requires reading it at the version under
     # evaluation so a repo registered in the same release that creates
     # it is not reported as unregistered.
-    for _rule_id, _check in (
-        ("XSTACK-006", check_xstack_006),
-        ("XSTACK-007", check_xstack_007),
-    ):
+    for _rule_id, _check in (("XSTACK-006", check_xstack_006),):
         try:
             _findings = _check(ecosystem=ecosystem)
             if _findings:
@@ -1776,7 +1778,7 @@ def run_introspection(
 ) -> None:
     """Run the checks that are scoped to no repository at all.
 
-    EVAL-003, XSTACK-006, XSTACK-007, XSTACK-008 and EVAL-007
+    EVAL-003, XSTACK-006, XSTACK-008 and EVAL-007
     carry ``applies_to: None`` (ADR-004). They grade the inventory, the
     stored findings and the catalog itself, so there is no per-repository
     invocation any of them belongs to — which is why they lived at the tail

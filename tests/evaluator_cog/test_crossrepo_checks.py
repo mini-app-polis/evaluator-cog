@@ -1,4 +1,4 @@
-"""Tests for the cross-repo coherence checks (XSTACK-006, XSTACK-007, XSTACK-008).
+"""Tests for the cross-repo coherence checks (XSTACK-006, XSTACK-008).
 
 Both checks read GitHub. Every test here mocks the transport with respx
 — no test may make a real HTTP call, both because the suite must be
@@ -12,12 +12,10 @@ rather than by inspection.
 """
 
 import httpx
-import pytest
 import respx
 
 from evaluator_cog.engine.deterministic.crossrepo import (
     check_xstack_006,
-    check_xstack_007,
     check_xstack_008,
 )
 
@@ -53,42 +51,6 @@ def _mock_contents(repo: str, path: str, text: str | None) -> None:
         respx.get(url=url).mock(return_value=httpx.Response(404, json={}))
     else:
         respx.get(url=url).mock(return_value=httpx.Response(200, text=text))
-
-
-def _mock_release(repo: str, tag: str | None) -> None:
-    url = f"{_API}/repos/{_ORG}/{repo}/releases/latest"
-    if tag is None:
-        respx.get(url=url).mock(return_value=httpx.Response(404, json={}))
-    else:
-        respx.get(url=url).mock(
-            return_value=httpx.Response(200, json={"tag_name": tag})
-        )
-
-
-def _pyproject_with_rev(rev: str) -> str:
-    return (
-        "[project]\n"
-        'name = "consumer"\n'
-        'dependencies = ["common-python-utils"]\n'
-        "\n"
-        "[tool.uv.sources]\n"
-        'common-python-utils = { git = "https://github.com/'
-        'mini-app-polis/common-python-utils.git", rev = "' + rev + '" }\n'
-    )
-
-
-_LIB_SERVICE = {
-    "id": "common-python-utils",
-    "type": "shared-library",
-    "status": "active",
-    "language": "python",
-}
-_CONSUMER_SERVICE = {
-    "id": "consumer-cog",
-    "type": "pipeline-cog",
-    "status": "active",
-    "language": "python",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -205,163 +167,6 @@ def test_xstack_006_contents_failure_yields_checker_not_violations() -> None:
     )
 
     findings = check_xstack_006(ecosystem=_ecosystem([]), github_token="t")
-
-    assert [f["rule_id"] for f in findings] == ["CHECKER"]
-
-
-# ---------------------------------------------------------------------------
-# XSTACK-007
-# ---------------------------------------------------------------------------
-
-
-@respx.mock
-def test_xstack_007_no_ecosystem_returns_empty() -> None:
-    assert check_xstack_007(ecosystem=None, github_token="t") == []
-
-
-@respx.mock
-def test_xstack_007_no_tracked_libraries_returns_empty() -> None:
-    """Nothing is typed shared-library, so there is nothing to track."""
-    ecosystem = _ecosystem([_CONSUMER_SERVICE])
-    assert check_xstack_007(ecosystem=ecosystem, github_token="t") == []
-
-
-def _run_007_with_pin(rev: str, latest_tag: str) -> list[dict]:
-    """Fleet of one library + one consumer; consumer pins ``rev``."""
-    _mock_release("common-python-utils", latest_tag)
-    _mock_contents("common-python-utils", "pyproject.toml", None)
-    _mock_contents("common-python-utils", "package.json", None)
-    _mock_contents("consumer-cog", "pyproject.toml", _pyproject_with_rev(rev))
-    _mock_contents("consumer-cog", "package.json", None)
-    ecosystem = _ecosystem([_LIB_SERVICE, _CONSUMER_SERVICE])
-    return check_xstack_007(ecosystem=ecosystem, github_token="t")
-
-
-@respx.mock
-def test_xstack_007_clean_fleet_returns_empty() -> None:
-    assert _run_007_with_pin("v4.1.0", "v4.1.0") == []
-
-
-@respx.mock
-def test_xstack_007_flags_two_minors_behind() -> None:
-    findings = _run_007_with_pin("v4.1.0", "v4.3.0")
-
-    assert len(findings) == 1
-    f = findings[0]
-    assert f["rule_id"] == "XSTACK-007"
-    assert f["severity"] == "WARN"
-    assert f["dimension"] == "cross_repo_coherence"
-    # The finding must name the repo, the library, and both versions.
-    assert "consumer-cog" in f["finding"]
-    assert "common-python-utils" in f["finding"]
-    assert "v4.1.0" in f["finding"]
-    assert "v4.3.0" in f["finding"]
-    assert len(f["suggestion"]) >= 40
-
-
-@respx.mock
-def test_xstack_007_one_minor_behind_is_not_flagged() -> None:
-    assert _run_007_with_pin("v4.1.0", "v4.2.0") == []
-
-
-@respx.mock
-def test_xstack_007_patch_behind_is_not_flagged() -> None:
-    """Compare minors only — an un-taken patch release is not staleness."""
-    assert _run_007_with_pin("v4.1.0", "v4.1.9") == []
-
-
-@respx.mock
-def test_xstack_007_flags_major_skew() -> None:
-    findings = _run_007_with_pin("v3.9.0", "v5.0.0")
-    assert [f["rule_id"] for f in findings] == ["XSTACK-007"]
-    assert "major" in findings[0]["finding"]
-
-
-@pytest.mark.parametrize(
-    "rev",
-    [
-        "main",
-        "develop",
-        "a" * 40,
-        "0123456789abcdef0123456789abcdef01234567",
-    ],
-)
-@respx.mock
-def test_xstack_007_skips_branch_and_sha_pins(rev: str) -> None:
-    """Branch and bare-SHA pins are CD-020's finding, not this rule's.
-
-    Skipping rather than flagging is what keeps one defect from being
-    charged twice across two rules.
-    """
-    assert _run_007_with_pin(rev, "v9.9.0") == []
-
-
-@respx.mock
-def test_xstack_007_reads_typescript_package_json() -> None:
-    _mock_release("common-typescript-utils", "v4.4.0")
-    _mock_contents("common-typescript-utils", "pyproject.toml", None)
-    _mock_contents("common-typescript-utils", "package.json", None)
-    _mock_contents("web-app", "pyproject.toml", None)
-    _mock_contents(
-        "web-app",
-        "package.json",
-        '{"dependencies": {"@mini-app-polis/common-typescript-utils": "^4.1.0"}}',
-    )
-
-    ecosystem = _ecosystem(
-        [
-            {
-                "id": "common-typescript-utils",
-                "type": "shared-library",
-                "status": "active",
-                "language": "typescript",
-            },
-            {"id": "web-app", "type": "react-app", "status": "active"},
-        ]
-    )
-    findings = check_xstack_007(ecosystem=ecosystem, github_token="t")
-
-    assert [f["rule_id"] for f in findings] == ["XSTACK-007"]
-    assert "package.json dependencies" in findings[0]["finding"]
-
-
-@respx.mock
-def test_xstack_007_library_without_release_is_skipped() -> None:
-    """No published release means no baseline, so no consumer is stale."""
-    _mock_release("common-python-utils", None)
-
-    ecosystem = _ecosystem([_LIB_SERVICE, _CONSUMER_SERVICE])
-    assert check_xstack_007(ecosystem=ecosystem, github_token="t") == []
-
-
-@respx.mock
-def test_xstack_007_release_failure_yields_checker_not_violations() -> None:
-    respx.get(url=f"{_API}/repos/{_ORG}/common-python-utils/releases/latest").mock(
-        return_value=httpx.Response(500, json={"message": "boom"})
-    )
-
-    ecosystem = _ecosystem([_LIB_SERVICE, _CONSUMER_SERVICE])
-    findings = check_xstack_007(ecosystem=ecosystem, github_token="t")
-
-    assert len(findings) == 1
-    assert findings[0]["rule_id"] == "CHECKER"
-    assert findings[0]["severity"] == "WARN"
-    assert not any(f["rule_id"] == "XSTACK-007" for f in findings)
-
-
-@respx.mock
-def test_xstack_007_manifest_failure_yields_checker_not_violations() -> None:
-    """A rate-limited manifest read must not look like a fleet-wide clean run
-    nor like a violation — it is a CHECKER."""
-    _mock_release("common-python-utils", "v9.9.0")
-    _mock_contents("common-python-utils", "pyproject.toml", None)
-    _mock_contents("common-python-utils", "package.json", None)
-    respx.get(url=f"{_API}/repos/{_ORG}/consumer-cog/contents/pyproject.toml").mock(
-        return_value=httpx.Response(403, json={"message": "rate limited"})
-    )
-
-    ecosystem = _ecosystem([_LIB_SERVICE, _CONSUMER_SERVICE])
-    findings = check_xstack_007(ecosystem=ecosystem, github_token="t")
 
     assert [f["rule_id"] for f in findings] == ["CHECKER"]
 

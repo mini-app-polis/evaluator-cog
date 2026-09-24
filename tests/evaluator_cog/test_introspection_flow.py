@@ -1,7 +1,8 @@
 """The checks that belong to no repository, and how they get run now.
 
-Five of them — EVAL-003, XSTACK-006, XSTACK-007, XSTACK-008 and EVAL-007
-— carry ``applies_to: None``. They grade the inventory, the
+Four of them — EVAL-003, XSTACK-006, XSTACK-008 and EVAL-007 — carry
+``applies_to: None``. (XSTACK-007 was a fifth; it is a question about one
+repository's pins and runs per repository now.) They grade the inventory, the
 stored findings and the catalog, so there is no per-repository invocation
 any of them belongs to. They ran at the tail of ``run_fleet_sweep``
 because that was the one place in the old design that happened once per
@@ -316,7 +317,7 @@ def test_an_unreachable_repo_is_not_recorded_as_missing() -> None:
 # ── the report says whose run it was, and what it did ────────────────────
 
 
-def _introspect(*, completed: int = 6):
+def _introspect(*, completed: int = 4):
     ctx = c.RunContext.for_run("introspection")
     with (
         patch.object(c, "_get_standards_version", return_value="7.0.0"),
@@ -342,15 +343,15 @@ def test_a_complete_pass_reports_what_it_ran() -> None:
     posted a finding, which is the opposite of true."""
     report = _introspect().report
 
-    assert report.processed == 6
+    assert report.processed == 4
     assert "nothing to do" not in report.text()
 
 
 def test_a_partial_pass_says_so() -> None:
     """A check that raises is logged and skipped and the run goes on, so
-    "four of five ran" and "five ran and found nothing" are otherwise the
+    "three of four ran" and "four ran and found nothing" are otherwise the
     same silence."""
-    report = _introspect(completed=4).report
+    report = _introspect(completed=3).report
 
     assert report.severity == "WARN"
     assert "check_failed" in report.text()

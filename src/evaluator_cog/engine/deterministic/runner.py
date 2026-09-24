@@ -66,6 +66,7 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_terraform_versions_pinned,
     check_three_layer_observability,
 )
+from evaluator_cog.engine.deterministic.dependencies import check_xstack_007
 from evaluator_cog.engine.deterministic.docs import (
     check_adrs_present,
     check_changelog,
@@ -814,12 +815,12 @@ def run_all_checks(
     # from it. The only conditionals below are ones a rule's own
     # check_notes asks for.
     #
-    # XSTACK-006 and XSTACK-007 are deliberately absent: both have
-    # `applies_to: None`, which makes resolve_dispatch return SKIP_SCOPE
-    # for them on every repo. They read the org listing and the registry
-    # rather than any one repo's source, and so run once per flow
-    # invocation from _run_applies_to_absent_checks(), alongside EVAL-003
-    # and EVAL-007.
+    # XSTACK-006 is deliberately absent: it has `applies_to: None`, which
+    # makes resolve_dispatch return SKIP_SCOPE for it on every repo. It
+    # reads the org listing and the registry rather than any one repo's
+    # source, and so runs once per flow invocation from
+    # _run_applies_to_absent_checks(), alongside EVAL-003, EVAL-007 and
+    # XSTACK-008. XSTACK-007 runs below: a stale pin is one repo's to fix.
 
     # security_posture — SEC-001..008.
     _run(check_sec_001, "SEC-001")
@@ -830,6 +831,12 @@ def run_all_checks(
     _run(check_sec_006, "SEC-006")
     _run(lambda p: check_sec_008(p, repo_type=_repo_type_for_checks), "SEC-008")
     _run(check_sec_007, "SEC-007")
+
+    # cross_repo_coherence — this repository's pins of the fleet's own
+    # libraries, judged against what the package registries publish. Per
+    # repository, so the repository that has to fix it owns the finding
+    # and its own release re-evaluates it.
+    _run(check_xstack_007, "XSTACK-007")
 
     # operational_readiness — only OPS-002 is checkable.
     #

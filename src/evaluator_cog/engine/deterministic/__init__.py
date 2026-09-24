@@ -52,7 +52,6 @@ from evaluator_cog.engine.deterministic.containers import (
 )
 from evaluator_cog.engine.deterministic.crossrepo import (
     check_xstack_006,
-    check_xstack_007,
     check_xstack_008,
 )
 from evaluator_cog.engine.deterministic.delivery import (
@@ -70,6 +69,7 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_structured_logging,
     check_three_layer_observability,
 )
+from evaluator_cog.engine.deterministic.dependencies import check_xstack_007
 from evaluator_cog.engine.deterministic.docs import (
     check_adrs_present,
     check_changelog,
