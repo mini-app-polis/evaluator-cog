@@ -1,0 +1,32 @@
+# A fleet sweep in LLM mode, on demand only.
+#
+# Releases sweep deterministically (ecosystem-standards ci.yml): no token
+# cost, and nothing waits on it. The LLM checks — rules whose check_notes
+# start with `LLM CHECK.` — cost tokens per repository, so they run when
+# asked for, from the Actions tab, and never as a side effect of a release.
+# It lives here because it is the evaluator's engine and token spend being
+# exercised, not a response to a catalog change.
+#
+# Full fleet only. A single repository in LLM mode is a debugging need,
+# and the API serves it directly.
+name: LLM sweep
+
+on:
+  workflow_dispatch:
+
+# A second press while one is queued would pay for the same sweep twice.
+concurrency:
+  group: llm-sweep
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    uses: mini-app-polis/.github/.github/workflows/evaluate.yml@v3
+    with:
+      scope: fleet
+      mode: llm
+    secrets:
+      api-key: ${{ secrets.CI_VALIDATOR_API_KEY }}
