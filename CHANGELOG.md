@@ -1,3 +1,10 @@
+## [3.49.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.1...v3.49.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* an unreadable or failed LLM assessment is not a pass ([f181d87](https://github.com/mini-app-polis/evaluator-cog/commit/f181d87ef2e58b54679767e4c2f6a9f746709e95))
+
 ## [3.49.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.0...v3.49.1) (2026-09-26)
 
 
