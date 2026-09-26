@@ -906,6 +906,9 @@ def run_conformance_check(
 
     # LLM soft-rule assessment
     llm_findings: list[dict[str, Any]] = []
+    #: Why the LLM half produced no assessment, or None when it did. An
+    #: empty llm_findings means "clean" only when this is None.
+    llm_not_assessed: str | None = None
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key:
         try:
@@ -929,7 +932,10 @@ def run_conformance_check(
             raw = _anthropic_messages_create(
                 api_key=api_key,
                 model=model,
-                max_tokens=2048,
+                # Room for a full answer. Output is billed as generated,
+                # so the ceiling costs nothing on a short reply; a reply
+                # that still reaches it raises rather than posting a pass.
+                max_tokens=8192,
                 user_prompt=prompt,
             )
             llm_findings, _ = _parse_findings_from_claude(raw)
@@ -974,6 +980,9 @@ def run_conformance_check(
         except Exception as exc:
             log.warning("conformance: LLM assessment failed for %s: %s", repo_id, exc)
             _report_issue("llm_assessment_failed", repo_id, exc, ctx=ctx)
+            llm_not_assessed = (
+                f"the LLM assessment failed ({type(exc).__name__}: {exc})"
+            )
     else:
         prefect_log.warning(
             "conformance: ANTHROPIC_API_KEY not set, skipping LLM assessment for %s",
@@ -985,11 +994,33 @@ def run_conformance_check(
         # repos went unassessed; not escalated, because the count is the
         # information and the run is otherwise fine.
         _report_note("llm_skipped_no_api_key", repo_id, ctx=ctx)
+        llm_not_assessed = "ANTHROPIC_API_KEY is not set"
 
     all_findings = deterministic_findings + llm_findings
     findings_to_post = llm_findings if post_llm_only else all_findings
 
-    if post and not findings_to_post:
+    if post and not findings_to_post and llm_not_assessed is not None:
+        # Nothing to post is not a pass when half the assessment never
+        # happened. This row used to be the SUCCESS below: a 404 from the
+        # model, or a reply that could not be read, reported the repo as
+        # having passed every LLM check.
+        findings_to_post = [
+            {
+                "rule_id": "STATUS",
+                "dimension": "structural_conformance",
+                "severity": "WARN",
+                "finding": (
+                    f"{repo_id} was not assessed against the LLM checks for "
+                    f"standards v{standards_version}: {llm_not_assessed}. "
+                    f"Its LLM conformance is unknown, not clean."
+                ),
+                "suggestion": (
+                    "See this run's llm_assessment_failed detail, fix the "
+                    "cause, and run the LLM sweep again."
+                ),
+            }
+        ]
+    elif post and not findings_to_post:
         findings_to_post = [
             {
                 "rule_id": "STATUS",
