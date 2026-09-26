@@ -18,10 +18,10 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 
 ## ANTHROPIC_MODEL
 
-Claude model to use for evaluation. Defaults to claude-sonnet-4-20250514.
+Claude model to use for evaluation. Defaults to claude-sonnet-5.
 
 ```
-ANTHROPIC_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_MODEL=claude-sonnet-5
 ```
 
 ## KAIANO_API_BASE_URL
