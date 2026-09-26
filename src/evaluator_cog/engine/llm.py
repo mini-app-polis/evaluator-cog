@@ -240,6 +240,16 @@ def _anthropic_retry_delay(response: httpx.Response | None, attempt: int) -> flo
     )
 
 
+class LLMResponseError(RuntimeError):
+    """The model answered, but not with something that can be graded.
+
+    A truncated reply or one that is not a findings payload. Raised rather
+    than read as "no findings", because an empty list is what a clean repo
+    produces — treating an unreadable answer the same way reports a pass
+    that no assessment actually made.
+    """
+
+
 def _anthropic_messages_create(
     *,
     api_key: str,
@@ -250,7 +260,9 @@ def _anthropic_messages_create(
     """Send a single-turn message to the Anthropic Messages API and return the text response.
 
     Makes a synchronous HTTP POST to /v1/messages with the given model and prompt.
-    Raises httpx.HTTPStatusError on non-2xx responses.
+    Raises httpx.HTTPStatusError on non-2xx responses, and LLMResponseError
+    when the reply stopped at ``max_tokens`` — a cut-off JSON payload
+    cannot be graded, however much of it arrived.
     """
     import os
 
@@ -292,6 +304,11 @@ def _anthropic_messages_create(
                 data = response.json()
                 break
         time.sleep(_anthropic_retry_delay(response, attempt))
+    if data.get("stop_reason") == "max_tokens":
+        raise LLMResponseError(
+            f"response truncated at max_tokens={max_tokens} "
+            f"(model {data.get('model') or model})"
+        )
     blocks = data.get("content") or []
     parts: list[str] = []
     for b in blocks:
@@ -306,7 +323,11 @@ def _parse_findings_from_claude(text: str) -> tuple[list[dict[str, Any]], bool]:
     Accepts raw text that may contain a ```json``` fence.
     Returns a tuple of (findings_list, bool) where bool is always False
     (reserved for a future partial-parse flag).
-    Returns ([], False) on any parse error.
+
+    Raises LLMResponseError when the text is not a findings payload — not
+    JSON, or JSON of the wrong shape. It used to return an empty list,
+    which the flow posts as "passed all LLM checks": an unreadable answer
+    reported as a clean one.
     """
     raw = text.strip()
     m = _JSON_FENCE.search(raw)
@@ -314,16 +335,21 @@ def _parse_findings_from_claude(text: str) -> tuple[list[dict[str, Any]], bool]:
         raw = m.group(1).strip()
     try:
         parsed_top = json.loads(raw)
-    except json.JSONDecodeError:
-        return [], False
+    except json.JSONDecodeError as exc:
+        raise LLMResponseError(
+            f"response is not JSON ({exc.msg}); starts {raw[:120]!r}"
+        ) from exc
 
-    if isinstance(parsed_top, dict) and "findings" in parsed_top:
-        inner = parsed_top["findings"]
-        parsed = inner if isinstance(inner, list) else []
+    if isinstance(parsed_top, dict) and isinstance(parsed_top.get("findings"), list):
+        parsed = parsed_top["findings"]
     elif isinstance(parsed_top, list):
         parsed = parsed_top
     else:
-        return [], False
+        raise LLMResponseError(
+            "response is JSON but not a findings payload: expected "
+            '{"findings": [...]} or a list, got '
+            f"{type(parsed_top).__name__}"
+        )
 
     validated: list[dict[str, Any]] = []
     for item in parsed:

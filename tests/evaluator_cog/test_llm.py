@@ -10,6 +10,7 @@ import pytest
 import respx
 
 from evaluator_cog.engine.llm import (
+    LLMResponseError,
     _anthropic_messages_create,
     _gather_evidence_files,
     _normalize_finding,
@@ -101,9 +102,21 @@ def test_parse_findings_empty_list() -> None:
     assert findings == []
 
 
-def test_parse_findings_invalid_json_returns_empty() -> None:
-    findings, _ = _parse_findings_from_claude("this is not json")
-    assert findings == []
+def test_parse_findings_invalid_json_raises() -> None:
+    """Not JSON is an unreadable answer, never an empty one."""
+    with pytest.raises(LLMResponseError, match="not JSON"):
+        _parse_findings_from_claude("this is not json")
+
+
+def test_parse_findings_truncated_json_raises() -> None:
+    """A reply cut off mid-payload must not read as a clean pass."""
+    with pytest.raises(LLMResponseError):
+        _parse_findings_from_claude('{"findings": [{"severity": "WARN", "fin')
+
+
+def test_parse_findings_non_list_findings_raises() -> None:
+    with pytest.raises(LLMResponseError, match="not a findings payload"):
+        _parse_findings_from_claude(json.dumps({"findings": "none"}))
 
 
 def test_parse_findings_top_level_list() -> None:
@@ -199,21 +212,39 @@ def test_anthropic_messages_create_raises_on_4xx() -> None:
         )
 
 
+@respx.mock
+def test_anthropic_messages_create_raises_when_truncated() -> None:
+    """stop_reason max_tokens means the payload was cut off."""
+    respx.post("https://api.anthropic.com/v1/messages").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": '{"findings": [{"sev'}],
+                "stop_reason": "max_tokens",
+            },
+        )
+    )
+    with pytest.raises(LLMResponseError, match="truncated at max_tokens=100"):
+        _anthropic_messages_create(
+            api_key="k", model="m", max_tokens=100, user_prompt="x"
+        )
+
+
 # ---------------------------------------------------------------------------
 # _parse_findings_from_claude — edge cases
 # ---------------------------------------------------------------------------
 
 
-def test_parse_findings_valid_json_wrong_type_returns_empty() -> None:
-    """Valid JSON that is neither dict nor list (e.g. a number) returns []."""
-    findings, _ = _parse_findings_from_claude("42")
-    assert findings == []
+def test_parse_findings_valid_json_wrong_type_raises() -> None:
+    """Valid JSON that is neither dict nor list (e.g. a number) raises."""
+    with pytest.raises(LLMResponseError):
+        _parse_findings_from_claude("42")
 
 
-def test_parse_findings_json_string_returns_empty() -> None:
+def test_parse_findings_json_string_raises() -> None:
     """A bare JSON string is not a valid findings payload."""
-    findings, _ = _parse_findings_from_claude('"just a string"')
-    assert findings == []
+    with pytest.raises(LLMResponseError):
+        _parse_findings_from_claude('"just a string"')
 
 
 def test_normalize_finding_empty_string_values_use_sentinel() -> None:
@@ -267,13 +298,6 @@ def test_build_conformance_prompt_truncates_long_readme(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # _flow_name_to_repo — unknown flow returns "unknown"
 # ---------------------------------------------------------------------------
-
-
-def test_parse_findings_findings_value_not_list_returns_empty() -> None:
-    """When 'findings' key exists but value is not a list, returns []."""
-    raw = '{"findings": "this should be a list not a string"}'
-    findings, _ = _parse_findings_from_claude(raw)
-    assert findings == []
 
 
 def test_build_conformance_prompt_with_check_exceptions_and_reasons() -> None:

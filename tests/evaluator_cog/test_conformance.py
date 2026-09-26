@@ -161,6 +161,85 @@ def test_post_llm_only_empty_llm_posts_status(monkeypatch) -> None:
     assert posted[0]["source"] == "conformance_llm"
 
 
+@pytest.mark.parametrize(
+    "llm_patch",
+    [
+        {"return_value": "Here is my assessment: everything looks fine."},
+        {"side_effect": RuntimeError("404 Not Found")},
+    ],
+    ids=["unreadable-reply", "request-failed"],
+)
+def test_llm_not_assessed_never_posts_success(monkeypatch, llm_patch) -> None:
+    """An LLM half that produced no assessment is not a pass."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test.example.com")
+
+    posted: list[dict] = []
+
+    def _fake_post(path: str, payload: dict) -> dict:
+        posted.append(payload)
+        return {}
+
+    api = SimpleNamespace(post=_fake_post, get=MagicMock(return_value={}))
+    report = MagicMock()
+
+    with (
+        patch(
+            "evaluator_cog.flows.conformance._anthropic_messages_create",
+            **llm_patch,
+        ),
+        patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client,
+        patch.object(conf_mod, "log", MagicMock()),
+    ):
+        mock_client.from_env.return_value = api
+        run_conformance_check(
+            ctx=RunContext(report=report),
+            repo_id="test-repo",
+            repo_path=_minimal_repo(),
+            standards_version="2.5.1",
+            post=True,
+            post_llm_only=True,
+            run_id="conformance-2.5.1-test",
+        )
+
+    assert len(posted) == 1
+    assert posted[0]["severity"] == "WARN"
+    assert "not assessed against the LLM checks" in posted[0]["finding"]
+    assert "passed" not in posted[0]["finding"]
+    report.issue.assert_called_once()
+    assert report.issue.call_args.args[:2] == ("llm_assessment_failed", "test-repo")
+
+
+def test_llm_skipped_without_key_never_posts_success(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test.example.com")
+
+    posted: list[dict] = []
+
+    def _fake_post(path: str, payload: dict) -> dict:
+        posted.append(payload)
+        return {}
+
+    api = SimpleNamespace(post=_fake_post, get=MagicMock(return_value={}))
+    with (
+        patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client,
+        patch.object(conf_mod, "log", MagicMock()),
+    ):
+        mock_client.from_env.return_value = api
+        run_conformance_check(
+            ctx=RunContext(),
+            repo_id="test-repo",
+            repo_path=_minimal_repo(),
+            standards_version="2.5.1",
+            post=True,
+            post_llm_only=True,
+            run_id="conformance-2.5.1-test",
+        )
+
+    assert [p["severity"] for p in posted] == ["WARN"]
+    assert "ANTHROPIC_API_KEY is not set" in posted[0]["finding"]
+
+
 def test_run_conformance_check_posts_with_conformance_llm_source(monkeypatch) -> None:
     """run_conformance_check() posts all findings with source='conformance_llm'.
 
