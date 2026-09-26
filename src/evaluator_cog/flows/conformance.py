@@ -925,7 +925,7 @@ def run_conformance_check(
                 else None,
                 repo_path=repo_path,
             )
-            model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+            model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
             raw = _anthropic_messages_create(
                 api_key=api_key,
                 model=model,
