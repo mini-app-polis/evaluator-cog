@@ -1,3 +1,10 @@
+## [3.49.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.0...v3.49.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* default LLM model to claude-sonnet-5; sonnet-4-20250514 is retired ([1bb9e57](https://github.com/mini-app-polis/evaluator-cog/commit/1bb9e571b966e60e06491f6c7b1f0637db0c8c2d))
+
 # [3.49.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.48.0...v3.49.0) (2026-09-24)
 
 
