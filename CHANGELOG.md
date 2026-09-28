@@ -1,3 +1,10 @@
+## [3.49.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.3...v3.49.4) (2026-09-28)
+
+
+### Bug Fixes
+
+* **deps:** bump boto3 in the minor-and-patch group ([7546c0b](https://github.com/mini-app-polis/evaluator-cog/commit/7546c0ba9eed625f844a01214677960845cc1738))
+
 ## [3.49.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.2...v3.49.3) (2026-09-28)
 
 
