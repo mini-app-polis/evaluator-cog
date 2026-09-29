@@ -1,3 +1,10 @@
+## [3.49.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.4...v3.49.5) (2026-09-29)
+
+
+### Bug Fixes
+
+* **conformance:** CD-006 flags only dispatch-triggered workflows that start pipeline work; TEST-013 skips test files ([1f4ef12](https://github.com/mini-app-polis/evaluator-cog/commit/1f4ef12498a994496d4ca2c1e0b543270d5982a9))
+
 ## [3.49.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.3...v3.49.4) (2026-09-28)
 
 
