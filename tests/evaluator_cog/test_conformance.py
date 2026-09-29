@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import api_fakes
 import pytest
 
 import evaluator_cog.flows.conformance as conf_mod
@@ -43,7 +43,7 @@ def test_post_llm_only_posts_only_llm_findings(monkeypatch) -> None:
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
     llm_finding = {
         "rule_id": "DOC-006",
@@ -53,7 +53,7 @@ def test_post_llm_only_posts_only_llm_findings(monkeypatch) -> None:
         "suggestion": "Add docstrings.",
     }
 
-    api = SimpleNamespace(post=_fake_post, get=MagicMock(return_value={}))
+    api = api_fakes.api(post=_fake_post)
 
     with (
         patch(
@@ -93,9 +93,9 @@ def test_post_llm_only_false_posts_all_findings(monkeypatch) -> None:
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
-    api = SimpleNamespace(post=_fake_post, get=MagicMock(return_value={}))
+    api = api_fakes.api(post=_fake_post)
 
     with (
         patch(
@@ -132,9 +132,9 @@ def test_post_llm_only_empty_llm_posts_status(monkeypatch) -> None:
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
-    api = SimpleNamespace(post=_fake_post, get=MagicMock(return_value={}))
+    api = api_fakes.api(post=_fake_post)
 
     with (
         patch(
@@ -178,9 +178,9 @@ def test_llm_not_assessed_never_posts_success(monkeypatch, llm_patch) -> None:
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
-    api = SimpleNamespace(post=_fake_post, get=MagicMock(return_value={}))
+    api = api_fakes.api(post=_fake_post)
     report = MagicMock()
 
     with (
@@ -218,9 +218,9 @@ def test_llm_skipped_without_key_never_posts_success(monkeypatch) -> None:
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
-    api = SimpleNamespace(post=_fake_post, get=MagicMock(return_value={}))
+    api = api_fakes.api(post=_fake_post)
     with (
         patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client,
         patch.object(conf_mod, "log", MagicMock()),
@@ -256,9 +256,9 @@ def test_run_conformance_check_posts_with_conformance_llm_source(monkeypatch) ->
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
-    api = SimpleNamespace(post=_fake_post, get=MagicMock(return_value={}))
+    api = api_fakes.api(post=_fake_post)
 
     with (
         patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client,

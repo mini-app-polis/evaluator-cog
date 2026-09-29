@@ -8,8 +8,9 @@ actually delivers those fields in the wire payload.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import patch
+
+import api_fakes
 
 from evaluator_cog.models import ConformanceResult, Finding
 
@@ -96,9 +97,9 @@ def test_post_payload_contains_all_required_contract_fields(monkeypatch) -> None
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
-    api = SimpleNamespace(post=_fake_post, get=lambda *_, **__: None)
+    api = api_fakes.api(post=_fake_post)
 
     with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client:
         mock_client.from_env.return_value = api
@@ -162,9 +163,9 @@ def test_post_payload_severity_normalisation(monkeypatch) -> None:
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
-    api = SimpleNamespace(post=_fake_post, get=lambda *_, **__: None)
+    api = api_fakes.api(post=_fake_post)
 
     with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client:
         mock_client.from_env.return_value = api
@@ -200,9 +201,9 @@ def test_post_payload_source_field_is_preserved(monkeypatch) -> None:
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
-    api = SimpleNamespace(post=_fake_post, get=lambda *_, **__: None)
+    api = api_fakes.api(post=_fake_post)
 
     for source_val in (
         "conformance_deterministic",

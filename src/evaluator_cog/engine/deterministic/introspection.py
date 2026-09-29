@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from evaluator_cog.engine.deterministic._shared import (
     Finding,
@@ -20,23 +21,20 @@ _PAGE_SIZE = 500
 _MAX_PAGES = 20  # 10k rows. A run needing more than this has a different problem.
 
 
-def _fetch_evaluations(api: object, query: str) -> list[dict]:
-    """All rows for `query`, paged at the endpoint's maximum limit.
+def _fetch_evaluations(api: Any, **filters: str) -> list[dict]:
+    """All rows matching `filters`, paged at the endpoint's maximum limit.
 
-    `query` carries the filters only — this adds `limit` and `offset`.
+    `filters` are ``list_evaluations``' own (``source``, ``run_id`` …); this
+    adds ``limit`` and ``offset``. Rows come back as the API's
+    ``PipelineEvaluationItem`` and are returned as plain dicts for the checks
+    that read them.
     """
     rows: list[dict] = []
     for page in range(_MAX_PAGES):
-        response = api.get(  # type: ignore[attr-defined]
-            f"{query}&limit={_PAGE_SIZE}&offset={page * _PAGE_SIZE}"
+        batch = api.list_evaluations(
+            **filters, limit=_PAGE_SIZE, offset=page * _PAGE_SIZE
         )
-        if isinstance(response, dict):
-            batch = response.get("data") or response.get("items") or []
-        elif isinstance(response, list):
-            batch = response
-        else:
-            batch = []
-        rows.extend(batch)
+        rows.extend(item.model_dump(mode="json") for item in batch)
         if len(batch) < _PAGE_SIZE:
             break
     return rows
@@ -101,9 +99,7 @@ def check_eval_003() -> list[Finding]:
 
     try:
         api = KaianoApiClient.from_env("evaluator-cog")
-        response = _fetch_evaluations(
-            api, f"/v1/evaluations?source={_eval_003_sources}"
-        )
+        rows = _fetch_evaluations(api, source=_eval_003_sources)
     except Exception as exc:
         return [
             _finding(
@@ -116,13 +112,6 @@ def check_eval_003() -> list[Finding]:
                 "reachable-service problem.",
             )
         ]
-
-    if isinstance(response, dict):
-        rows = response.get("data") or response.get("items") or []
-    elif isinstance(response, list):
-        rows = response
-    else:
-        rows = []
 
     findings: list[Finding] = []
 

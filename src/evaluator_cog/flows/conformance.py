@@ -1758,7 +1758,10 @@ def _unresolved_from_run(pass_run_id: str, *, log: Any) -> list[dict[str, str]]:
 
     try:
         api = KaianoApiClient.from_env(_REPO)
-        response = api.get(f"/v1/evaluations?run_id={pass_run_id}&limit=500")
+        rows = [
+            item.model_dump(mode="json")
+            for item in api.list_evaluations(run_id=pass_run_id, limit=500)
+        ]
     except Exception as exc:  # noqa: BLE001 — reported, not raised
         log.warning(
             "introspection: could not read run %s for XSTACK-008: %s",
@@ -1766,13 +1769,6 @@ def _unresolved_from_run(pass_run_id: str, *, log: Any) -> list[dict[str, str]]:
             exc,
         )
         return []
-
-    if isinstance(response, dict):
-        rows = response.get("data") or response.get("items") or []
-    elif isinstance(response, list):
-        rows = response
-    else:
-        rows = []
 
     unresolved: list[dict[str, str]] = []
     for row in rows:

@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import api_fakes
 import pytest
 
 from evaluator_cog.adapters import queue as q
@@ -104,14 +105,14 @@ def test_an_introspection_run_reports_its_outcome(_no_notifications) -> None:
 
 
 def _rows(*findings: str) -> dict:
-    return {"data": [{"finding": f} for f in findings]}
+    return api_fakes.rows(*(api_fakes.row(finding=f) for f in findings))
 
 
 def test_a_404_row_is_recognised_and_rebuilt() -> None:
     """The check parses org, repo and branch back out of a zipball URL, so
     it is handed the shape it already understands rather than taught about
     rows."""
-    api = MagicMock()
+    api = api_fakes.api()
     api.get.return_value = _rows(
         c._NOT_FOUND_REASON_FMT.format(
             org="mini-app-polis", repo="ghost-cog", ref="main"
@@ -121,6 +122,9 @@ def test_a_404_row_is_recognised_and_rebuilt() -> None:
     with patch("mini_app_polis.api.KaianoApiClient.from_env", return_value=api):
         found = c._unresolved_from_run("run-1", log=MagicMock())
 
+    api.get.assert_called_once_with(
+        "/v1/evaluations", {"run_id": "run-1", "limit": 500}
+    )
     assert found == [
         {
             "label": "mini-app-polis/ghost-cog",
@@ -138,7 +142,7 @@ def test_an_unreachable_repo_is_not_reported_as_missing() -> None:
     not there' — that would file an ERROR against a repository whose only
     crime was being downloaded during a GitHub incident.
     """
-    api = MagicMock()
+    api = api_fakes.api()
     api.get.return_value = _rows(
         "watcher-cog was declared active but was not evaluated in this run: "
         "the repository could not be downloaded (watcher-cog@main). Its "
@@ -150,7 +154,7 @@ def test_an_unreachable_repo_is_not_reported_as_missing() -> None:
 
 
 def test_ordinary_findings_are_not_mistaken_for_missing_repos() -> None:
-    api = MagicMock()
+    api = api_fakes.api()
     api.get.return_value = _rows(
         "CD-026: the release job does not depend on the security job",
         "STATUS: deejay-cog evaluated clean",
@@ -167,7 +171,7 @@ def test_the_same_repo_twice_is_one_entry() -> None:
     reason = c._NOT_FOUND_REASON_FMT.format(
         org="mini-app-polis", repo="ghost-mono", ref="main"
     )
-    api = MagicMock()
+    api = api_fakes.api()
     api.get.return_value = _rows(reason, reason)
 
     with patch("mini_app_polis.api.KaianoApiClient.from_env", return_value=api):

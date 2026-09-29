@@ -22,6 +22,7 @@ from __future__ import annotations
 import threading
 from unittest.mock import MagicMock, patch
 
+import api_fakes
 import pytest
 
 from evaluator_cog.engine import api_client
@@ -54,11 +55,10 @@ def test_total_failure_is_offered_work_that_landed_nowhere() -> None:
 
 
 def _client(post_side_effect=None):
-    client = MagicMock()
-    client.get.return_value = {"data": []}
-    if post_side_effect is not None:
-        client.post.side_effect = post_side_effect
-    return client
+    """A real client; ``post_side_effect`` replaces what storing returns."""
+    if post_side_effect is None:
+        return api_fakes.api()
+    return api_fakes.api(post=MagicMock(side_effect=post_side_effect))
 
 
 def test_post_findings_reports_what_the_api_accepted() -> None:
@@ -98,7 +98,12 @@ def test_post_findings_reports_a_total_failure_without_raising() -> None:
 
 
 def test_post_findings_reports_a_partial_failure() -> None:
-    client = _client(post_side_effect=[{"ok": True}, RuntimeError("boom")])
+    client = _client(
+        post_side_effect=[
+            api_fakes.store("/v1/evaluations", {"finding": "one"}),
+            RuntimeError("boom"),
+        ]
+    )
     with patch.object(
         api_client.CommonPythonApiClient, "from_env", return_value=client
     ):

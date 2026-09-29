@@ -3,7 +3,7 @@
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1597,6 +1597,31 @@ def test_evaluator_config_pipeline_logger_primitive_skips_cd009_violation(
     assert not cd009_bad
 
 
+def _eval_003_api(fake_response: dict) -> object:
+    """A real client whose GET /v1/evaluations answers with these rows.
+
+    Each row is completed to a full evaluation row, the shape the API
+    returns and the client validates. Ids that are not UUIDs — the
+    readable ones these tests use — stand in for one, derived from them. A
+    rule is attributed through ``violation_id``, the only rule field an
+    evaluation row has.
+    """
+    import uuid
+
+    import api_fakes
+
+    rows = []
+    for raw in fake_response["data"]:
+        row = dict(raw)
+        if "id" in row:
+            try:
+                uuid.UUID(str(row["id"]))
+            except ValueError:
+                row["id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, str(row["id"])))
+        rows.append(api_fakes.row(**row))
+    return api_fakes.api(get=MagicMock(return_value=api_fakes.rows(*rows)))
+
+
 def test_check_eval_003_flags_untagged_finding() -> None:
     """A finding with no rule_id field flags EVAL-003.
 
@@ -1619,15 +1644,10 @@ def test_check_eval_003_flags_untagged_finding() -> None:
         ],
     }
 
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
         findings = check_eval_003()
 
     assert any(
@@ -1651,7 +1671,7 @@ def test_check_eval_003_accepts_tagged_finding_without_rule_id_in_text() -> None
         "data": [
             {
                 "id": 100,
-                "rule_id": "DOC-005",
+                "violation_id": "DOC-005",
                 "finding": "docs/decisions/ exists but no ADR-NNN-*.md files were found.",
                 "severity": "WARN",
                 "suggestion": "Create a first ADR or remove the empty docs/decisions directory.",
@@ -1661,15 +1681,10 @@ def test_check_eval_003_accepts_tagged_finding_without_rule_id_in_text() -> None
         ],
     }
 
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
         findings = check_eval_003()
 
     assert findings == []
@@ -1683,7 +1698,7 @@ def test_check_eval_003_skips_checker_infrastructure_errors() -> None:
         "data": [
             {
                 "id": 200,
-                "rule_id": "CHECKER",
+                "violation_id": "CHECKER",
                 "finding": "Check check_foo raised an unexpected error: boom",
                 "severity": "WARN",
                 "suggestion": "Investigate the checker itself.",
@@ -1693,15 +1708,10 @@ def test_check_eval_003_skips_checker_infrastructure_errors() -> None:
         ],
     }
 
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
         findings = check_eval_003()
 
     assert findings == []
@@ -1730,15 +1740,10 @@ def test_check_eval_003_accepts_short_but_clear_finding() -> None:
         ],
     }
 
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
         findings = check_eval_003()
 
     assert not any("too short" in f["finding"] for f in findings)
@@ -1774,15 +1779,10 @@ def test_check_eval_003_skips_info_severity_dispatcher_findings() -> None:
         ],
     }
 
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
         findings = check_eval_003()
 
     assert findings == []
@@ -1806,15 +1806,10 @@ def test_check_eval_003_skips_skipped_prefix_even_at_warn() -> None:
         ],
     }
 
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
         findings = check_eval_003()
 
     assert findings == []
@@ -1826,7 +1821,7 @@ def test_check_eval_003_does_not_grade_its_own_prior_emissions() -> None:
         "data": [
             {
                 "id": 30,
-                "rule_id": "EVAL-003",
+                "violation_id": "EVAL-003",
                 "finding": "Finding xyz violates EVAL-003: no rule ID reference",
                 "severity": "WARN",
                 "suggestion": "",
@@ -1836,15 +1831,10 @@ def test_check_eval_003_does_not_grade_its_own_prior_emissions() -> None:
         ],
     }
 
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
         findings = check_eval_003()
 
     assert findings == []
@@ -1855,7 +1845,7 @@ def test_check_eval_003_passes_well_formed_finding() -> None:
         "data": [
             {
                 "id": 3,
-                "rule_id": "PY-011",
+                "violation_id": "PY-011",
                 "finding": "PY-011: Module names in the snake_case directory use camelCase — inconsistent with PEP 8 and the repo's convention.",
                 "severity": "WARN",
                 "suggestion": "Rename the affected modules to snake_case per PY-011. Update imports across the codebase.",
@@ -1865,15 +1855,10 @@ def test_check_eval_003_passes_well_formed_finding() -> None:
         ],
     }
 
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
         findings = check_eval_003()
 
     assert findings == []
@@ -1889,7 +1874,7 @@ def test_check_eval_003_accepts_concise_but_actionable_remediation() -> None:
         "data": [
             {
                 "id": "cc10cd52-ff5e-4808-9ef2-440bb0a1e17c",
-                "rule_id": "EVAL-007",
+                "violation_id": "EVAL-007",
                 "finding": (
                     "Rule CD-004 is a deterministic checkable rule in the catalog "
                     "but is not registered in evaluator-cog's deterministic package "
@@ -1908,15 +1893,10 @@ def test_check_eval_003_accepts_concise_but_actionable_remediation() -> None:
         ],
     }
 
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
         findings = check_eval_003()
 
     assert findings == []
@@ -1928,7 +1908,7 @@ def test_check_eval_003_flags_trivially_short_remediation() -> None:
         "data": [
             {
                 "id": "short-remediation-row",
-                "rule_id": "API-004",
+                "violation_id": "API-004",
                 "finding": "API routes are missing the required /v1 prefix in several endpoints.",
                 "severity": "WARN",
                 "suggestion": "Fix this.",
@@ -1938,15 +1918,10 @@ def test_check_eval_003_flags_trivially_short_remediation() -> None:
         ],
     }
 
-    class FakeApi:
-        @staticmethod
-        def from_env(machine_name=None):  # noqa: ARG004 - matches the real signature
-            return FakeApi()
-
-        def get(self, _path: str):
-            return fake_response
-
-    with patch("mini_app_polis.api.KaianoApiClient", FakeApi):
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
         findings = check_eval_003()
 
     assert any("remediation too short" in f["finding"] for f in findings)
