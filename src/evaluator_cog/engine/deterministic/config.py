@@ -353,8 +353,29 @@ def check_hardcoded_time_values(
     # effects), not production retry/timeout values.
     _ui_path_markers = ("/pages/", "/components/", "/layouts/", "/views/")
 
+    # The rule covers production code. A test's own waits — a poll interval
+    # while it waits for background work — are the test's to choose.
+    _test_dir_markers = ("/test/", "/tests/", "/__tests__/")
+
+    def _is_test_file(f: Path) -> bool:
+        path_str = "/" + str(f.relative_to(repo_path)).replace("\\", "/")
+        name = f.name
+        return (
+            any(m in path_str for m in _test_dir_markers)
+            or name.startswith("test_")
+            or name == "conftest.py"
+            or name.endswith("_test.py")
+            or any(
+                name.endswith(f".{kind}.{ext_}")
+                for kind in ("test", "spec")
+                for ext_ in ("ts", "tsx")
+            )
+        )
+
     for ext in exts:
         for f in src.rglob(ext):
+            if _is_test_file(f):
+                continue
             if language != "python":
                 path_str = str(f).replace("\\", "/")
                 if f.suffix == ".tsx" or any(m in path_str for m in _ui_path_markers):

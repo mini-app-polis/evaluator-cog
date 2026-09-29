@@ -439,6 +439,66 @@ jobs:
     assert sum(1 for x in f if x["rule_id"] == "CD-006") >= 2
 
 
+def test_cd006_sending_a_dispatch_to_run_another_repos_tests_passes() -> None:
+    """A deploy workflow that asks another repo to run its contract suite is
+    CI chaining. deejaytools-api's deployed.yml, 2026-09-29."""
+    root = _root(
+        {
+            ".github/workflows/deployed.yml": """on: deployment_status
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS "$API/health"
+  contract:
+    needs: smoke
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh api repos/mini-app-polis/deejaytools-com/dispatches -f event_type=dev-api-deployed
+""",
+        }
+    )
+    assert check_gha_not_trigger_relay(root) == []
+
+
+def test_cd006_repository_dispatch_running_node_tests_passes() -> None:
+    """Pure CI does not have to be pytest: a dispatched contract suite."""
+    root = _root(
+        {
+            ".github/workflows/contract.yml": """on:
+  push:
+    branches: [dev]
+  repository_dispatch:
+    types: [dev-api-deployed]
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS https://api-dev.example.com/health
+      - run: pnpm test:contract
+""",
+        }
+    )
+    assert check_gha_not_trigger_relay(root) == []
+
+
+def test_cd006_repository_dispatch_starting_a_cog_run_flagged() -> None:
+    root = _root(
+        {
+            ".github/workflows/relay.yml": """on:
+  repository_dispatch:
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -X POST https://api.example.com/v1/deejay/runs
+""",
+        }
+    )
+    f = check_gha_not_trigger_relay(root)
+    assert any(x["rule_id"] == "CD-006" for x in f)
+
+
 def test_cd006_malformed_workflow_yaml_does_not_raise() -> None:
     root = _root(
         {
