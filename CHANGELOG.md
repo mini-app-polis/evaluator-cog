@@ -1,3 +1,12 @@
+## [3.49.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.5...v3.49.6) (2026-09-29)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils in the commons group ([bec44fd](https://github.com/mini-app-polis/evaluator-cog/commit/bec44fd5d97d053ef69822af8035c6168bd9525f))
+* **deps:** bump oauthlib to 4.0.0 for CVE-2026-49265 ([d0963f4](https://github.com/mini-app-polis/evaluator-cog/commit/d0963f4767acebb9b4f2478f1953ef5ce1417d72))
+* **deps:** bump the minor-and-patch group with 2 updates ([ff7b7bb](https://github.com/mini-app-polis/evaluator-cog/commit/ff7b7bb82ac50c242dfa83fad0ead5cde046c75e))
+
 ## [3.49.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.4...v3.49.5) (2026-09-29)
 
 
