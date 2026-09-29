@@ -629,10 +629,15 @@ def check_no_hardcoded_secrets(repo_path: Path) -> list[Finding]:
 def check_gha_not_trigger_relay(repo_path: Path) -> list[Finding]:
     """CD-006: GitHub Actions must not relay repository triggers into app code.
 
-    Scans ``.github/workflows`` for ``repository_dispatch`` paired with
-    Prefect/deployment invocations, scheduled jobs calling Prefect Cloud, and
-    internal trigger HTTP paths. Handles malformed YAML and the YAML 1.1
-    ``on:`` → ``true`` quirk via ``suppress`` around ``yaml.safe_load``.
+    Scans ``.github/workflows`` for workflows *triggered by*
+    ``repository_dispatch`` that start pipeline work (a Prefect deployment,
+    a POST to ``/v1/trigger`` or ``/v1/<cog>/runs``, an SQS send, a Lambda
+    invoke), scheduled jobs calling Prefect Cloud, and internal trigger HTTP
+    paths. A workflow that *sends* a dispatch — to run another repository's
+    tests after a deploy — is CI chaining, not a relay, and is not flagged;
+    nor is a dispatch-triggered workflow that only runs tests or builds,
+    whatever its toolchain. Handles malformed YAML and the YAML 1.1
+    ``on:`` → ``true`` quirk.
     """
     CHECK_ID = "CD-006"
     findings: list[Finding] = []
@@ -647,10 +652,25 @@ def check_gha_not_trigger_relay(repo_path: Path) -> list[Finding]:
                 continue
             low = text.lower()
             rel = str(wf.relative_to(repo_path))
+            parsed = None
             with suppress(Exception):
-                _yaml.safe_load(text)
+                parsed = _yaml.safe_load(text)
 
-            if "repository_dispatch" in low:
+            # Triggered BY repository_dispatch — the retired relay shape. A
+            # workflow that only sends one (``gh api .../dispatches``) is not.
+            if isinstance(parsed, dict):
+                on = parsed.get("on", parsed.get(True))
+                dispatch_triggered = (
+                    "repository_dispatch" in on
+                    if isinstance(on, (dict, list))
+                    else on == "repository_dispatch"
+                )
+            else:
+                dispatch_triggered = bool(
+                    re.search(r"^\s*repository_dispatch\s*:", text, re.M)
+                )
+
+            if dispatch_triggered:
                 relay = any(
                     k in low
                     for k in (
@@ -658,20 +678,20 @@ def check_gha_not_trigger_relay(repo_path: Path) -> list[Finding]:
                         "prefect deploy",
                         "run_deployment(",
                         "npx prefect",
+                        "sqs send-message",
+                        "lambda invoke",
                     )
-                ) or (
-                    "/dispatches" in text
-                    and any(k in low for k in ("curl ", "httpx.", "requests."))
-                )
-                pure_ci = ("pytest" in low or "ruff" in low) and not relay
-                if relay and not pure_ci:
+                ) or bool(re.search(r"/v1/(?:trigger|runs|[a-z0-9-]+/runs)\b", low))
+                if relay:
                     findings.append(
                         _finding(
                             "CD-006",
                             "WARN",
                             "structural_conformance",
-                            f"repository_dispatch workflow appears to relay into automation ({rel}).",
-                            "Prefer watcher-cog + Prefect; do not chain GitHub Actions into app invocations.",
+                            f"repository_dispatch workflow starts pipeline work ({rel}).",
+                            "Pipeline work starts through watcher-cog, which asks "
+                            "api-kaianolevine-com to enqueue it (PIPE-019); a workflow "
+                            "runs CI/CD only.",
                         )
                     )
 
@@ -717,7 +737,8 @@ def check_gha_not_trigger_relay(repo_path: Path) -> list[Finding]:
                         "WARN",
                         "structural_conformance",
                         f"Python source posts to GitHub dispatches API ({py.relative_to(repo_path)}).",
-                        "Use watcher-cog + Prefect instead of repository_dispatch relays.",
+                        "Start pipeline work through watcher-cog and api-kaianolevine-com "
+                        "(PIPE-019), not repository_dispatch relays.",
                     )
                 )
     return findings

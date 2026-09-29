@@ -1106,6 +1106,29 @@ def test_test_013_skips_pages_directory(tmp_path: Path) -> None:
     assert check_hardcoded_time_values(tmp_path, language="typescript") == []
 
 
+def test_test_013_skips_test_files(tmp_path: Path) -> None:
+    """TEST-013 covers production code; a test's own poll interval is not a
+    finding. deejaytools-api songs-upload.integration.test.ts, 2026-09-29."""
+    from evaluator_cog.engine.deterministic import check_hardcoded_time_values
+
+    routes = tmp_path / "src" / "routes"
+    routes.mkdir(parents=True)
+    (routes / "songs-upload.integration.test.ts").write_text(
+        "await new Promise((r) => setTimeout(r, 100));\n"
+    )
+    (routes / "songs.spec.ts").write_text("setTimeout(done, 50);\n")
+    harness = tmp_path / "src" / "test" / "integration"
+    harness.mkdir(parents=True)
+    (harness / "clerk.ts").write_text("setTimeout(stop, 1000);\n")
+    assert check_hardcoded_time_values(tmp_path, language="typescript") == []
+
+    py = tmp_path / "src" / "pkg"
+    py.mkdir(parents=True)
+    (py / "test_poll.py").write_text("import time\ntime.sleep(1)\n")
+    (py / "conftest.py").write_text("import time\ntime.sleep(2)\n")
+    assert check_hardcoded_time_values(tmp_path, language="python") == []
+
+
 def test_test_013_still_flags_backend_ts(tmp_path: Path) -> None:
     """TEST-013: setTimeout in non-UI .ts files still flagged."""
     from evaluator_cog.engine.deterministic import check_hardcoded_time_values
