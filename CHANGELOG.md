@@ -1,3 +1,10 @@
+## [3.49.9](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.8...v3.49.9) (2026-09-30)
+
+
+### Bug Fixes
+
+* **deps:** patch vulnerable dependencies (virtualenv) ([16420c6](https://github.com/mini-app-polis/evaluator-cog/commit/16420c69e77419ae1d98ab52d927aeed2b822a8b))
+
 ## [3.49.8](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.7...v3.49.8) (2026-09-30)
 
 
