@@ -1,3 +1,11 @@
+## [3.49.8](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.7...v3.49.8) (2026-09-30)
+
+
+### Bug Fixes
+
+* **dep:** updating common with security finding ([0bf3610](https://github.com/mini-app-polis/evaluator-cog/commit/0bf36100545c8cf45c9f045fa90998a83d26e08e))
+* **pipe-011:** recognise the run report and typed evaluations ([13b087d](https://github.com/mini-app-polis/evaluator-cog/commit/13b087d7f384e78ff95027df1f7cb30bdb4fa252))
+
 ## [3.49.7](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.6...v3.49.7) (2026-09-30)
 
 
