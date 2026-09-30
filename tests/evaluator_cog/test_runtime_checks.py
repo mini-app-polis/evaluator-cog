@@ -31,6 +31,7 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_three_layer_observability,
 )
 from evaluator_cog.engine.deterministic.pipeline import (
+    check_final_evaluation_task,
     check_pipe_016,
     check_pipe_017,
     check_pipe_018,
@@ -851,3 +852,35 @@ def test_ver003_missing_ci_yml_respects_the_rules_scope(tmp_path: Path) -> None:
     repo = _infra_repo(tmp_path)
     assert check_ci(repo, exceptions=frozenset({"VER-003"})) == []
     assert "ci.yml not found" in _messages(check_ci(repo))
+
+
+# --- PIPE-011: every run is reported ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # wiki-curator-cog: run status through the shared run report.
+        "from mini_app_polis.pipeline_status import RunReport, post_run_finding\n",
+        "with run_report('flow', notable=True) as report:\n    pass\n",
+        # evaluator-cog and friends: graded findings through the typed client.
+        "client.create_evaluation(PipelineEvaluationCreate(**payload))\n",
+        # A cog that has not moved yet.
+        "from ._pipeline_eval import post_run_finding\n",
+    ],
+)
+def test_pipe011_recognises_how_the_fleet_reports_a_run(
+    tmp_path: Path, source: str
+) -> None:
+    _write(tmp_path, "src/some_cog/flow.py", source)
+
+    assert check_final_evaluation_task(tmp_path, cog_subtype="pipeline") == []
+
+
+def test_pipe011_flags_a_pipeline_cog_that_reports_nothing(tmp_path: Path) -> None:
+    _write(tmp_path, "src/some_cog/flow.py", "def run() -> None:\n    pass\n")
+
+    findings = check_final_evaluation_task(tmp_path, cog_subtype="pipeline")
+
+    assert [f["rule_id"] for f in findings] == ["PIPE-011"]
+    assert "pipeline_status" in findings[0]["suggestion"]

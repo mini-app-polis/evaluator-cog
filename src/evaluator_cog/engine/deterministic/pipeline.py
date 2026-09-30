@@ -49,7 +49,16 @@ def check_healthchecks_integration(
 def check_final_evaluation_task(
     repo_path: Path, cog_subtype: str | None = None
 ) -> list[Finding]:
-    """PIPE-011: Pipeline cogs end with an AI evaluation task.
+    """PIPE-011: Every pipeline run is reported, successful or not.
+
+    Two paths count, because the fleet has two and they carry different
+    things. A run's status — what it did, whether it failed — is reported
+    through ``mini_app_polis.pipeline_status`` (``run_report``,
+    ``RunReport``, ``post_run_finding``), which posts to ``/v1/notify``: it
+    is a notification, not a graded row. A graded finding goes to
+    ``/v1/evaluations``, now through the shared client's typed
+    ``create_evaluation``. The older markers stay recognised for cogs that
+    have not moved.
 
     Exempt: trigger-cogs (they fire flow runs, don't run pipelines),
     and evaluator-cog itself.
@@ -73,6 +82,13 @@ def check_final_evaluation_task(
     # no pipeline-health rows, so PIPE-011 must NOT treat the wrong
     # path as evidence that an evaluation task is wired up.
     evaluation_markers = (
+        # Run status, through the shared library's run report.
+        "run_report",
+        "RunReport",
+        "post_run_finding",
+        # Graded findings, through the shared client's typed method.
+        "create_evaluation",
+        # Older spellings of either.
         "pipeline_eval",
         "evaluation_client",
         "/v1/evaluations",
@@ -93,9 +109,11 @@ def check_final_evaluation_task(
                 "PIPE-011",
                 "WARN",
                 "pipeline_consistency",
-                "No AI evaluation task found in pipeline-cog source.",
-                "Add a final task that writes to pipeline_evaluations (via the evaluation "
-                "client from common-python-utils) so quality can be tracked.",
+                "No run report or evaluation found in pipeline-cog source.",
+                "Report every run through mini_app_polis.pipeline_status "
+                "(run_report or RunReport), so a run that fails is as visible as "
+                "one that succeeds; post graded findings with "
+                "KaianoApiClient.create_evaluation.",
             )
         )
     return findings

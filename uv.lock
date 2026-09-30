@@ -692,7 +692,7 @@ dev = [
 requires-dist = [
     { name = "boto3", specifier = ">=1.34,<2" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "miniapppolis-common-utils", specifier = ">=5.15.2,<6" },
+    { name = "miniapppolis-common-utils", specifier = ">=5.15.3,<6" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8.0" },
     { name = "pydantic", specifier = ">=2.6,<3.0" },
@@ -1052,7 +1052,7 @@ wheels = [
 
 [[package]]
 name = "miniapppolis-common-utils"
-version = "5.15.2"
+version = "5.15.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-python-client" },
@@ -1070,10 +1070,11 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "spotipy" },
     { name = "tenacity" },
+    { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/52/9d/5f6468a0403192bc144c5211afcb00f018fe2a4f80784d519e9c701b4cdd/miniapppolis_common_utils-5.15.2.tar.gz", hash = "sha256:a3da2d0cd60f4a1695f0e7d21680ca33fc8263ba9a1c0d699151c9eae602eed2", size = 310016, upload-time = "2026-09-29T22:39:31.496Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c3/70/42af9cbabcf1ae36c2f77eb476a26e8b1cdc99d42a967a46704575fcadf8/miniapppolis_common_utils-5.15.3.tar.gz", hash = "sha256:4a8ed68c6d79ca9f76a6c241d21a0bcc260ebe242b9d3c0660de7c6fe2d5768c", size = 310766, upload-time = "2026-09-30T16:33:54.865Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/83/96297cf4b03e0fc17cc1df7fa00d0f5af8bbc49bb1b7909aaea0ed903488/miniapppolis_common_utils-5.15.2-py3-none-any.whl", hash = "sha256:ec1b3bcefd7bdabef841063480629c9bb7c67485c8aeaac513c9a0e96dbde318", size = 130972, upload-time = "2026-09-29T22:39:30Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/68/9c53717fe0f76794487fc59184e632362f6955334158998349ed1d131b8c/miniapppolis_common_utils-5.15.3-py3-none-any.whl", hash = "sha256:856c72b9284bd6c8aa7d570cb5a36ee83db110485914e479228db6cb685685b5", size = 131353, upload-time = "2026-09-30T16:33:53.824Z" },
 ]
 
 [[package]]
@@ -1832,8 +1833,8 @@ name = "standard-aifc"
 version = "3.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "audioop-lts" },
-    { name = "standard-chunk" },
+    { name = "audioop-lts", marker = "python_full_version >= '3.13'" },
+    { name = "standard-chunk", marker = "python_full_version >= '3.13'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c4/53/6050dc3dde1671eb3db592c13b55a8005e5040131f7509cef0215212cb84/standard_aifc-3.13.0.tar.gz", hash = "sha256:64e249c7cb4b3daf2fdba4e95721f811bde8bdfc43ad9f936589b7bb2fae2e43", size = 15240, upload-time = "2024-10-30T16:01:31.772Z" }
 wheels = [
@@ -1854,7 +1855,7 @@ name = "standard-sunau"
 version = "3.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "audioop-lts" },
+    { name = "audioop-lts", marker = "python_full_version >= '3.13'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/66/e3/ce8d38cb2d70e05ffeddc28bb09bad77cfef979eb0a299c9117f7ed4e6a9/standard_sunau-3.13.0.tar.gz", hash = "sha256:b319a1ac95a09a2378a8442f403c66f4fd4b36616d6df6ae82b8e536ee790908", size = 9368, upload-time = "2024-10-30T16:01:41.626Z" }
 wheels = [
@@ -1956,11 +1957,11 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "2.7.0"
+version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz", hash = "sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c", size = 433602, upload-time = "2026-05-07T16:13:18.596Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz", hash = "sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63", size = 458972, upload-time = "2026-09-15T19:29:36.253Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl", hash = "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897", size = 131087, upload-time = "2026-05-07T16:13:17.151Z" },
+    { url = "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl", hash = "sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3", size = 135717, upload-time = "2026-09-15T19:29:34.577Z" },
 ]
 
 [[package]]
