@@ -66,6 +66,7 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_pnpm_lockfile,
     check_pytest_coverage_in_ci,
     check_release_gated_on_security,
+    check_request_metrics_middleware,
     check_structured_logging,
     check_three_layer_observability,
 )
@@ -253,6 +254,7 @@ __all__ = [
     "check_no_manual_changelog",
     "check_release_commit_message",
     "check_release_gated_on_security",
+    "check_request_metrics_middleware",
     "check_no_print_statements",
     "check_no_retired_trigger_patterns",
     "check_no_setup_py",

@@ -95,6 +95,18 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
 }
 """
 
+_STALLED_TF = """
+resource "aws_cloudwatch_metric_alarm" "queue_stalled" {
+  namespace     = "AWS/SQS"
+  metric_name   = "ApproximateAgeOfOldestMessage"
+  threshold     = var.max_receive_count * aws_sqs_queue.jobs.visibility_timeout_seconds
+  dimensions = {
+    QueueName = aws_sqs_queue.jobs.name
+  }
+  alarm_actions = [aws_sns_topic.alerts.arn]
+}
+"""
+
 _VERSIONS_TF = """
 terraform {
   required_version = ">= 1.11"
@@ -192,6 +204,7 @@ def _infra_repo(repo: Path, **overrides: str) -> Path:
         f"{MOD}/queue.tf": _QUEUE_TF,
         f"{MOD}/worker.tf": _WORKER_TF,
         f"{MOD}/alarm.tf": _ALARM_TF,
+        f"{MOD}/stalled.tf": _STALLED_TF,
         f"{MOD}/versions.tf": _VERSIONS_TF,
         ".terraform.lock.hcl": _LOCK_HCL,
         ".gitignore": ".terraform/\n*.tfstate\n*.tfstate.*\ntfplan\n",
@@ -215,6 +228,7 @@ def test_reader_sees_through_strings_and_comments(tmp_path: Path) -> None:
     assert resources is not None
     assert sorted((r.type, r.name) for r in resources) == [
         ("aws_cloudwatch_metric_alarm", "dlq_not_empty"),
+        ("aws_cloudwatch_metric_alarm", "queue_stalled"),
         ("aws_lambda_event_source_mapping", "jobs"),
         ("aws_lambda_function", "worker"),
         ("aws_sqs_queue", "dlq"),
@@ -679,7 +693,53 @@ def test_cd010_infra_flags_alarm_on_the_work_queue(tmp_path: Path) -> None:
     """An alarm on the work queue fires on ordinary backlog, not on failure."""
     alarm = _ALARM_TF.replace("aws_sqs_queue.dlq.name", "aws_sqs_queue.jobs.name")
     repo = _infra_repo(tmp_path, **{f"{MOD}/alarm.tf": alarm})
+    findings = check_cd_010_infrastructure(repo)
+    assert len(findings) == 1
+    assert "dead-letter" in findings[0]["finding"]
+
+
+def test_cd010_infra_flags_a_missing_stalled_queue_alarm(tmp_path: Path) -> None:
+    """The dead-letter alarm cannot see a consumer that stopped."""
+    repo = _infra_repo(tmp_path, **{f"{MOD}/stalled.tf": ""})
+    findings = check_cd_010_infrastructure(repo)
+    assert len(findings) == 1
+    assert "ApproximateAgeOfOldestMessage" in findings[0]["finding"]
+
+
+def test_cd010_infra_flags_stalled_alarm_without_actions(tmp_path: Path) -> None:
+    stalled = _STALLED_TF.replace("[aws_sns_topic.alerts.arn]", "[]")
+    repo = _infra_repo(tmp_path, **{f"{MOD}/stalled.tf": stalled})
+    findings = check_cd_010_infrastructure(repo)
+    assert len(findings) == 1
+    assert "ApproximateAgeOfOldestMessage" in findings[0]["finding"]
+
+
+def test_cd010_infra_flags_stalled_alarm_on_the_dead_letter_queue(
+    tmp_path: Path,
+) -> None:
+    """Oldest-message age on the DLQ says how long a failure has sat, not
+    whether anything is consuming the work queue."""
+    stalled = _STALLED_TF.replace(
+        "QueueName = aws_sqs_queue.jobs.name", "QueueName = aws_sqs_queue.dlq.name"
+    ).replace("aws_sqs_queue.jobs.visibility_timeout_seconds", "360")
+    repo = _infra_repo(tmp_path, **{f"{MOD}/stalled.tf": stalled})
     assert len(check_cd_010_infrastructure(repo)) == 1
+
+
+def test_cd010_infra_flags_work_queue_alarm_on_the_wrong_metric(
+    tmp_path: Path,
+) -> None:
+    """Visible-message count on the work queue is backlog, not a stall."""
+    stalled = _STALLED_TF.replace(
+        "ApproximateAgeOfOldestMessage", "ApproximateNumberOfMessagesVisible"
+    )
+    repo = _infra_repo(tmp_path, **{f"{MOD}/stalled.tf": stalled})
+    assert len(check_cd_010_infrastructure(repo)) == 1
+
+
+def test_cd010_infra_reports_each_missing_alarm(tmp_path: Path) -> None:
+    repo = _infra_repo(tmp_path, **{f"{MOD}/alarm.tf": "", f"{MOD}/stalled.tf": ""})
+    assert len(check_cd_010_infrastructure(repo)) == 2
 
 
 def test_cd010_infra_without_a_queue_worker_has_nothing_to_alarm_on(

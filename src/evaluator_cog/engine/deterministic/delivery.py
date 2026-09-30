@@ -801,14 +801,33 @@ def check_migration_in_ci(
     return findings
 
 
-def _dlq_alarm_notifies(resources: list) -> bool:
-    """True when some alarm watches a dead-letter queue and has an action."""
-    dlqs = dead_letter_queue_names(resources)
+def _work_queue_names(resources: list) -> set[str]:
+    """Names of the queues whose redrive policy dead-letters somewhere."""
+    return {
+        queue.name
+        for queue in of_type(resources, "aws_sqs_queue")
+        if re.search(
+            r"deadLetterTargetArn\s*[=:]\s*aws_sqs_queue\.[\w-]+\.arn", queue.body
+        )
+    }
+
+
+def _alarm_notifies(
+    resources: list, queues: set[str], metric: str | None = None
+) -> bool:
+    """True when an alarm with an action watches one of `queues`.
+
+    With `metric`, the alarm must also be on that metric. The dead-letter
+    alarm is matched on its queue alone, as it always has been: any metric
+    on a dead-letter queue is about jobs that failed every retry.
+    """
     for alarm in of_type(resources, "aws_cloudwatch_metric_alarm"):
         actions = (alarm.attr("alarm_actions") or "").replace(" ", "")
         if actions in ("", "[]"):
             continue
-        if any(f"aws_sqs_queue.{name}." in alarm.body for name in dlqs):
+        if metric is not None and metric not in (alarm.attr("metric_name") or ""):
+            continue
+        if any(f"aws_sqs_queue.{name}." in alarm.body for name in queues):
             return True
     return False
 
@@ -817,27 +836,54 @@ def check_cd_010_infrastructure(repo_path: Path) -> list[Finding]:
     """CD-010's liveness layer for the pipeline cogs, where it is declared.
 
     A queue-driven worker has no process to be alive between jobs, so a
-    liveness ping has nothing to report; a job that failed every retry is
-    the event a person has to hear about. That alarm is declared once, in
-    mini-app-polis/infra's cog module (ADR-010), so it is checked there and
-    not in each cog.
+    liveness ping has nothing to report. Two events have to reach a
+    person instead, and each alarm is blind to the other's:
+
+    - a job failed every retry — the dead-letter alarm;
+    - nothing is consuming (mapping disabled, throttled to zero, a broken
+      deploy) — the work queue's ApproximateAgeOfOldestMessage alarm.
+      Nothing is received, so nothing fails and the dead-letter queue
+      stays empty: this is the outage the first alarm cannot see.
+
+    Both are declared once, in mini-app-polis/infra's cog module
+    (ADR-010), so they are checked there and not in each cog. The
+    stalled alarm's threshold is not checked — only that it exists and
+    notifies someone.
     """
     resources = terraform_resources(repo_path, "infrastructure") or []
     if not of_type(resources, "aws_lambda_event_source_mapping"):
         return []
-    if _dlq_alarm_notifies(resources):
-        return []
-    return [
-        _finding(
-            "CD-010",
-            "ERROR",
-            "cd_readiness",
-            "Layer 1 missing: no aws_cloudwatch_metric_alarm on a dead-letter "
-            "queue has alarm_actions.",
-            "Alarm on the DLQ's ApproximateNumberOfMessagesVisible and point "
-            "alarm_actions at an SNS topic someone is subscribed to.",
+    findings: list[Finding] = []
+    if not _alarm_notifies(resources, dead_letter_queue_names(resources)):
+        findings.append(
+            _finding(
+                "CD-010",
+                "ERROR",
+                "cd_readiness",
+                "Layer 1 missing: no aws_cloudwatch_metric_alarm on a dead-letter "
+                "queue has alarm_actions.",
+                "Alarm on the DLQ's ApproximateNumberOfMessagesVisible and point "
+                "alarm_actions at an SNS topic someone is subscribed to.",
+            )
         )
-    ]
+    if not _alarm_notifies(
+        resources, _work_queue_names(resources), "ApproximateAgeOfOldestMessage"
+    ):
+        findings.append(
+            _finding(
+                "CD-010",
+                "ERROR",
+                "cd_readiness",
+                "Layer 1 missing: no aws_cloudwatch_metric_alarm on a work "
+                "queue's ApproximateAgeOfOldestMessage has alarm_actions, so a "
+                "consumer that stops is never reported — nothing fails, and "
+                "nothing reaches the dead-letter queue.",
+                "Alarm on the work queue's ApproximateAgeOfOldestMessage above "
+                "max_receive_count x visibility_timeout_seconds, and point "
+                "alarm_actions at the same SNS topic as the dead-letter alarm.",
+            )
+        )
+    return findings
 
 
 def check_three_layer_observability(
@@ -1078,6 +1124,231 @@ def check_cd_031(repo_path: Path) -> list[Finding]:
             "Make the evaluate job depend on the release job (`needs: release`), "
             "on the deploy job that itself needs the release, or — in a "
             "Terraform root — on the apply job.",
+        )
+    )
+    return findings
+
+
+#: CD-036's subject: the shared request-metrics middleware, and the two
+#: qualified names that reach it. The package re-exports the class at its
+#: top level, so either import path is the shared one.
+_METRICS_MIDDLEWARE = "RequestMetricsMiddleware"
+_SHARED_METRICS_MIDDLEWARE = frozenset(
+    {
+        "mini_app_polis.request_metrics.RequestMetricsMiddleware",
+        "mini_app_polis.RequestMetricsMiddleware",
+    }
+)
+_ASGI_APP_CONSTRUCTORS = frozenset({"FastAPI", "Starlette"})
+
+
+def _callee_name(func: ast.expr) -> str | None:
+    """The last segment of a call's target: `FastAPI` for `fastapi.FastAPI(...)`."""
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _import_bindings(tree: ast.AST) -> dict[str, str]:
+    """Map each name an import binds in a module to what it refers to.
+
+    Walks the whole tree, not just module level, because an app factory
+    may import inside the function that builds the app.
+
+    ``import a.b`` binds ``a`` to ``a``; ``import a.b as m`` binds ``m``
+    to ``a.b``; ``from a.b import C as X`` binds ``X`` to ``a.b.C``.
+    Relative imports are left out: they point into the repo, never at the
+    shared library, so resolving them could only produce a non-match.
+    """
+    bindings: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    bindings[alias.asname] = alias.name
+                else:
+                    head = alias.name.split(".", 1)[0]
+                    bindings[head] = head
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                bindings[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return bindings
+
+
+def _qualified(expr: ast.expr, bindings: dict[str, str]) -> str | None:
+    """Resolve a Name or Attribute chain through the module's imports."""
+    parts: list[str] = []
+    while isinstance(expr, ast.Attribute):
+        parts.append(expr.attr)
+        expr = expr.value
+    if not isinstance(expr, ast.Name):
+        return None
+    head = bindings.get(expr.id, expr.id)
+    return ".".join([head, *reversed(parts)])
+
+
+def _registered_middleware(tree: ast.AST) -> list[ast.expr]:
+    """First arguments of every middleware registration in a module.
+
+    Two forms: ``app.add_middleware(X, ...)``, and a ``Middleware(X, ...)``
+    entry in a FastAPI/Starlette constructor's ``middleware=`` list.
+    ``app.middleware("http")(fn)`` is not collected — it registers a
+    function, and the shared middleware is a class.
+    """
+    registered: list[ast.expr] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _callee_name(node.func)
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_middleware"
+            and node.args
+        ):
+            registered.append(node.args[0])
+        elif name in _ASGI_APP_CONSTRUCTORS:
+            for kw in node.keywords:
+                if kw.arg != "middleware" or not isinstance(
+                    kw.value, (ast.List, ast.Tuple)
+                ):
+                    continue
+                for entry in kw.value.elts:
+                    if (
+                        isinstance(entry, ast.Call)
+                        and _callee_name(entry.func) == "Middleware"
+                        and entry.args
+                    ):
+                        registered.append(entry.args[0])
+    return registered
+
+
+def _constructs_asgi_app(tree: ast.AST) -> bool:
+    return any(
+        isinstance(node, ast.Call) and _callee_name(node.func) in _ASGI_APP_CONSTRUCTORS
+        for node in ast.walk(tree)
+    )
+
+
+def check_request_metrics_middleware(repo_path: Path) -> list[Finding]:
+    """CD-036: APIs register the shared request-metrics middleware.
+
+    Layer 4 of the observability stack (CD-010) for APIs. The dashboard
+    and alarms read metrics by name and dimension, so only the shared
+    class counts — a local copy publishes numbers nothing reads.
+
+    Everything is done on the AST, per module, because every shortcut
+    gets api-kaianolevine-com wrong in one direction or the other. Its app
+    is built inside ``_build_app()`` rather than at module level, so
+    "find the module-level app" finds nothing; and a substring scan for
+    the class name matches the import line and every comment about it,
+    so it passes a repo that imports the middleware and never adds it.
+
+    A registration counts only in a module that constructs an app, and
+    only when its first argument resolves through that module's imports
+    to the shared class — directly, through an ``as`` alias, or as an
+    attribute of an imported module.
+
+    Three outcomes fail, in this order. A class of the same name defined
+    under ``src/`` is reported alone: the registration finding it would
+    also cause has the same cause and the same fix. No app constructed
+    under ``src/`` is reported rather than skipped, because that is what
+    a non-Python API looks like, and the rule says it records a deferral —
+    a silent skip would leave the deferral nothing to defer. Otherwise,
+    no app module registers the shared class.
+
+    ``tests/`` is never read: a test double named after the middleware is
+    not the drift this rule is about.
+    """
+    CHECK_ID = "CD-036"
+    dimension = "cd_readiness"
+    findings: list[Finding] = []
+
+    trees: dict[str, ast.AST] = {}
+    src = repo_path / "src"
+    if src.is_dir():
+        for py in sorted(src.rglob("*.py")):
+            try:
+                trees[str(py.relative_to(repo_path))] = ast.parse(
+                    py.read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeDecodeError, SyntaxError):
+                continue
+
+    local_copies = sorted(
+        rel
+        for rel, tree in trees.items()
+        if any(
+            isinstance(node, ast.ClassDef) and node.name == _METRICS_MIDDLEWARE
+            for node in ast.walk(tree)
+        )
+    )
+    if local_copies:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                dimension,
+                f"A class named {_METRICS_MIDDLEWARE} is defined in "
+                f"{', '.join(local_copies)}. A local copy publishes metrics "
+                f"under whatever names it chooses, and the fleet dashboard "
+                f"and alarms read only the shared middleware's.",
+                f"Delete the local class and register {_METRICS_MIDDLEWARE} "
+                f"from mini_app_polis.request_metrics instead.",
+            )
+        )
+        return findings
+
+    app_modules = {
+        rel: tree for rel, tree in trees.items() if _constructs_asgi_app(tree)
+    }
+    if not app_modules:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                dimension,
+                "No module under src/ constructs a FastAPI or Starlette "
+                "application, so there is nowhere the shared request-metrics "
+                "middleware is registered. This API reports no request "
+                "latency or error rate.",
+                f"Register {_METRICS_MIDDLEWARE} from "
+                f"mini_app_polis.request_metrics on the application. An API "
+                f"not yet in Python cannot, and records a CD-036 deferral in "
+                f"evaluator.yaml until it is rewritten.",
+            )
+        )
+        return findings
+
+    elsewhere: set[str] = set()
+    for rel, tree in app_modules.items():
+        bindings = _import_bindings(tree)
+        for arg in _registered_middleware(tree):
+            qualified = _qualified(arg, bindings)
+            if qualified in _SHARED_METRICS_MIDDLEWARE:
+                return findings
+            if qualified and qualified.rsplit(".", 1)[-1] == _METRICS_MIDDLEWARE:
+                elsewhere.add(f"{rel} ({qualified})")
+
+    if elsewhere:
+        detail = (
+            f"registers a {_METRICS_MIDDLEWARE} that is not the shared one: "
+            f"{', '.join(sorted(elsewhere))}"
+        )
+    else:
+        detail = f"does not register {_METRICS_MIDDLEWARE}"
+    findings.append(
+        _finding(
+            CHECK_ID,
+            "WARN",
+            dimension,
+            f"The application ({', '.join(sorted(app_modules))}) {detail}. "
+            f"Without it this API reports no request latency or error rate, "
+            f"and the fleet dashboard has no row for it.",
+            f"Import {_METRICS_MIDDLEWARE} from mini_app_polis.request_metrics "
+            f"and register it with app.add_middleware(...) where the "
+            f"application is built.",
         )
     )
     return findings
