@@ -1,3 +1,11 @@
+# [3.50.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.10...v3.50.0) (2026-09-30)
+
+
+### Features
+
+* **delivery:** check CD-010's stalled-queue alarm ([f62212e](https://github.com/mini-app-polis/evaluator-cog/commit/f62212e04640d6e256d60d0d470c84db5652444f))
+* **delivery:** check CD-036 request-metrics middleware ([a0a4f9d](https://github.com/mini-app-polis/evaluator-cog/commit/a0a4f9daf8e262ffa5c9739cc27bc97d4b59a9cd))
+
 ## [3.49.10](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.9...v3.49.10) (2026-09-30)
 
 
