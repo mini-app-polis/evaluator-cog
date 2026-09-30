@@ -1,3 +1,10 @@
+## [3.49.7](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.6...v3.49.7) (2026-09-30)
+
+
+### Bug Fixes
+
+* **api:** count an answer outside the contract as a failed post ([dd3ed16](https://github.com/mini-app-polis/evaluator-cog/commit/dd3ed167042f22cde6d036560c889b04a7eb1ddb))
+
 ## [3.49.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.49.5...v3.49.6) (2026-09-29)
 
 
