@@ -61,6 +61,7 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_pnpm_lockfile,
     check_pytest_coverage_in_ci,
     check_release_gated_on_security,
+    check_request_metrics_middleware,
     check_structured_logging,
     check_terraform_checked_in_ci,
     check_terraform_versions_pinned,
@@ -720,6 +721,11 @@ def run_all_checks(
     # alarm — is declared in mini-app-polis/infra and checked there.
     if is_infrastructure:
         _run(check_cd_010_infrastructure, "CD-010")
+    # CD-036 is CD-010's Layer 4 for APIs, checked on its own until a
+    # second type has metrics work to do. Not gated on language: an API
+    # not yet in Python gets the finding, which its deferral suppresses.
+    if is_api_service:
+        _run(check_request_metrics_middleware, "CD-036")
 
     # CD-014 — static-site deploy target
     if _is_static:
