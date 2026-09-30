@@ -11,15 +11,19 @@ against watcher-cog's identical CD-021 and dropped a true finding.
 What remains is reading the answer. A suppressed write returns 200 with
 ``deduplicated: true``, and counting that as a delivered finding is how a
 run comes to report findings as posted that were never stored.
+
+Findings go out as ``PipelineEvaluationCreate`` through the shared client's
+``create_evaluation``, the model the API validates against, and the answer
+comes back as the API's ``PipelineEvaluationWriteResult``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from mini_app_polis import logger as logger_mod
 from mini_app_polis.api import KaianoApiClient as CommonPythonApiClient
+from mini_app_polis.api.contract import PipelineEvaluationCreate
 
 from evaluator_cog import __version__ as _EVALUATOR_VERSION
 
@@ -72,24 +76,6 @@ class PostResult:
         self.duplicate_details.extend(other.duplicate_details)
         self.failed += other.failed
         self.errors.extend(other.errors)
-
-
-def _was_deduplicated(response: Any) -> bool:
-    """True when the API recognised this finding rather than storing it.
-
-    PIPE-002. A suppressed write answers 200 with ``deduplicated: true``,
-    so a caller that checks only for an exception counts it as delivered —
-    and a run then reports findings as posted that were never stored,
-    which is the September failure shape reached by a new route.
-
-    An absent or unrecognisable flag means stored. That is the safe
-    reading: an API from before the idempotency guard does not send the
-    field and did write the row.
-    """
-    if not isinstance(response, dict):
-        return False
-    data = response.get("data")
-    return isinstance(data, dict) and data.get("deduplicated") is True
 
 
 def post_findings(
@@ -161,14 +147,18 @@ def post_findings(
         }
         result.attempted += 1
         try:
-            response = api_client.post("/v1/evaluations", payload)
+            # Validated here, so a finding the API would refuse fails before
+            # it is sent and is counted the same way as a refusal.
+            stored = api_client.create_evaluation(
+                PipelineEvaluationCreate.model_validate(payload)
+            )
         except Exception as e:
             log.warning("pipeline evaluation: failed to POST finding: %s", e)
             result.failed += 1
             result.errors.append(str(e))
             continue
 
-        if _was_deduplicated(response):
+        if stored.deduplicated:
             # Offered and declined, which is neither a post nor a failure.
             # The server holds this finding already under this run — a
             # redelivered message, or the release workflow's retry.

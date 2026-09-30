@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import api_fakes
 
 from evaluator_cog.engine.api_client import post_findings
 
@@ -20,9 +21,9 @@ def test_post_findings_skips_empty_finding_text(monkeypatch) -> None:
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
-    api = SimpleNamespace(post=_fake_post, get=lambda *_, **__: None)
+    api = api_fakes.api(post=_fake_post)
 
     with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
         m.from_env.return_value = api
@@ -53,9 +54,9 @@ def test_post_findings_respects_caller_source_with_direct_finding_text_kwarg(
 
     def _fake_post(path: str, payload: dict) -> dict:
         posted.append(payload)
-        return {}
+        return api_fakes.store(path, payload)
 
-    api = SimpleNamespace(post=_fake_post, get=MagicMock(return_value=None))
+    api = api_fakes.api(post=_fake_post)
 
     with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
         m.from_env.return_value = api
@@ -84,10 +85,7 @@ def test_post_findings_handles_post_exception_gracefully(monkeypatch) -> None:
     """When api_client.post raises, the exception is caught, logged, and execution continues."""
     monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")
 
-    api = SimpleNamespace(
-        post=MagicMock(side_effect=RuntimeError("connection refused")),
-        get=lambda *_, **__: None,
-    )
+    api = api_fakes.api(post=MagicMock(side_effect=RuntimeError("connection refused")))
 
     with (
         patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m,
@@ -129,12 +127,7 @@ def test_post_findings_handles_post_exception_gracefully(monkeypatch) -> None:
 def _deduplicated_envelope(deduplicated: bool) -> dict:
     """What /v1/evaluations answers after the idempotency guard."""
     return {
-        "data": {
-            "id": "00000000-0000-0000-0000-000000000001",
-            "repo": "test-repo",
-            "finding": "a finding",
-            "deduplicated": deduplicated,
-        },
+        "data": api_fakes.row(finding="a finding", deduplicated=deduplicated),
         "meta": {"count": 1, "total": 1, "version": "v1"},
     }
 
@@ -153,10 +146,7 @@ def _one_finding() -> list[dict]:
 
 def _post_one(monkeypatch, response: dict):
     monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")
-    api = SimpleNamespace(
-        post=MagicMock(return_value=response),
-        get=MagicMock(return_value={"data": []}),
-    )
+    api = api_fakes.api(post=MagicMock(return_value=response))
     with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
         m.from_env.return_value = api
         return post_findings(
@@ -198,7 +188,28 @@ def test_an_api_without_the_flag_is_read_as_having_stored_the_row(
     did write the row. Reading a missing flag as "suppressed" would under-
     report every delivered finding against it.
     """
+    response = {
+        "data": api_fakes.row(finding="a finding"),
+        "meta": {"count": 1, "total": 1, "version": "v1"},
+    }
+    assert "deduplicated" not in response["data"]
+
+    result = _post_one(monkeypatch, response)
+
+    assert result.posted == 1
+    assert result.duplicates == 0
+
+
+def test_an_answer_outside_the_contract_is_a_failure_not_a_post(
+    monkeypatch,
+) -> None:
+    """An answer with no stored row in it is not evidence anything was stored.
+
+    Counting it as posted is the silent-success shape this module exists to
+    prevent; it is counted as failed, with the reason.
+    """
     for response in ({}, {"data": {}}, {"data": None}, None):
         result = _post_one(monkeypatch, response)
-        assert result.posted == 1, f"{response!r} was not read as a stored row"
-        assert result.duplicates == 0
+        assert result.posted == 0, f"{response!r} was read as a stored row"
+        assert result.failed == 1
+        assert result.errors
