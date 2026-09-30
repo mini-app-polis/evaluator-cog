@@ -801,14 +801,33 @@ def check_migration_in_ci(
     return findings
 
 
-def _dlq_alarm_notifies(resources: list) -> bool:
-    """True when some alarm watches a dead-letter queue and has an action."""
-    dlqs = dead_letter_queue_names(resources)
+def _work_queue_names(resources: list) -> set[str]:
+    """Names of the queues whose redrive policy dead-letters somewhere."""
+    return {
+        queue.name
+        for queue in of_type(resources, "aws_sqs_queue")
+        if re.search(
+            r"deadLetterTargetArn\s*[=:]\s*aws_sqs_queue\.[\w-]+\.arn", queue.body
+        )
+    }
+
+
+def _alarm_notifies(
+    resources: list, queues: set[str], metric: str | None = None
+) -> bool:
+    """True when an alarm with an action watches one of `queues`.
+
+    With `metric`, the alarm must also be on that metric. The dead-letter
+    alarm is matched on its queue alone, as it always has been: any metric
+    on a dead-letter queue is about jobs that failed every retry.
+    """
     for alarm in of_type(resources, "aws_cloudwatch_metric_alarm"):
         actions = (alarm.attr("alarm_actions") or "").replace(" ", "")
         if actions in ("", "[]"):
             continue
-        if any(f"aws_sqs_queue.{name}." in alarm.body for name in dlqs):
+        if metric is not None and metric not in (alarm.attr("metric_name") or ""):
+            continue
+        if any(f"aws_sqs_queue.{name}." in alarm.body for name in queues):
             return True
     return False
 
@@ -817,27 +836,54 @@ def check_cd_010_infrastructure(repo_path: Path) -> list[Finding]:
     """CD-010's liveness layer for the pipeline cogs, where it is declared.
 
     A queue-driven worker has no process to be alive between jobs, so a
-    liveness ping has nothing to report; a job that failed every retry is
-    the event a person has to hear about. That alarm is declared once, in
-    mini-app-polis/infra's cog module (ADR-010), so it is checked there and
-    not in each cog.
+    liveness ping has nothing to report. Two events have to reach a
+    person instead, and each alarm is blind to the other's:
+
+    - a job failed every retry — the dead-letter alarm;
+    - nothing is consuming (mapping disabled, throttled to zero, a broken
+      deploy) — the work queue's ApproximateAgeOfOldestMessage alarm.
+      Nothing is received, so nothing fails and the dead-letter queue
+      stays empty: this is the outage the first alarm cannot see.
+
+    Both are declared once, in mini-app-polis/infra's cog module
+    (ADR-010), so they are checked there and not in each cog. The
+    stalled alarm's threshold is not checked — only that it exists and
+    notifies someone.
     """
     resources = terraform_resources(repo_path, "infrastructure") or []
     if not of_type(resources, "aws_lambda_event_source_mapping"):
         return []
-    if _dlq_alarm_notifies(resources):
-        return []
-    return [
-        _finding(
-            "CD-010",
-            "ERROR",
-            "cd_readiness",
-            "Layer 1 missing: no aws_cloudwatch_metric_alarm on a dead-letter "
-            "queue has alarm_actions.",
-            "Alarm on the DLQ's ApproximateNumberOfMessagesVisible and point "
-            "alarm_actions at an SNS topic someone is subscribed to.",
+    findings: list[Finding] = []
+    if not _alarm_notifies(resources, dead_letter_queue_names(resources)):
+        findings.append(
+            _finding(
+                "CD-010",
+                "ERROR",
+                "cd_readiness",
+                "Layer 1 missing: no aws_cloudwatch_metric_alarm on a dead-letter "
+                "queue has alarm_actions.",
+                "Alarm on the DLQ's ApproximateNumberOfMessagesVisible and point "
+                "alarm_actions at an SNS topic someone is subscribed to.",
+            )
         )
-    ]
+    if not _alarm_notifies(
+        resources, _work_queue_names(resources), "ApproximateAgeOfOldestMessage"
+    ):
+        findings.append(
+            _finding(
+                "CD-010",
+                "ERROR",
+                "cd_readiness",
+                "Layer 1 missing: no aws_cloudwatch_metric_alarm on a work "
+                "queue's ApproximateAgeOfOldestMessage has alarm_actions, so a "
+                "consumer that stops is never reported — nothing fails, and "
+                "nothing reaches the dead-letter queue.",
+                "Alarm on the work queue's ApproximateAgeOfOldestMessage above "
+                "max_receive_count x visibility_timeout_seconds, and point "
+                "alarm_actions at the same SNS topic as the dead-letter alarm.",
+            )
+        )
+    return findings
 
 
 def check_three_layer_observability(
