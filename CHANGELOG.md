@@ -1,3 +1,10 @@
+## [3.50.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.1...v3.50.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **deps:** bump the minor-and-patch group with 2 updates ([78b867b](https://github.com/mini-app-polis/evaluator-cog/commit/78b867b8c581af0edb7c9d3803d14b99e12733c8))
+
 ## [3.50.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.0...v3.50.1) (2026-10-01)
 
 
