@@ -1,3 +1,11 @@
+## [3.50.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.2...v3.50.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **deps:** bump boto3 ([ebe1671](https://github.com/mini-app-polis/evaluator-cog/commit/ebe1671fb8b0374cb7e038ec1173c8bec6307293))
+* **deps:** bump miniapppolis-common-utils ([1bd48e2](https://github.com/mini-app-polis/evaluator-cog/commit/1bd48e20b4a06c20930e020f84b64c791e20aa0d))
+
 ## [3.50.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.1...v3.50.2) (2026-10-02)
 
 
