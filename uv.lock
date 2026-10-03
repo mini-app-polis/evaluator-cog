@@ -183,16 +183,16 @@ wheels = [
 
 [[package]]
 name = "boto3"
-version = "1.43.102"
+version = "1.43.103"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore" },
     { name = "jmespath" },
     { name = "s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9a/e6/2a24a2013beecdd9a381bcf7a11981478a1f5f78e37908c0fddba3cd915f/boto3-1.43.102.tar.gz", hash = "sha256:440bdd9fbf88d57809b68839fb690f19e4db65fa5539e60cc803ebd7b9e5e8fc", size = 112696, upload-time = "2026-09-24T19:25:18.329Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/59/012898d78087105e9c20fe31605d3f1999921745e1890ee0f0d993846e2e/boto3-1.43.103.tar.gz", hash = "sha256:524821052527f6446d249bf710847b032d9b12135e346c9751777a0a2811cf04", size = 112687, upload-time = "2026-09-25T19:26:30.427Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/ea/5bb0e8a8a4b04221b054365a5904fd63b6bcc22edcf4aa75a253f946b86e/boto3-1.43.102-py3-none-any.whl", hash = "sha256:b2a06cbbcb2cb0484f126172eab0881252f01007e8f7e0607ecac131cff9f744", size = 140042, upload-time = "2026-09-24T19:25:16.822Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/66/6eb2e92c57b30e54c87fe14c8cd71de3aed9184f3cec95c39132a3fcc61f/boto3-1.43.103-py3-none-any.whl", hash = "sha256:574796187eb4e4fcaaf5c1b88c1724a1ba5a95bc27aeae5573676178666acc71", size = 140044, upload-time = "2026-09-25T19:26:29.085Z" },
 ]
 
 [[package]]
@@ -1052,7 +1052,7 @@ wheels = [
 
 [[package]]
 name = "miniapppolis-common-utils"
-version = "5.17.0"
+version = "5.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-python-client" },
@@ -1070,9 +1070,9 @@ dependencies = [
     { name = "spotipy" },
     { name = "tenacity" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/d0/f7c2eb0372cd5bcff62bd13d77698f13913b9deb8dc7a75aef0cf46f000b/miniapppolis_common_utils-5.17.0.tar.gz", hash = "sha256:11f3c61e69415f5dd9991341ffb5135d5258f37cf47f929cce79b3360d06c93a", size = 312364, upload-time = "2026-09-30T18:42:41.821Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/c0/a6b6ded0225a407f95814b37d3f3644fe257a1761b1c88c32dc255c228c2/miniapppolis_common_utils-5.18.0.tar.gz", hash = "sha256:f9d0f6dac36054cdfb50f2f31e9d8171fafa304abba8ab43e39b80167d2d6a8d", size = 317581, upload-time = "2026-10-02T18:34:59.037Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f5/c5/40bb53b1a33f94d17cf234158438b5e0d5fe6b47effef88021c8c64cd3bc/miniapppolis_common_utils-5.17.0-py3-none-any.whl", hash = "sha256:89dbc36d1ad2839c0ae220d80193c5d51d9211f4c4912ab955e1e935079e17b9", size = 132435, upload-time = "2026-09-30T18:42:40.522Z" },
+    { url = "https://files.pythonhosted.org/packages/00/67/527e9425cbaf85d2e5cebca9b88d22cb04989913fbbf9fe326ed352aaf2c/miniapppolis_common_utils-5.18.0-py3-none-any.whl", hash = "sha256:9389915eb2e9b12e5d0ba34d3fef8ca5a6a09c76828a3fad474f6d8083a56e23", size = 135603, upload-time = "2026-10-02T18:34:57.864Z" },
 ]
 
 [[package]]
