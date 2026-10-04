@@ -105,6 +105,10 @@ from evaluator_cog.engine.deterministic.introspection import (
     check_eval_003,
     check_eval_007,
 )
+from evaluator_cog.engine.deterministic.layout import (
+    check_layout_drift,
+    check_layout_required,
+)
 from evaluator_cog.engine.deterministic.meta import (
     check_meta_005_check_notes_prefix,
     check_meta_006_prefix_file_correlation,
@@ -162,6 +166,7 @@ from evaluator_cog.engine.deterministic.testing import (
     check_respx_for_http_mocking,
     check_test_database_guard,
     check_testclient_for_v1_routes,
+    check_tests_split_by_layer,
 )
 from evaluator_cog.engine.deterministic.versioning import (
     check_breaking_change_footer,
@@ -242,6 +247,8 @@ __all__ = [
     "check_meta_no_scattered_metadata",
     "check_meta_release_pipeline_wired",
     "check_migration_in_ci",
+    "check_layout_drift",
+    "check_layout_required",
     "check_mock_assertions",
     "check_mypy_in_ci",
     "check_naming_conventions",
@@ -289,6 +296,7 @@ __all__ = [
     "check_structured_logging",
     "check_tailwind",
     "check_test_database_guard",
+    "check_tests_split_by_layer",
     "check_testclient_for_v1_routes",
     "check_three_layer_observability",
     "check_unauthenticated_routes",

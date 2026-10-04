@@ -143,6 +143,9 @@ class EvaluatorConfig:
     # this mapping rather than mapped to None, so "no deadline" and
     # "deadline unparseable" stay distinguishable.
     deferral_until: dict[str, _dt.date] = field(default_factory=dict)
+    # path -> reason, for top-level entries outside the written layout
+    # that only this repo carries (LAYOUT-002).
+    layout_exceptions: dict[str, str] = field(default_factory=dict)
     source: str = "evaluator.yaml"
 
     # Catalog data — populated by load_evaluator_config when available.
@@ -504,6 +507,14 @@ def _parse_evaluator_yaml(
             if parsed_until is not None:
                 deferral_until[rule_id] = parsed_until
 
+    layout_exceptions: dict[str, str] = {}
+    for item in raw.get("layout_exceptions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "")).strip()
+        if path:
+            layout_exceptions[path] = str(item.get("reason", "")).strip()
+
     return EvaluatorConfig(
         repo_type=repo_type,
         traits=traits,
@@ -512,6 +523,7 @@ def _parse_evaluator_yaml(
         deferral_ids=deferral_ids,
         deferral_reasons=deferral_reasons,
         deferral_until=deferral_until,
+        layout_exceptions=layout_exceptions,
         source=source,
     )
 
