@@ -22,9 +22,9 @@ from __future__ import annotations
 import threading
 from unittest.mock import MagicMock, patch
 
-import api_fakes
 import pytest
 
+import api_fakes
 from evaluator_cog.engine import api_client
 from evaluator_cog.engine.api_client import PostResult, post_findings
 from evaluator_cog.flows import conformance as conf

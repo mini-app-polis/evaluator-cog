@@ -22,9 +22,9 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import api_fakes
 import pytest
 
+import api_fakes
 from evaluator_cog.adapters import queue as q
 from evaluator_cog.flows import conformance as c
 
