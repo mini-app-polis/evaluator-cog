@@ -1,3 +1,10 @@
+# [3.51.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.5...v3.51.0) (2026-10-04)
+
+
+### Features
+
+* **testing:** check TEST-009 guard and TEST-019 floor; retire TEST-006/010/GAP-001 ([83299b3](https://github.com/mini-app-polis/evaluator-cog/commit/83299b3d83e713c392a7e3d237221b5284efc75c))
+
 ## [3.50.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.4...v3.50.5) (2026-10-04)
 
 
