@@ -681,3 +681,106 @@ def check_pytest_config(repo_path: Path) -> list[Finding]:
             )
         )
     return findings
+
+
+_DB_DRIVER_MODULES = frozenset(
+    {"sqlalchemy", "asyncpg", "psycopg", "psycopg2", "aiosqlite"}
+)
+_ANY_DB_URL_RE = re.compile(
+    r"(?:postgres(?:ql)?|mysql|mariadb|sqlite)(?:\+\w+)?://", re.IGNORECASE
+)
+
+
+def _test_files(directory: Path, *, recursive: bool = True) -> list[Path]:
+    if not directory.is_dir():
+        return []
+    files = directory.rglob("*.py") if recursive else directory.glob("*.py")
+    return sorted(
+        f for f in files if f.name.startswith("test_") or f.name.endswith("_test.py")
+    )
+
+
+def _sets_up_database(conftest: Path) -> bool:
+    """True when a conftest imports a database driver or names a database URL."""
+    try:
+        text = conftest.read_text(encoding="utf-8")
+        tree = ast.parse(text)
+    except (OSError, UnicodeDecodeError, SyntaxError):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(
+            a.name.split(".")[0] in _DB_DRIVER_MODULES for a in node.names
+        ):
+            return True
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and not node.level
+            and node.module.split(".")[0] in _DB_DRIVER_MODULES
+        ):
+            return True
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and _ANY_DB_URL_RE.search(node.value)
+        ):
+            return True
+    return False
+
+
+def check_tests_split_by_layer(
+    repo_path: Path, *, require_integration: bool = False
+) -> list[Finding]:
+    """TEST-021: Python tests are split by layer into tests/unit and tests/integration.
+
+    The directory is what lets each layer carry its own fixtures: a
+    database and an app client in the integration conftest, nothing in the
+    unit one. So beyond the two directories existing, a root
+    tests/conftest.py that sets up a database is reported — it makes every
+    test need one, which is the coupling the split exists to break.
+
+    `require_integration` is set for api-service and pipeline-cog, the
+    types TEST-015 requires integration tests of. A repo with no
+    pyproject.toml is not a Python repo and passes.
+    """
+    CHECK_ID = "TEST-021"
+    findings: list[Finding] = []
+    if not (repo_path / "pyproject.toml").is_file():
+        return findings
+    tests = repo_path / "tests"
+
+    def report(finding: str, suggestion: str) -> None:
+        findings.append(
+            _finding(CHECK_ID, "WARN", "testing_coverage", finding, suggestion)
+        )
+
+    if not _test_files(tests / "unit"):
+        report(
+            "No unit tests under tests/unit/.",
+            "Move the tests that need no database, network or app client into "
+            'tests/unit/, and set testpaths = ["tests/unit", "tests/integration"].',
+        )
+    if require_integration and not _test_files(tests / "integration"):
+        report(
+            "No integration tests under tests/integration/ — this repo type must "
+            "have them (TEST-015).",
+            "Move the tests that run through the app or handler with real wiring "
+            "into tests/integration/, with their fixtures in its conftest.py.",
+        )
+    loose = _test_files(tests, recursive=False)
+    if loose:
+        names = ", ".join(f.name for f in loose[:5]) + (" …" if len(loose) > 5 else "")
+        report(
+            f"{len(loose)} test file(s) sit directly in tests/, outside any layer: {names}.",
+            "Move each into tests/unit/ or tests/integration/, or a directory named "
+            "for its suite (tests/contract/, tests/evals/).",
+        )
+    root_conftest = tests / "conftest.py"
+    if root_conftest.is_file() and _sets_up_database(root_conftest):
+        report(
+            "tests/conftest.py sets up a database, so every test — unit tests "
+            "included — needs one to run.",
+            "Move the database fixtures and the TEST-009 guard into "
+            "tests/integration/conftest.py.",
+        )
+    return findings

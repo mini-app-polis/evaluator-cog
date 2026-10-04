@@ -150,6 +150,7 @@ from evaluator_cog.engine.deterministic.testing import (
     check_respx_for_http_mocking,
     check_test_database_guard,
     check_testclient_for_v1_routes,
+    check_tests_split_by_layer,
 )
 from evaluator_cog.engine.deterministic.versioning import (
     check_breaking_change_footer,
@@ -778,6 +779,15 @@ def run_all_checks(
     # gated on language; static sites are outside its applies_to.
     if is_pipeline_cog or is_trigger_cog or is_api_service or is_library or is_frontend:
         _run(check_coverage_floor, "TEST-019")
+    # TEST-021 — one directory per layer. Integration tests are required of
+    # the types TEST-015 applies to; the check itself skips non-Python repos.
+    if is_pipeline_cog or is_trigger_cog or is_api_service or is_library:
+        _run(
+            lambda p: check_tests_split_by_layer(
+                p, require_integration=is_api_service or is_pipeline_cog
+            ),
+            "TEST-021",
+        )
         _run(check_hardcoded_standards_version, "EVAL-002")
 
     def _test_013(p: Path) -> list[Finding]:

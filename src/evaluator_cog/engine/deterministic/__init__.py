@@ -162,6 +162,7 @@ from evaluator_cog.engine.deterministic.testing import (
     check_respx_for_http_mocking,
     check_test_database_guard,
     check_testclient_for_v1_routes,
+    check_tests_split_by_layer,
 )
 from evaluator_cog.engine.deterministic.versioning import (
     check_breaking_change_footer,
@@ -289,6 +290,7 @@ __all__ = [
     "check_structured_logging",
     "check_tailwind",
     "check_test_database_guard",
+    "check_tests_split_by_layer",
     "check_testclient_for_v1_routes",
     "check_three_layer_observability",
     "check_unauthenticated_routes",

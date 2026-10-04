@@ -294,3 +294,120 @@ def test_runner_registers_the_reconciled_rules(tmp_path: Path) -> None:
     checked = run_all_checks(tmp_path, dod_type="new_fastapi_service").checked_rule_ids
     assert {"TEST-009", "TEST-019"} <= checked
     assert not checked & {"TEST-006", "TEST-010", "TEST-GAP-001"}
+
+
+# --- TEST-021 -----------------------------------------------------------------
+
+from evaluator_cog.engine.deterministic import check_tests_split_by_layer  # noqa: E402
+
+
+def _layered(tmp_path: Path) -> Path:
+    _write(tmp_path, "pyproject.toml", "[project]\nname = 'x'\n")
+    _write(tmp_path, "tests/unit/test_parse.py", "def test_x():\n    assert True\n")
+    _write(
+        tmp_path, "tests/integration/test_routes.py", "def test_y():\n    assert True\n"
+    )
+    _write(
+        tmp_path,
+        "tests/integration/conftest.py",
+        'import asyncpg\nURL = "postgresql://u:p@localhost:5432/x_test"\n',
+    )
+    return tmp_path
+
+
+def test_021_layered_repo_passes(tmp_path: Path) -> None:
+    assert (
+        check_tests_split_by_layer(_layered(tmp_path), require_integration=True) == []
+    )
+
+
+def test_021_nested_layout_inside_a_layer_passes(tmp_path: Path) -> None:
+    """Mirroring the package inside a layer is fine."""
+    _write(tmp_path, "pyproject.toml", "[project]\nname = 'x'\n")
+    _write(tmp_path, "tests/unit/pkg/api/test_client.py", "def test_x():\n    pass\n")
+    assert check_tests_split_by_layer(tmp_path) == []
+
+
+def test_021_named_suites_beside_the_layers_pass(tmp_path: Path) -> None:
+    repo = _layered(tmp_path)
+    _write(repo, "tests/evals/test_harness.py", "def test_e():\n    pass\n")
+    _write(repo, "tests/contract/test_api.py", "def test_c():\n    pass\n")
+    assert check_tests_split_by_layer(repo, require_integration=True) == []
+
+
+def test_021_non_python_repo_passes(tmp_path: Path) -> None:
+    _write(tmp_path, "package.json", "{}")
+    assert check_tests_split_by_layer(tmp_path, require_integration=True) == []
+
+
+def test_021_flat_tests_fail(tmp_path: Path) -> None:
+    """api-deejaytools' shape: every test loose in tests/, no layers."""
+    _write(tmp_path, "pyproject.toml", "[project]\nname = 'x'\n")
+    for name in ("test_songs.py", "test_events.py"):
+        _write(tmp_path, f"tests/{name}", "def test_x():\n    pass\n")
+    findings = check_tests_split_by_layer(tmp_path, require_integration=True)
+    text = _text(findings)
+    assert len(findings) == 3
+    assert "tests/unit/" in text and "tests/integration/" in text
+    assert "2 test file(s) sit directly in tests/" in text
+
+
+def test_021_integration_optional_for_libraries(tmp_path: Path) -> None:
+    _write(tmp_path, "pyproject.toml", "[project]\nname = 'x'\n")
+    _write(tmp_path, "tests/unit/test_x.py", "def test_x():\n    pass\n")
+    assert check_tests_split_by_layer(tmp_path, require_integration=False) == []
+
+
+def test_021_integration_required_for_apis_and_cogs(tmp_path: Path) -> None:
+    _write(tmp_path, "pyproject.toml", "[project]\nname = 'x'\n")
+    _write(tmp_path, "tests/unit/test_x.py", "def test_x():\n    pass\n")
+    findings = check_tests_split_by_layer(tmp_path, require_integration=True)
+    assert len(findings) == 1
+    assert "TEST-015" in _text(findings)
+
+
+def test_021_empty_layer_directory_does_not_count(tmp_path: Path) -> None:
+    repo = _layered(tmp_path)
+    (repo / "tests/unit/test_parse.py").unlink()
+    _write(repo, "tests/unit/helpers.py", "X = 1\n")
+    assert len(check_tests_split_by_layer(repo, require_integration=True)) == 1
+
+
+def test_021_database_in_the_root_conftest_fails(tmp_path: Path) -> None:
+    repo = _layered(tmp_path)
+    _write(
+        repo,
+        "tests/conftest.py",
+        "from sqlalchemy.ext.asyncio import create_async_engine\n",
+    )
+    findings = check_tests_split_by_layer(repo, require_integration=True)
+    assert len(findings) == 1
+    assert "every test" in _text(findings)
+
+
+def test_021_database_url_in_the_root_conftest_fails(tmp_path: Path) -> None:
+    repo = _layered(tmp_path)
+    _write(repo, "tests/conftest.py", 'URL = "sqlite+aiosqlite:///:memory:"\n')
+    assert len(check_tests_split_by_layer(repo, require_integration=True)) == 1
+
+
+def test_021_root_conftest_without_a_database_passes(tmp_path: Path) -> None:
+    repo = _layered(tmp_path)
+    _write(
+        repo,
+        "tests/conftest.py",
+        "import pytest\n\n@pytest.fixture\ndef now():\n    return 0\n",
+    )
+    assert check_tests_split_by_layer(repo, require_integration=True) == []
+
+
+def test_runner_requires_integration_by_type(tmp_path: Path) -> None:
+    _write(tmp_path, "pyproject.toml", "[project]\nname = 'x'\n")
+    _write(tmp_path, "src/svc/__init__.py", "")
+    _write(tmp_path, "tests/unit/test_x.py", "def test_x():\n    pass\n")
+    api = run_all_checks(tmp_path, dod_type="new_fastapi_service")
+    assert "TEST-021" in api.checked_rule_ids
+    assert any(
+        f["rule_id"] == "TEST-021" and "tests/integration/" in f["finding"]
+        for f in api.findings
+    )
