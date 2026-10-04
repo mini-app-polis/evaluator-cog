@@ -1,3 +1,10 @@
+## [3.50.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.4...v3.50.5) (2026-10-04)
+
+
+### Bug Fixes
+
+* **versioning:** accept npx -p semantic-release in VER-006 ([99399db](https://github.com/mini-app-polis/evaluator-cog/commit/99399dbfd10d449d243fb9eb39240e52d025a1a3))
+
 ## [3.50.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.3...v3.50.4) (2026-10-04)
 
 
