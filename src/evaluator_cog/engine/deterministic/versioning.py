@@ -260,8 +260,14 @@ def check_breaking_change_footer(repo_path: Path) -> list[Finding]:
     return findings
 
 
+#: Markers that stop GitHub Actions on the release commit (VER-009). Both
+#: work; `[skip actions]` is the one Cloudflare Pages does not read, so a
+#: Pages site uses it to get its release commit built and deployed.
+SKIP_ACTIONS_MARKERS = ("[skip ci]", "[skip actions]")
+
+
 def check_release_commit_message(repo_path: Path) -> list[Finding]:
-    """VER-009: the release commit carries [skip ci] and the release notes."""
+    """VER-009: the release commit skips Actions and carries the release notes."""
     CHECK_ID = "VER-009"
     findings: list[Finding] = []
     rc = repo_path / ".releaserc.json"
@@ -288,17 +294,20 @@ def check_release_commit_message(repo_path: Path) -> list[Finding]:
         # No git plugin means no release commit to annotate.
         return findings
 
-    if "[skip ci]" not in message:
+    if not any(marker in message for marker in SKIP_ACTIONS_MARKERS):
         findings.append(
             _finding(
                 CHECK_ID,
                 "WARN",
                 "cd_readiness",
-                "The @semantic-release/git message has no [skip ci], so the "
-                "release commit pushed to main re-triggers the full pipeline, "
-                "which then finds no releasable commits and exits.",
+                "The @semantic-release/git message has neither [skip ci] nor "
+                "[skip actions], so the release commit pushed to main "
+                "re-triggers the full pipeline, which then finds no "
+                "releasable commits and exits.",
                 "Add `[skip ci]` to the message: "
-                "`chore(release): ${nextRelease.version} [skip ci]`.",
+                "`chore(release): ${nextRelease.version} [skip ci]` — or "
+                "`[skip actions]` on a Cloudflare Pages site, so Pages still "
+                "builds the release commit.",
             )
         )
     if "${nextRelease.notes}" not in message:

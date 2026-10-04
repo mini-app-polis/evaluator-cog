@@ -2386,6 +2386,14 @@ def test_ver_009_accepts_the_canonical_message(tmp_path) -> None:
     assert check_release_commit_message(_repo_with_releaserc(tmp_path, msg)) == []
 
 
+def test_ver_009_accepts_skip_actions(tmp_path) -> None:
+    # Cloudflare Pages sites: stops Actions, but Pages still builds the commit.
+    msg = (
+        "chore(release): ${nextRelease.version} [skip actions]\n\n${nextRelease.notes}"
+    )
+    assert check_release_commit_message(_repo_with_releaserc(tmp_path, msg)) == []
+
+
 def test_ver_009_flags_missing_skip_ci(tmp_path) -> None:
     msg = "chore(release): ${nextRelease.version}\n\n${nextRelease.notes}"
     findings = check_release_commit_message(_repo_with_releaserc(tmp_path, msg))
