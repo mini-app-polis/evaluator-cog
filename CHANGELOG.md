@@ -1,3 +1,10 @@
+## [3.50.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.3...v3.50.4) (2026-10-04)
+
+
+### Bug Fixes
+
+* **versioning:** accept [skip actions] in VER-009 ([6f07636](https://github.com/mini-app-polis/evaluator-cog/commit/6f07636f528be9533bf79c99ba3db27c9e5984b8))
+
 ## [3.50.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.2...v3.50.3) (2026-10-03)
 
 
