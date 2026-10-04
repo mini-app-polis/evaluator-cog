@@ -395,6 +395,63 @@ def test_check_ci_accepts_pnpm_add_before_semantic_release(tmp_path: Path) -> No
     assert "VER-006" not in rule_ids
 
 
+# ── VER-006 / npx -p pattern ──────────────────────────────────────────────────
+
+
+def test_check_ci_accepts_npx_package_flags_in_folded_block(tmp_path: Path) -> None:
+    """VER-006 must not fire when npx -p installs semantic-release and its plugins."""
+    ci = tmp_path / ".github" / "workflows"
+    ci.mkdir(parents=True)
+    (ci / "ci.yml").write_text(
+        "fetch-depth: 0\n"
+        "      - name: Release\n"
+        "        run: >-\n"
+        "          npx --yes\n"
+        "          -p semantic-release@25\n"
+        "          -p @semantic-release/changelog@7\n"
+        "          -p @semantic-release/git@11\n"
+        "          semantic-release\n"
+    )
+    findings = check_ci(tmp_path)
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "VER-006" not in rule_ids
+
+
+def test_check_ci_accepts_npx_package_flag_after_plugins(tmp_path: Path) -> None:
+    """Order of -p flags does not matter."""
+    ci = tmp_path / ".github" / "workflows"
+    ci.mkdir(parents=True)
+    (ci / "ci.yml").write_text(
+        "fetch-depth: 0\n"
+        "run: npx -p @semantic-release/git --package=semantic-release semantic-release\n"
+    )
+    findings = check_ci(tmp_path)
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "VER-006" not in rule_ids
+
+
+def test_check_ci_flags_bare_npx_semantic_release(tmp_path: Path) -> None:
+    """A bare npx semantic-release still has no plugins and still fires."""
+    ci = tmp_path / ".github" / "workflows"
+    ci.mkdir(parents=True)
+    (ci / "ci.yml").write_text("fetch-depth: 0\nrun: npx --yes semantic-release\n")
+    findings = check_ci(tmp_path)
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "VER-006" in rule_ids
+
+
+def test_check_ci_flags_npx_with_only_plugin_packages(tmp_path: Path) -> None:
+    """-p for plugins alone does not install semantic-release itself."""
+    ci = tmp_path / ".github" / "workflows"
+    ci.mkdir(parents=True)
+    (ci / "ci.yml").write_text(
+        "fetch-depth: 0\nrun: npx -p @semantic-release/git semantic-release\n"
+    )
+    findings = check_ci(tmp_path)
+    rule_ids = [f["rule_id"] for f in findings]
+    assert "VER-006" in rule_ids
+
+
 def test_check_env_example_fires_when_absent_everywhere(tmp_path: Path) -> None:
     """DOC-004 should fire when .env.example is absent in all locations."""
     findings = check_env_example(tmp_path)

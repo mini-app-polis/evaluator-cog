@@ -340,6 +340,17 @@ def check_terraform_versions_pinned(
     return findings
 
 
+# VER-006's concern is that a bare `npx semantic-release` runs without the
+# plugins the config names. `npx -p semantic-release@N -p @semantic-release/x`
+# installs the named packages for that one call, which satisfies it without
+# putting them in the lockfile. Matched on whitespace-collapsed content so a
+# folded (`>-`) multi-line run block reads as one command.
+_NPX_PACKAGE_SEMANTIC_RELEASE = re.compile(
+    r"\bnpx\b(?:\s+(?:--yes|-y))?(?:\s+(?:-p|--package)[\s=]\S+)*"
+    r"\s+(?:-p|--package)[\s=]semantic-release(?:@\S+)?\b"
+)
+
+
 def check_ci(
     repo_path: Path,
     exceptions: frozenset[str] | None = None,
@@ -398,6 +409,7 @@ def check_ci(
         and "pnpm exec semantic-release" not in content
         and "pnpm run semantic-release" not in content
         and "pnpm add" not in content
+        and not _NPX_PACKAGE_SEMANTIC_RELEASE.search(" ".join(content.split()))
     ):
         findings.append(
             _finding(
