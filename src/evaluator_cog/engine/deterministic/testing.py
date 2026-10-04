@@ -5,10 +5,12 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
+    _is_checker_self_source,
     _is_inside_string_literal,
 )
 
@@ -89,144 +91,228 @@ def check_testclient_for_v1_routes(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_db_test_fixtures(repo_path: Path) -> list[Finding]:
-    """TEST-009: conftest has DB test fixtures."""
+_LOCAL_DB_HOSTS = frozenset({"localhost", "127.0.0.1"})
+_DB_URL_RE = re.compile(
+    r"(?:postgres(?:ql)?|mysql|mariadb)(?:\+\w+)?://[^\s'\"]+", re.IGNORECASE
+)
+
+
+def _imports_sqlalchemy(src: Path) -> bool:
+    """True when production code imports SQLAlchemy — the repo has a database.
+
+    An import, not the word: the evaluator's own checker source names
+    sqlalchemy in its pattern lists and is excluded for the same reason.
+    """
+    for py in src.rglob("*.py"):
+        if _is_checker_self_source(py):
+            continue
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(
+                a.name.split(".")[0] == "sqlalchemy" for a in node.names
+            ):
+                return True
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.module.split(".")[0] == "sqlalchemy"
+            ):
+                return True
+    return False
+
+
+def _is_remote_host(host: str) -> bool:
+    """A qualified name or an address that is not this machine.
+
+    Single-label names are not reported: ``h`` in a URL-parsing fixture or
+    ``postgres`` as a compose service name cannot reach a production host.
+    """
+    return bool(host) and "." in host and not host.startswith("127.")
+
+
+def _is_local_test_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.hostname in _LOCAL_DB_HOSTS and parsed.path.rstrip("/").endswith(
+        "_test"
+    )
+
+
+def _ci_test_job_db_urls(repo_path: Path) -> list[str]:
+    """Values of every *DATABASE_URL variable on the CI `test` job and its steps."""
+    import yaml
+
+    ci = repo_path / ".github" / "workflows" / "ci.yml"
+    try:
+        workflow = yaml.safe_load(ci.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return []
+    job = (
+        (workflow.get("jobs") or {}).get("test") if isinstance(workflow, dict) else None
+    )
+    if not isinstance(job, dict):
+        return []
+    envs = [job.get("env") or {}]
+    envs += [
+        (s or {}).get("env") or {}
+        for s in job.get("steps") or []
+        if isinstance(s, dict)
+    ]
+    return [
+        str(value)
+        for env in envs
+        if isinstance(env, dict)
+        for key, value in env.items()
+        if str(key).upper().endswith("DATABASE_URL")
+    ]
+
+
+def _guards_test_database(node: ast.AST) -> bool:
+    """True when `node` raises, names a local host and tests for `_test`."""
+    strings = {
+        n.value
+        for n in ast.walk(node)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    }
+    raises = any(isinstance(n, ast.Raise) for n in ast.walk(node))
+    return raises and bool(strings & _LOCAL_DB_HOSTS) and "_test" in strings
+
+
+def _app_packages(repo_path: Path) -> set[str]:
+    src = repo_path / "src"
+    return {
+        p.name for p in src.iterdir() if p.is_dir() and (p / "__init__.py").is_file()
+    }
+
+
+def _imports_package(stmt: ast.stmt, packages: set[str]) -> bool:
+    if isinstance(stmt, ast.Import):
+        return any(a.name.split(".")[0] in packages for a in stmt.names)
+    if isinstance(stmt, ast.ImportFrom) and stmt.module and not stmt.level:
+        return stmt.module.split(".")[0] in packages
+    return False
+
+
+def _conftest_guards_first(tree: ast.Module, packages: set[str]) -> bool:
+    """True when a module-level guard runs before the app package is imported.
+
+    The guard is a function that raises on a non-local or non-`_test` URL,
+    called at module level or from `pytest_configure`, or the same check
+    written inline as a module-level statement. It has to come before the
+    first module-level import of the package under src/: importing the app
+    builds its settings and engine, and that is the connection the guard
+    exists to stop.
+    """
+    guards = {
+        n.name
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and _guards_test_database(n)
+    }
+    first_import = next(
+        (i for i, s in enumerate(tree.body) if _imports_package(s, packages)),
+        len(tree.body),
+    )
+
+    def calls_guard(node: ast.AST) -> bool:
+        return any(
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id in guards
+            for n in ast.walk(node)
+        )
+
+    for i, stmt in enumerate(tree.body):
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if stmt.name == "pytest_configure" and (
+                calls_guard(stmt) or _guards_test_database(stmt)
+            ):
+                return True
+            continue
+        if i < first_import and (calls_guard(stmt) or _guards_test_database(stmt)):
+            return True
+    return False
+
+
+def check_test_database_guard(repo_path: Path) -> list[Finding]:
+    """TEST-009: tests can only reach a local test database.
+
+    Three conditions, each its own finding, in the order the rule gives
+    them. (1) CI hands the test job a local ``*_test`` database. (2) A
+    conftest refuses any other URL before the app is imported — the
+    fixtures empty the database between tests, so pointed elsewhere a
+    correct suite deletes real data. (3) No database URL under tests/
+    names a remote host.
+
+    In-memory SQLite no longer satisfies (1): the engine is TEST-015's, and
+    this rule is only the guard. A repo whose src/ never mentions
+    SQLAlchemy has no database and passes.
+    """
     CHECK_ID = "TEST-009"
     findings: list[Finding] = []
     src = repo_path / "src"
     tests = repo_path / "tests"
-    if not src.is_dir() or not tests.is_dir():
+    if not src.is_dir():
+        return findings
+    if not _imports_sqlalchemy(src):
         return findings
 
-    # Is this a SQLAlchemy repo?
-    has_sqlalchemy = False
-    for py_file in src.rglob("*.py"):
-        try:
-            if "sqlalchemy" in py_file.read_text().lower():
-                has_sqlalchemy = True
-                break
-        except Exception:
-            continue
-    if not has_sqlalchemy:
-        return findings
-
-    conftest_files = list(tests.rglob("conftest.py"))
-    if not conftest_files:
+    urls = _ci_test_job_db_urls(repo_path)
+    if not any(_is_local_test_url(u) for u in urls):
         findings.append(
             _finding(
-                "TEST-009",
+                CHECK_ID,
                 "ERROR",
                 "testing_coverage",
-                "SQLAlchemy repo has no conftest.py with DB test fixtures.",
-                "Add a conftest.py with DATABASE_URL override, in-memory engine, or "
-                "transaction rollback fixture.",
+                "The CI test job sets no *DATABASE_URL pointing at a local database "
+                "named *_test"
+                + (f" (found: {', '.join(sorted(set(urls)))})." if urls else "."),
+                "Give the `test` job a Postgres service and set e.g. "
+                "TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/<name>_test.",
             )
         )
-        return findings
 
-    combined = "\n".join(f.read_text() for f in conftest_files if f.exists())
-    has_fixture_pattern = (
-        "DATABASE_URL" in combined
-        or "sqlite:///:memory:" in combined
-        or ("rollback" in combined.lower() and "fixture" in combined.lower())
-    )
-    if not has_fixture_pattern:
+    packages = _app_packages(repo_path)
+    guarded = False
+    for conftest in sorted(tests.rglob("conftest.py")) if tests.is_dir() else []:
+        try:
+            tree = ast.parse(conftest.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+        if _conftest_guards_first(tree, packages):
+            guarded = True
+            break
+    if not guarded:
         findings.append(
             _finding(
-                "TEST-009",
+                CHECK_ID,
                 "ERROR",
                 "testing_coverage",
-                "conftest.py has no DB test fixture pattern (DATABASE_URL override, in-memory SQLite, or rollback fixture).",
-                "Add one of: DATABASE_URL override, in-memory SQLite engine, or rollback fixture.",
+                "No conftest.py refuses a database URL that is not local and named "
+                "*_test before the application is imported.",
+                "In tests/conftest.py, above the app import: parse the test database "
+                "URL and raise unless its host is localhost/127.0.0.1 and its "
+                "database name ends in _test.",
             )
         )
-    return findings
 
-
-def check_route_contract_tests(repo_path: Path) -> list[Finding]:
-    """TEST-010: Each FastAPI route has a contract test."""
-    CHECK_ID = "TEST-010"
-    import ast
-
-    findings: list[Finding] = []
-    src = repo_path / "src"
-    tests = repo_path / "tests"
-    if not src.is_dir() or not tests.is_dir():
-        return findings
-
-    route_paths: set[str] = set()
-    route_attrs = {"get", "post", "put", "delete", "patch"}
-    for py_file in src.rglob("*.py"):
-        try:
-            text = py_file.read_text()
-            tree = ast.parse(text)
-        except Exception:
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for dec in node.decorator_list:
-                if not isinstance(dec, ast.Call):
-                    continue
-                if not isinstance(dec.func, ast.Attribute):
-                    continue
-                if dec.func.attr not in route_attrs:
-                    continue
-                if (
-                    dec.args
-                    and isinstance(dec.args[0], ast.Constant)
-                    and isinstance(dec.args[0].value, str)
-                ):
-                    route_paths.add(dec.args[0].value)
-
-    if not route_paths:
-        return findings
-
-    test_text = ""
-    for test_file in tests.rglob("test_*.py"):
-        try:
-            test_text += "\n" + test_file.read_text()
-        except Exception:
-            continue
-
-    # Build a regex for each route. `/catalog/{id}` becomes
-    # `/catalog/[^\s/]+`, so concrete URLs in tests like
-    # `client.get(f"/v1/catalog/{item_id}")` or
-    # `client.get("/v1/catalog/abc123")` match. Without this, path
-    # parameters like `{id}` / `{name}` never appear literally in test
-    # code and every parametrised route was reported as untested.
-    #
-    # The wildcard excludes slash (so a multi-segment path like
-    # `/sets/{id}/tracks` can't be falsely satisfied by a test URL
-    # `/v1/sets/abc/extra/tracks` — different route) and whitespace
-    # (so a match can't bleed across lines in the concatenated test
-    # text). Quotes are NOT excluded: Python f-strings often nest
-    # quote characters inside the path-parameter expression itself,
-    # e.g. `f"/v1/wcs/admin/notes/{note['id']}/visibility"`, and
-    # excluding quotes would cause the regex to fail on that
-    # extremely common pattern.
-    #
-    # Routes without any `{...}` placeholder fall through to a plain
-    # substring match via `re.escape`.
-    _param_re = re.compile(r"\{[^}]+\}")
-    _param_sub = r"[^\s/]+"
-
-    def _route_to_regex(route: str) -> re.Pattern[str]:
-        parts = _param_re.split(route)
-        pattern = _param_sub.join(re.escape(p) for p in parts)
-        return re.compile(pattern)
-
-    untested = [r for r in route_paths if not _route_to_regex(r).search(test_text)]
-    if untested:
-        sample = ", ".join(sorted(untested)[:5])
-        suffix = " (and others)" if len(untested) > 5 else ""
+    remote: set[str] = set()
+    for py in sorted(tests.rglob("*.py")) if tests.is_dir() else []:
+        text = py.read_text(encoding="utf-8", errors="ignore")
+        for url in _DB_URL_RE.findall(text):
+            host = urlparse(url).hostname or ""
+            if _is_remote_host(host) and not re.search(r"[{$]", url):
+                remote.add(f"{py.relative_to(repo_path)} ({host})")
+    if remote:
         findings.append(
             _finding(
-                "TEST-010",
+                CHECK_ID,
                 "ERROR",
                 "testing_coverage",
-                f"{len(untested)} route(s) have no contract test referencing them: {sample}{suffix}.",
-                "Add tests that exercise each /v1/ route and assert the response shape.",
+                f"Tests name a database on a non-local host: {', '.join(sorted(remote))}.",
+                "Point tests only at the local *_test database the CI job provides.",
             )
         )
     return findings
@@ -516,46 +602,6 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
                     "return_value / side_effect behavior injection.",
                 )
             )
-    return findings
-
-
-def check_test_gap_critical_paths(repo_path: Path) -> list[Finding]:
-    """TEST-GAP-001: Track presence of TEST-001..004 critical-path tests."""
-    CHECK_ID = "TEST-GAP-001"
-    findings: list[Finding] = []
-    tests = repo_path / "tests"
-    if not tests.is_dir():
-        return findings
-
-    test_text = ""
-    for test_file in tests.rglob("test_*.py"):
-        try:
-            test_text += "\n" + test_file.read_text()
-        except Exception:
-            continue
-
-    # Heuristic markers for each critical-path category
-    critical_markers = {
-        "TEST-001 (normalization)": ("normalize", "normalise", "normalization"),
-        "TEST-002 (deduplication)": ("dedup", "deduplication"),
-        "TEST-003 (persistence)": ("persist", "upsert", "session.commit"),
-        "TEST-004 (archival)": ("archive", "archival", "move"),
-    }
-    missing = []
-    for label, markers in critical_markers.items():
-        if not any(m in test_text.lower() for m in markers):
-            missing.append(label)
-
-    if missing:
-        findings.append(
-            _finding(
-                "TEST-GAP-001",
-                "INFO",
-                "testing_coverage",
-                f"Missing critical-path tests: {', '.join(missing)}.",
-                "Add tests for the missing categories so each pipeline stage has coverage.",
-            )
-        )
     return findings
 
 

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import json
 import re
+import tomllib
 from contextlib import suppress
 from pathlib import Path
 
@@ -158,28 +160,112 @@ def _delegates_coverage(repo_path: Path) -> bool:
     return False
 
 
-def check_pytest_coverage_in_ci(repo_path: Path) -> list[Finding]:
-    """TEST-006: pytest coverage measured in CI, inline or by delegation."""
-    CHECK_ID = "TEST-006"
+def _measures_coverage(repo_path: Path, ci_text: str) -> bool:
+    """True when CI runs the tests with coverage, inline or by delegation."""
+    if "--cov" in ci_text or "pytest-cov" in ci_text or _delegates_coverage(repo_path):
+        return True
+    if "--coverage" in ci_text or "test:coverage" in ci_text:
+        return True
+    # `pnpm test` in CI, with coverage switched on in the script it runs.
+    package = repo_path / "package.json"
+    if re.search(r"\b(pnpm|npm)\s+(run\s+)?test\b", ci_text) and package.is_file():
+        with suppress(OSError, ValueError):
+            scripts = (
+                json.loads(package.read_text(encoding="utf-8")).get("scripts") or {}
+            )
+            return "--coverage" in str(scripts.get("test", ""))
+    return False
+
+
+def _declared_floor(repo_path: Path) -> bool | None:
+    """Whether a coverage floor is declared; None when there is no project file.
+
+    Python reads only ``[tool.coverage.report] fail_under`` in pyproject.toml,
+    parsed as TOML so a commented-out line does not count, and pytest-cov
+    enforces it with no CI change. TypeScript reads a vitest config for
+    ``thresholds``.
+    """
+    pyproject = repo_path / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+            return False
+        floor = (
+            data.get("tool", {}).get("coverage", {}).get("report", {}).get("fail_under")
+        )
+        return (
+            isinstance(floor, (int, float))
+            and not isinstance(floor, bool)
+            and floor > 0
+        )
+    if (repo_path / "package.json").is_file():
+        for config in sorted(repo_path.glob("vitest.config.*")):
+            with suppress(OSError, UnicodeDecodeError):
+                if "thresholds" in config.read_text(encoding="utf-8"):
+                    return True
+        return False
+    return None
+
+
+def check_coverage_floor(repo_path: Path) -> list[Finding]:
+    """TEST-019: coverage is measured in CI against a declared floor.
+
+    Absorbs TEST-006, whose "coverage measured in CI" is condition (1) here,
+    shared-workflow delegation included. Condition (2) is the floor, read
+    from the one place each toolchain enforces it. Whether the floor follows
+    coverage upward is the rule's convention half and is not checked:
+    pytest-cov has no equivalent of Vitest's autoUpdate.
+
+    A repo with neither pyproject.toml nor package.json has no project to
+    measure and passes.
+    """
+    CHECK_ID = "TEST-019"
     findings: list[Finding] = []
-    ci = repo_path / ".github" / "workflows" / "ci.yml"
-    if not ci.exists():
+    floor = _declared_floor(repo_path)
+    if floor is None:
         return findings
-    content = ci.read_text()
-    if (
-        "pytest --cov" not in content
-        and "pytest-cov" not in content
-        and not _delegates_coverage(repo_path)
-    ):
+
+    ci = repo_path / ".github" / "workflows" / "ci.yml"
+    ci_text = ""
+    with suppress(OSError, UnicodeDecodeError):
+        ci_text = ci.read_text(encoding="utf-8")
+    if not _measures_coverage(repo_path, ci_text):
         findings.append(
             _finding(
-                "TEST-006",
+                CHECK_ID,
                 "WARN",
                 "testing_coverage",
-                "Coverage not measured in CI — pytest --cov not found in ci.yml, "
-                "and no job calls the shared python-test.yml with coverage on.",
+                "Coverage is not measured in CI: ci.yml runs no pytest --cov, "
+                "vitest --coverage or test:coverage, and no job calls the shared "
+                "python-test.yml with coverage on.",
                 "Call mini-app-polis/.github's python-test.yml as the `test` job, "
-                "or add --cov to the pytest invocation in CI.",
+                "or add --cov (pytest) or --coverage (vitest) to the test step.",
+            )
+        )
+    if not floor:
+        python = (repo_path / "pyproject.toml").is_file()
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "testing_coverage",
+                (
+                    "No coverage floor: pyproject.toml declares no fail_under "
+                    "in [tool.coverage.report], so coverage can fall without CI "
+                    "noticing."
+                    if python
+                    else "No coverage floor: no vitest config declares "
+                    "coverage.thresholds, so coverage can fall without CI "
+                    "noticing."
+                ),
+                (
+                    "Set [tool.coverage.report] fail_under to the repo's current "
+                    "coverage, rounded down, and raise it when coverage rises."
+                    if python
+                    else "Declare coverage.thresholds with autoUpdate rounding "
+                    "down: autoUpdate: (n) => Math.floor(n)."
+                ),
             )
         )
     return findings
