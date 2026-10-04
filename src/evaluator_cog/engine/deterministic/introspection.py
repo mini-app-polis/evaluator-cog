@@ -120,6 +120,9 @@ def check_eval_003() -> list[Finding]:
     # unexpectedly — those are infrastructure-error findings, not
     # conformance findings, and they legitimately have no rule ID.
     _non_rule_sentinels = {"", "CHECKER"}
+    # Rows that are about the run rather than a rule: CHECKER (a check
+    # raised) and STATUS (a repo was not assessed or not evaluated).
+    _run_markers = {"CHECKER", "STATUS"}
 
     for row in rows:
         if not isinstance(row, dict):
@@ -159,8 +162,10 @@ def check_eval_003() -> list[Finding]:
 
         # Don't grade CHECKER infrastructure-error findings — those are
         # emitted when a check function itself raised, and have no
-        # associated rule by design.
-        if row_rule_id == "CHECKER":
+        # associated rule by design. Nor STATUS rows: they are statements
+        # about the run ("not assessed against the LLM checks", "declared
+        # active but not evaluated"), not findings against a rule.
+        if row_rule_id in _run_markers:
             continue
 
         problems: list[str] = []
