@@ -1,3 +1,10 @@
+## [3.52.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.52.0...v3.52.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **introspection:** run-status rows carry violation_id STATUS; EVAL-003 skips them ([f50eefd](https://github.com/mini-app-polis/evaluator-cog/commit/f50eefd5bdffb32faab897feb385a7496364dc90))
+
 # [3.52.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.51.0...v3.52.0) (2026-10-04)
 
 
