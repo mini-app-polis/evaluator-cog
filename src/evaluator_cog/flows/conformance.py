@@ -1007,6 +1007,13 @@ def run_conformance_check(
         findings_to_post = [
             {
                 "rule_id": "STATUS",
+                # The API stores violation_id, not rule_id. Without it this
+                # row reached the database tagged with no rule at all, and
+                # EVAL-003 could not tell a run-status row from a finding
+                # that forgot its rule. The SUCCESS row below goes without:
+                # EVAL-003 never grades SUCCESS, and it would put a STATUS
+                # chip on every passing repo.
+                "violation_id": "STATUS",
                 "dimension": "structural_conformance",
                 "severity": "WARN",
                 "finding": (
@@ -1165,6 +1172,7 @@ def _post_not_evaluated(
         findings=[
             {
                 "rule_id": "STATUS",
+                "violation_id": "STATUS",
                 "dimension": "structural_conformance",
                 "severity": "ERROR",
                 "finding": (

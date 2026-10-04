@@ -206,6 +206,9 @@ def test_llm_not_assessed_never_posts_success(monkeypatch, llm_patch) -> None:
     assert posted[0]["severity"] == "WARN"
     assert "not assessed against the LLM checks" in posted[0]["finding"]
     assert "passed" not in posted[0]["finding"]
+    # Stored as a run-status row, so EVAL-003 does not grade it as an
+    # untagged finding.
+    assert posted[0]["violation_id"] == "STATUS"
     report.issue.assert_called_once()
     assert report.issue.call_args.args[:2] == ("llm_assessment_failed", "test-repo")
 

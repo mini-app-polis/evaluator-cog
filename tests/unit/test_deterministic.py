@@ -1733,6 +1733,35 @@ def test_check_eval_003_skips_checker_infrastructure_errors() -> None:
     assert findings == []
 
 
+def test_check_eval_003_skips_run_status_rows() -> None:
+    """A STATUS row says a repo was not assessed or not evaluated. It is a
+    statement about the run, not a finding against a rule, and has no rule
+    to be tagged with — which is what EVAL-003 reported on 2026-10-04."""
+    fake_response = {
+        "data": [
+            {
+                "id": 300,
+                "violation_id": "STATUS",
+                "finding": "wiki-curator-cog was not assessed against the LLM "
+                "checks for standards v7.13.0: the LLM assessment failed.",
+                "severity": "WARN",
+                "suggestion": "See this run's llm_assessment_failed detail, fix "
+                "the cause, and run the LLM sweep again.",
+                "standards_version": "7.13.0",
+                "run_id": "x",
+            },
+        ],
+    }
+
+    with patch(
+        "mini_app_polis.api.KaianoApiClient.from_env",
+        return_value=_eval_003_api(fake_response),
+    ):
+        findings = check_eval_003()
+
+    assert findings == []
+
+
 def test_check_eval_003_accepts_short_but_clear_finding() -> None:
     """Short-but-actionable findings should not be flagged for length alone.
 
