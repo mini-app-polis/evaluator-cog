@@ -53,13 +53,13 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_cd_010_infrastructure,
     check_cd_031,
     check_ci,
+    check_coverage_floor,
     check_gha_not_trigger_relay,
     check_migration_in_ci,
     check_no_hardcoded_secrets,
     check_no_hardcoded_urls,
     check_no_print_statements,
     check_pnpm_lockfile,
-    check_pytest_coverage_in_ci,
     check_release_gated_on_security,
     check_request_metrics_middleware,
     check_structured_logging,
@@ -145,12 +145,10 @@ from evaluator_cog.engine.deterministic.security import (
     check_sec_008,
 )
 from evaluator_cog.engine.deterministic.testing import (
-    check_db_test_fixtures,
     check_mock_assertions,
     check_pytest_config,
     check_respx_for_http_mocking,
-    check_route_contract_tests,
-    check_test_gap_critical_paths,
+    check_test_database_guard,
     check_testclient_for_v1_routes,
 )
 from evaluator_cog.engine.deterministic.versioning import (
@@ -554,7 +552,6 @@ def run_all_checks(
         )
 
     if is_python:
-        _run(check_pytest_coverage_in_ci, "TEST-006")
         _run(check_respx_for_http_mocking, "TEST-007")
         _run(check_mypy_in_ci, "TEST-012")
 
@@ -770,15 +767,17 @@ def run_all_checks(
         _run(check_settings_field_consistency, "CFG-001")
         _run(check_env_example_settings_parity, "CFG-002")
 
-    # Testing — TEST-008, TEST-009, TEST-010, TEST-011, TEST-013, TEST-GAP-001
+    # Testing — TEST-008, TEST-009, TEST-011, TEST-013, TEST-019
     if is_api_service:
         _run(check_testclient_for_v1_routes, "TEST-008")
         if language == "python":
-            _run(check_db_test_fixtures, "TEST-009")
-            _run(check_route_contract_tests, "TEST-010")
+            _run(check_test_database_guard, "TEST-009")
     if is_pipeline_cog or is_api_service:
         _run(check_mock_assertions, "TEST-011")
-        _run(check_test_gap_critical_paths, "TEST-GAP-001")
+    # TEST-019 absorbed TEST-006 and reads both toolchains, so it is not
+    # gated on language; static sites are outside its applies_to.
+    if is_pipeline_cog or is_trigger_cog or is_api_service or is_library or is_frontend:
+        _run(check_coverage_floor, "TEST-019")
         _run(check_hardcoded_standards_version, "EVAL-002")
 
     def _test_013(p: Path) -> list[Finding]:
