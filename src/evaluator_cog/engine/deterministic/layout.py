@@ -28,7 +28,7 @@ def _entries_for(layouts: dict | None, repo_type: str) -> list[dict]:
         for e in entries
         if isinstance(e, dict)
         and e.get("path")
-        and (not e.get("types") or repo_type in e.get("types"))
+        and (not e.get("types") or repo_type in (e.get("types") or []))
     ]
 
 

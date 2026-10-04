@@ -790,8 +790,9 @@ def run_all_checks(
         if evaluator_config is not None
         else None
     )
-    if _layouts:
+    if evaluator_config is not None and _layouts:
         _layout_type = evaluator_config.repo_type
+        _layout_exceptions = evaluator_config.layout_exceptions
         _run(
             lambda p: check_layout_required(
                 p, repo_type=_layout_type, layouts=_layouts
@@ -803,7 +804,7 @@ def run_all_checks(
                 p,
                 repo_type=_layout_type,
                 layouts=_layouts,
-                exceptions=evaluator_config.layout_exceptions,
+                exceptions=_layout_exceptions,
             ),
             "LAYOUT-002",
         )
