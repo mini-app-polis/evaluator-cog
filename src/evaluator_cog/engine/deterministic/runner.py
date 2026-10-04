@@ -98,6 +98,10 @@ from evaluator_cog.engine.deterministic.identity import (
     check_cd_029,
     check_cd_030,
 )
+from evaluator_cog.engine.deterministic.layout import (
+    check_layout_drift,
+    check_layout_required,
+)
 from evaluator_cog.engine.deterministic.meta import (
     check_meta_005_check_notes_prefix,
     check_meta_006_prefix_file_correlation,
@@ -779,6 +783,31 @@ def run_all_checks(
     # gated on language; static sites are outside its applies_to.
     if is_pipeline_cog or is_trigger_cog or is_api_service or is_library or is_frontend:
         _run(check_coverage_floor, "TEST-019")
+    # LAYOUT-001/002 — the written layout lives in the catalog, so with no
+    # catalog (the legacy path) there is nothing to check against.
+    _layouts = (
+        (evaluator_config.catalog_schema or {}).get("layouts")
+        if evaluator_config is not None
+        else None
+    )
+    if _layouts:
+        _layout_type = evaluator_config.repo_type
+        _run(
+            lambda p: check_layout_required(
+                p, repo_type=_layout_type, layouts=_layouts
+            ),
+            "LAYOUT-001",
+        )
+        _run(
+            lambda p: check_layout_drift(
+                p,
+                repo_type=_layout_type,
+                layouts=_layouts,
+                exceptions=evaluator_config.layout_exceptions,
+            ),
+            "LAYOUT-002",
+        )
+
     # TEST-021 — one directory per layer. Integration tests are required of
     # the types TEST-015 applies to; the check itself skips non-Python repos.
     if is_pipeline_cog or is_trigger_cog or is_api_service or is_library:
