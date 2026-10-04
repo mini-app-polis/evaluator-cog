@@ -1,3 +1,16 @@
+# [3.52.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.51.0...v3.52.0) (2026-10-04)
+
+
+### Bug Fixes
+
+* **layout:** narrow optional config and layout types for mypy ([edd4578](https://github.com/mini-app-polis/evaluator-cog/commit/edd4578797060508681ddea8dad84947522c4d88))
+
+
+### Features
+
+* **layout:** check LAYOUT-001/002 and read layout_exceptions ([a049885](https://github.com/mini-app-polis/evaluator-cog/commit/a049885c81e9cf0275c6206d02de7d46902cc3bd))
+* **testing:** check TEST-021 test layout ([c1f6a73](https://github.com/mini-app-polis/evaluator-cog/commit/c1f6a7392645491f8edbc37a41117cf7c455b8d0))
+
 # [3.51.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.50.5...v3.51.0) (2026-10-04)
 
 
