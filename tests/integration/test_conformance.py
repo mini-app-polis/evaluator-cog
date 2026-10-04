@@ -7,9 +7,9 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import api_fakes
 import pytest
 
+import api_fakes
 import evaluator_cog.flows.conformance as conf_mod
 from evaluator_cog.engine.deterministic import CheckResult
 from evaluator_cog.engine.evaluator_config import EvaluatorConfig

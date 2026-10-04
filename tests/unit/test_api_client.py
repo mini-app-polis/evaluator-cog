@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import api_fakes
-
 from evaluator_cog.engine.api_client import post_findings
 
 # ---------------------------------------------------------------------------
