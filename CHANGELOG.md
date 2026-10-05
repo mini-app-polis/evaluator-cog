@@ -1,3 +1,10 @@
+## [3.52.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.52.1...v3.52.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* **api-002:** stop treating boto3 as a database client ([fee01b1](https://github.com/mini-app-polis/evaluator-cog/commit/fee01b1061cda6b01b70580410edb08a99a62f76))
+
 ## [3.52.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.52.0...v3.52.1) (2026-10-04)
 
 
