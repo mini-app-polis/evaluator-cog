@@ -86,7 +86,8 @@ _NON_POSTGRES_STORE_MARKERS_PY = (
     "motor",
     "pymongo",
     "dynamodb",
-    "boto3",
+    # Not boto3: it is the whole AWS SDK (SQS, CloudWatch, S3 …), so its
+    # presence says nothing about which database a service uses.
 )
 
 
@@ -98,7 +99,8 @@ def check_postgres_only_data_store(
     Scans declared Python and Node dependencies for obvious non-Postgres
     primary-store clients. Redis as a cache alongside Postgres is a judgment
     call — a bare ``redis`` dependency still flags here; narrow exemptions
-    belong in evaluator.yaml when justified.
+    belong in evaluator.yaml when justified. The AWS SDK (``boto3``) is not
+    a signal: services use it for queues and metrics, not storage.
     """
     CHECK_ID = "API-002"
     findings: list[Finding] = []

@@ -44,10 +44,11 @@ def check_eval_003() -> list[Finding]:
     """EVAL-003: Findings emitted by evaluator-cog must be specific and actionable.
 
     Reads pipeline_evaluations for findings emitted by evaluator-cog
-    internal sources. There is no date filter: /v1/evaluations exposes no
-    date parameter, and the `lookback_days` argument this function used to
-    take was passed into the query string, silently dropped by FastAPI as an
-    unknown param, and set by no caller. The historical source
+    internal sources. Only current findings are graded: /v1/evaluations
+    returns just the rows of the latest run per (repo, source), so a run
+    that has been superseded is never read. (There is no date filter — the
+    endpoint has no date parameter, and the `lookback_days` argument this
+    function used to take was silently dropped by FastAPI.) The historical source
     name 'conformance_check' is also included so findings stored before
     the conformance_llm / conformance_deterministic / data_quality split
     are still covered by the quality check.

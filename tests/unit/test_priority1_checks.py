@@ -86,7 +86,7 @@ def test_api001_fastapi_detected_in_requirements_instead_of_pyproject() -> None:
     assert check_railway_hosted_api(root, language="python") == []
 
 
-# --- API-002 (10 tests) -------------------------------------------------------
+# --- API-002 (11 tests) -------------------------------------------------------
 
 
 def test_api002_clean_python_postgres_only() -> None:
@@ -120,6 +120,13 @@ def test_api002_flags_aiosqlite_in_pyproject() -> None:
         x["rule_id"] == "API-002"
         for x in check_postgres_only_data_store(root, language="python")
     )
+
+
+def test_api002_boto3_is_not_a_data_store() -> None:
+    """boto3 is the AWS SDK — SQS and CloudWatch use it too."""
+    root = _root({})
+    _write_pyproject(root, "[project]\ndependencies=['asyncpg','boto3']\n")
+    assert check_postgres_only_data_store(root, language="python") == []
 
 
 def test_api002_flags_mysqlclient_in_requirements_txt() -> None:
