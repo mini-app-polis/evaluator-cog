@@ -3,9 +3,12 @@
 Environment variables from `.env.example`. One section per variable.
 
 The worker runs on AWS Lambda, declared in mini-app-polis/infra. On the
-deployed worker, secrets are loaded at cold start from SSM Parameter Store
-(synced from Doppler; `cogs.tf` there lists the names) and the rest is set
-by Terraform — the `.env` file is for running the handler locally.
+deployed worker, secrets are loaded from SSM Parameter Store (synced from
+Doppler; `cogs.tf` there lists the names) at cold start and **read again at
+the start of every invocation**, so a value changed in Doppler applies to
+the next job once the sync has run — no deploy or cold start. If SSM cannot
+be reached on a refresh, the values already loaded are kept. The rest is
+set by Terraform — the `.env` file is for running the handler locally.
 
 ## ANTHROPIC_API_KEY
 
@@ -57,10 +60,21 @@ EVALUATOR_COG_API_KEY=YOUR_EVALUATOR_COG_API_KEY
 ## SENTRY_DSN
 
 Sentry DSN for error tracking. Initialised once per cold start, in
-`adapters/lambda_worker`.
+`adapters/lambda_worker` — the one setting a change to which needs a cold
+start.
 
 ```
 SENTRY_DSN=your-sentry-dsn
+```
+
+## LOGGING_LEVEL
+
+Log level for the fleet's logger (`DEBUG`, `INFO`, …). Defaults to `INFO`.
+Re-applied at every invocation, so setting it in Doppler `prd` takes effect
+from the next job; an unrecognised value is logged and ignored.
+
+```
+LOGGING_LEVEL=INFO
 ```
 
 ## GITHUB_TOKEN
