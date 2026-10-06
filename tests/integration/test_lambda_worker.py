@@ -274,3 +274,27 @@ def test_settings_that_cannot_load_send_every_record_back() -> None:
         "batchItemFailures": [{"itemIdentifier": "m-0"}, {"itemIdentifier": "m-1"}]
     }
     run.assert_not_called()
+
+
+def test_each_record_writes_one_timing_line(capsys: pytest.CaptureFixture[str]) -> None:
+    introspection = json.dumps(
+        {"type": "evaluation.introspection", "version": MESSAGE_VERSION, "payload": {}}
+    )
+    with patch.object(
+        lw, "process_message", side_effect=[None, RuntimeError("boom"), None]
+    ):
+        lw.lambda_handler(
+            _event(_body(repo="a"), _body(repo="b", mode="llm"), introspection), None
+        )
+
+    lines = [
+        json.loads(x)["timing"]
+        for x in capsys.readouterr().out.splitlines()
+        if '"timing"' in x
+    ]
+    assert [(t["labels"]["mode"], t["labels"]["outcome"]) for t in lines] == [
+        ("deterministic", "ok"),
+        ("llm", "failed"),
+        ("introspection", "ok"),
+    ]
+    assert all(t["labels"]["cog"] == "evaluator" for t in lines)
