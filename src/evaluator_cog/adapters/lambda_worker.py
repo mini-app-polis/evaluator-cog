@@ -23,15 +23,17 @@ beside it.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
 import sentry_sdk
-from mini_app_polis import load_secrets
+from mini_app_polis import load_secrets, timing
 from mini_app_polis import logger as logger_mod
 
 from evaluator_cog._deadline import deadline
 from evaluator_cog.adapters.queue import (
+    TYPE_INTROSPECTION,
     UnprocessableMessage,
     _report_failure,
     process_message,
@@ -46,6 +48,21 @@ sentry_sdk.init(
     dsn=os.getenv("SENTRY_DSN"),
     environment=os.getenv("ENVIRONMENT", "production"),
 )
+
+
+def _mode_label(body: str) -> str:
+    """What the message asks for, for the timing line. Never raises.
+
+    ``introspection`` for a fleet pass; otherwise the evaluation mode
+    (``deterministic`` or ``llm``), which is what decides how long it waits.
+    """
+    try:
+        message = json.loads(body)
+        if message.get("type") == TYPE_INTROSPECTION:
+            return "introspection"
+        return str(message["payload"].get("mode") or "deterministic")
+    except Exception:  # noqa: BLE001 — a label must not fail the run
+        return "unreadable"
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -84,27 +101,38 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         message_id = str(record.get("messageId") or "")
         attempt = (record.get("attributes") or {}).get("ApproximateReceiveCount", "?")
 
-        try:
-            with deadline(context):
-                process_message(record.get("body") or "")
-        except UnprocessableMessage as exc:
-            # A shape this consumer does not handle — a producer bug, since
-            # this queue is evaluator-cog's alone. Reported back so it
-            # exhausts its receives and lands in the dead-letter queue,
-            # where a person can see what produced it. Deleting it here
-            # would make the bad producer invisible.
-            log.error("worker: unprocessable message (attempt %s): %s", attempt, exc)
-            # Once, on the first receive. Every later receive fails the same
-            # way, and where it ends up — the dead-letter queue — has an
-            # alarm of its own; five reports of one bad message is noise
-            # (PIPE-021).
-            if attempt in ("1", "?"):
-                _report_failure("an unprocessable message", exc)
-            failures.append({"itemIdentifier": message_id})
-        except Exception as exc:  # noqa: BLE001 — every failure is a retry
-            log.exception("worker: job failed (attempt %s)", attempt)
-            _report_failure("a queued evaluation", exc)
-            failures.append({"itemIdentifier": message_id})
+        # One timing line per record: how much of the run was waiting,
+        # and on what (mini_app_polis.timing).
+        with timing.invocation(
+            cog="evaluator", mode=_mode_label(record.get("body") or ""), attempt=attempt
+        ) as timed:
+            try:
+                with deadline(context):
+                    process_message(record.get("body") or "")
+            except UnprocessableMessage as exc:
+                timed.label(outcome="unprocessable")
+                # A shape this consumer does not handle — a producer bug, since
+                # this queue is evaluator-cog's alone. Reported back so it
+                # exhausts its receives and lands in the dead-letter queue,
+                # where a person can see what produced it. Deleting it here
+                # would make the bad producer invisible.
+                log.error(
+                    "worker: unprocessable message (attempt %s): %s", attempt, exc
+                )
+                # Once, on the first receive. Every later receive fails the same
+                # way, and where it ends up — the dead-letter queue — has an
+                # alarm of its own; five reports of one bad message is noise
+                # (PIPE-021).
+                if attempt in ("1", "?"):
+                    _report_failure("an unprocessable message", exc)
+                failures.append({"itemIdentifier": message_id})
+            except Exception as exc:  # noqa: BLE001 — every failure is a retry
+                timed.label(outcome="failed")
+                log.exception("worker: job failed (attempt %s)", attempt)
+                _report_failure("a queued evaluation", exc)
+                failures.append({"itemIdentifier": message_id})
+            else:
+                timed.label(outcome="ok")
 
     if failures:
         log.warning(
