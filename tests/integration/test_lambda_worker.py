@@ -246,3 +246,31 @@ def test_an_unreadable_message_is_reported_once_not_on_every_redelivery() -> Non
 
     assert result == {"batchItemFailures": [{"itemIdentifier": "m-0"}]}
     reported.assert_not_called()
+
+
+def test_settings_are_refreshed_before_any_record_runs() -> None:
+    """A warm container must not run on what it loaded at cold start."""
+    order: list[str] = []
+    with (
+        patch.object(lw, "load_secrets", lambda **kw: order.append(f"refresh={kw}")),
+        patch.object(lw, "process_message", lambda _b: order.append("run")),
+    ):
+        lw.lambda_handler(_event(_body()), None)
+
+    assert order == ["refresh={'refresh': True}", "run"]
+
+
+def test_settings_that_cannot_load_send_every_record_back() -> None:
+    def missing(**_kwargs: object) -> None:
+        raise RuntimeError("Required parameters are not in Parameter Store")
+
+    with (
+        patch.object(lw, "load_secrets", missing),
+        patch.object(lw, "process_message") as run,
+    ):
+        result = lw.lambda_handler(_event(_body(), _body()), None)
+
+    assert result == {
+        "batchItemFailures": [{"itemIdentifier": "m-0"}, {"itemIdentifier": "m-1"}]
+    }
+    run.assert_not_called()
