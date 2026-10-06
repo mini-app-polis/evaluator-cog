@@ -1,3 +1,10 @@
+## [3.54.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.0...v3.54.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **deps:** pick up common 5.22.1 (throttle-aware timing) ([e36e794](https://github.com/mini-app-polis/evaluator-cog/commit/e36e7941f7cf2a42d092930ddddaf595fe718e25))
+
 # [3.54.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.53.0...v3.54.0) (2026-10-06)
 
 
