@@ -1,3 +1,11 @@
+# [3.53.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.52.3...v3.53.0) (2026-10-06)
+
+
+### Features
+
+* **worker:** refresh settings from SSM at every invocation ([88ccd26](https://github.com/mini-app-polis/evaluator-cog/commit/88ccd267f4334054ca4184e361c58df5db43d950))
+* **worker:** refresh settings from SSM at every invocation ([d54caca](https://github.com/mini-app-polis/evaluator-cog/commit/d54cacaf9d0bdebaddc8f4ae641fecf86bbca552))
+
 ## [3.52.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.52.2...v3.52.3) (2026-10-06)
 
 
