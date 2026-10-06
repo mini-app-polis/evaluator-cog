@@ -1,3 +1,10 @@
+# [3.54.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.53.0...v3.54.0) (2026-10-06)
+
+
+### Features
+
+* **worker:** log per-record timing (working vs waiting, by service) ([e7d7c36](https://github.com/mini-app-polis/evaluator-cog/commit/e7d7c36f5aaf1cbad17a74a1eae174770a87100e))
+
 # [3.53.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.52.3...v3.53.0) (2026-10-06)
 
 
