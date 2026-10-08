@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import tempfile
 from pathlib import Path
@@ -866,3 +867,116 @@ def test_fetch_catalog_survives_one_transient_failure(
     monkeypatch.setattr(conf_mod.httpx, "get", _Responses(_response(503), ok))
     ctx = conf_mod.RunContext()
     assert conf_mod._fetch_catalog(ctx=ctx)["version"] == "7.0.0"
+
+
+# ── an answer too long for max_tokens ───────────────────────────────────────
+
+_LLM_RULES = [
+    {
+        "id": f"SOFT-{n}",
+        "severity": "WARN",
+        "title": f"soft rule {n}",
+        "dimension": "documentation_coverage",
+        "check_notes": "LLM CHECK.",
+        "check_mode": "llm",
+    }
+    for n in range(1, 5)
+]
+
+
+def _assessed_ids(prompt: str) -> list[str]:
+    section = prompt.split("RULES TO ASSESS:")[1].split("WHAT YOU ARE AND ARE NOT")[0]
+    return [r["id"] for r in _LLM_RULES if f"- {r['id']} [" in section]
+
+
+def _run_llm_only(monkeypatch, fake_llm) -> list[dict]:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test.example.com")
+    posted: list[dict] = []
+
+    def _fake_post(path: str, payload: dict) -> dict:
+        posted.append(payload)
+        return api_fakes.store(path, payload)
+
+    with (
+        patch(
+            "evaluator_cog.flows.conformance._anthropic_messages_create",
+            side_effect=fake_llm,
+        ),
+        patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as mock_client,
+        patch.object(conf_mod, "log", MagicMock()),
+    ):
+        mock_client.from_env.return_value = api_fakes.api(post=_fake_post)
+        run_conformance_check(
+            ctx=RunContext(),
+            repo_id="big-repo",
+            repo_path=_minimal_repo(),
+            standards_version="7.13.0",
+            standards_rules=_LLM_RULES,
+            post=True,
+            post_llm_only=True,
+            run_id="conformance-7.13.0-test",
+        )
+    return posted
+
+
+def test_a_truncated_answer_is_asked_again_in_parts(monkeypatch) -> None:
+    """wiki-curator-cog's answer stopped at max_tokens and the repo went
+    ungraded. Now the rules are asked about in halves until each fits, and
+    every rule is graded exactly once."""
+    from evaluator_cog.engine.llm import LLMTruncatedError
+
+    asked: list[list[str]] = []
+
+    def fake_llm(*, user_prompt: str, **_kw) -> str:
+        ids = _assessed_ids(user_prompt)
+        asked.append(ids)
+        if len(ids) > 1:
+            raise LLMTruncatedError("response truncated at max_tokens=8192")
+        findings = [
+            {
+                "rule_id": ids[0],
+                "dimension": "documentation_coverage",
+                "severity": "WARN",
+                "finding": f"{ids[0]} is violated.",
+                "suggestion": "Fix.",
+            },
+            # A rule from outside this part: answered in its own part, so
+            # keeping it here would post it twice.
+            {
+                "rule_id": "SOFT-1" if ids[0] != "SOFT-1" else "SOFT-2",
+                "dimension": "documentation_coverage",
+                "severity": "WARN",
+                "finding": "stray",
+                "suggestion": "Fix.",
+            },
+        ]
+        return json.dumps({"findings": findings})
+
+    posted = _run_llm_only(monkeypatch, fake_llm)
+
+    assert asked[0] == ["SOFT-1", "SOFT-2", "SOFT-3", "SOFT-4"]
+    assert asked[1:3] == [["SOFT-1", "SOFT-2"], ["SOFT-1"]]
+    assert sorted(p["violation_id"] for p in posted) == [
+        "SOFT-1",
+        "SOFT-2",
+        "SOFT-3",
+        "SOFT-4",
+    ]
+    assert all(p["finding"] != "stray" for p in posted)
+
+
+def test_a_single_rule_still_too_long_leaves_the_repo_unassessed(monkeypatch) -> None:
+    """Splitting stops at one rule. Past that the repo is reported as not
+    assessed — never as clean."""
+    from evaluator_cog.engine.llm import LLMTruncatedError
+
+    def fake_llm(**_kw) -> str:
+        raise LLMTruncatedError("response truncated at max_tokens=8192")
+
+    posted = _run_llm_only(monkeypatch, fake_llm)
+
+    assert len(posted) == 1
+    assert posted[0]["violation_id"] == "STATUS"
+    assert "was not assessed against the LLM checks" in posted[0]["finding"]
+    assert "LLMTruncatedError" in posted[0]["finding"]

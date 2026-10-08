@@ -48,6 +48,7 @@ import tempfile
 import time
 import uuid
 import zipfile
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,9 +64,11 @@ from evaluator_cog.engine.api_client import PostResult, post_findings
 from evaluator_cog.engine.deterministic import run_all_checks
 from evaluator_cog.engine.evaluator_config import EvaluatorConfig, load_evaluator_config
 from evaluator_cog.engine.llm import (
+    LLMTruncatedError,
     _anthropic_messages_create,
     _parse_findings_from_claude,
     build_conformance_prompt,
+    soft_rule_ids,
 )
 
 log = logger_mod.get_logger()
@@ -842,6 +845,51 @@ def _download_repo(
         return None
 
 
+def _assess_soft_rules(
+    ask: Callable[[list[str] | None], list[dict[str, Any]]],
+    rule_ids: list[str],
+    *,
+    repo_id: str,
+    _part: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Ask the LLM about every soft rule, splitting only if the answer won't fit.
+
+    The first call asks about all of them at once (``ask(None)``), exactly as
+    a single prompt always has. If that answer stops at ``max_tokens`` —
+    wiki-curator-cog's did, at 8192 — the rules are asked about again in two
+    halves, and each half again if it too is cut off, down to one rule.
+    Each call repeats the repo evidence, so splitting costs input tokens and
+    time; it is only paid on the path that would otherwise grade nothing. A
+    single rule whose answer still does not fit raises, as before.
+
+    Within a part, findings for rules outside it are dropped: the prompt
+    shows the full rule list as context, and a rule answered in two parts
+    would be posted twice.
+    """
+    try:
+        findings = ask(_part)
+    except LLMTruncatedError:
+        ids = rule_ids if _part is None else _part
+        if len(ids) < 2:
+            raise
+        half = len(ids) // 2
+        log.warning(
+            "conformance: LLM answer for %s truncated with %d rules; "
+            "asking again in two parts of %d and %d",
+            repo_id,
+            len(ids),
+            half,
+            len(ids) - half,
+        )
+        return _assess_soft_rules(
+            ask, rule_ids, repo_id=repo_id, _part=ids[:half]
+        ) + _assess_soft_rules(ask, rule_ids, repo_id=repo_id, _part=ids[half:])
+    if _part is None:
+        return findings
+    wanted = set(_part)
+    return [f for f in findings if f.get("rule_id") in wanted]
+
+
 def run_conformance_check(
     *,
     ctx: RunContext,
@@ -912,33 +960,53 @@ def run_conformance_check(
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key:
         try:
-            prompt = build_conformance_prompt(
-                repo_id=repo_id,
-                service_type=service_type,
-                dod_type=dod_type,
-                language=language,
-                standards_version=standards_version,
-                deterministic_findings=deterministic_findings,
-                standards_rules=standards_rules or [],
-                checked_rule_ids=checked_rule_ids,
-                check_exceptions=check_exceptions,
-                exception_reasons=exception_reasons,
-                all_skipped_ids=evaluator_config.all_skipped_ids
+            all_skipped_ids = (
+                evaluator_config.all_skipped_ids
                 if evaluator_config is not None
-                else None,
-                repo_path=repo_path,
+                else None
             )
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
-            raw = _anthropic_messages_create(
-                api_key=api_key,
-                model=model,
-                # Room for a full answer. Output is billed as generated,
-                # so the ceiling costs nothing on a short reply; a reply
-                # that still reaches it raises rather than posting a pass.
-                max_tokens=8192,
-                user_prompt=prompt,
+
+            def _ask(only_rule_ids: list[str] | None) -> list[dict[str, Any]]:
+                prompt = build_conformance_prompt(
+                    repo_id=repo_id,
+                    service_type=service_type,
+                    dod_type=dod_type,
+                    language=language,
+                    standards_version=standards_version,
+                    deterministic_findings=deterministic_findings,
+                    standards_rules=standards_rules or [],
+                    checked_rule_ids=checked_rule_ids,
+                    check_exceptions=check_exceptions,
+                    exception_reasons=exception_reasons,
+                    all_skipped_ids=all_skipped_ids,
+                    repo_path=repo_path,
+                    only_rule_ids=only_rule_ids,
+                )
+                raw = _anthropic_messages_create(
+                    api_key=api_key,
+                    model=model,
+                    # Room for a full answer. Output is billed as generated,
+                    # so the ceiling costs nothing on a short reply; a reply
+                    # that still reaches it raises, and is asked again in
+                    # halves (_assess_soft_rules) rather than posting a pass.
+                    max_tokens=8192,
+                    user_prompt=prompt,
+                )
+                findings, _ = _parse_findings_from_claude(raw)
+                return findings
+
+            llm_findings = _assess_soft_rules(
+                _ask,
+                soft_rule_ids(
+                    standards_rules=standards_rules or [],
+                    deterministic_findings=deterministic_findings,
+                    checked_rule_ids=checked_rule_ids,
+                    check_exceptions=check_exceptions,
+                    all_skipped_ids=all_skipped_ids,
+                ),
+                repo_id=repo_id,
             )
-            llm_findings, _ = _parse_findings_from_claude(raw)
             # Drop spurious "passing" findings — the prompt instructs the LLM
             # to return {"findings":[]} when a rule is clean or not applicable,
             # but it sometimes emits a finding explaining the pass instead.
