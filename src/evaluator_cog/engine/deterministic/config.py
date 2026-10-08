@@ -8,7 +8,6 @@ from pathlib import Path
 
 from evaluator_cog.engine.deterministic._shared import (
     PYTHON_SHARED_LIBRARY_NAMES,
-    TYPESCRIPT_SHARED_LIBRARY_NAMES,
     Finding,
     _finding,
     declares_shared_library,
@@ -422,9 +421,12 @@ def check_shared_library_used(
 
     Hand-rolled logger/auth/response reimplementation heuristics moved to LLM
     rule XSTACK-005; this check only verifies the dependency is present in
-    ``pyproject.toml`` / ``package.json``.
+    ``pyproject.toml``.
+
+    Python only. The TypeScript half required ``common-typescript-utils``,
+    retired in 2026-10 when its last consumer stopped needing it, so a
+    TypeScript repo has no shared library to declare and gets no finding.
     """
-    CHECK_ID = "XSTACK-001"
     findings: list[Finding] = []
     if language == "python":
         pyproject = repo_path / "pyproject.toml"
@@ -438,19 +440,6 @@ def check_shared_library_used(
                     "The shared Python library is not declared for this service.",
                     f"Depend on {PYTHON_SHARED_LIBRARY_NAMES[0]} and consume shared "
                     "behaviors from it.",
-                )
-            )
-    else:
-        pkg = repo_path / "package.json"
-        pkg_text = pkg.read_text().lower() if pkg.exists() else ""
-        if not declares_shared_library(pkg_text, TYPESCRIPT_SHARED_LIBRARY_NAMES):
-            findings.append(
-                _finding(
-                    "XSTACK-001",
-                    "ERROR",
-                    "cross_repo_coherence",
-                    "common-typescript-utils is not declared for this TypeScript service.",
-                    "Depend on common-typescript-utils to avoid re-implementing shared utilities.",
                 )
             )
     return findings

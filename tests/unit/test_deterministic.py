@@ -1007,16 +1007,15 @@ def test_check_shared_library_ts_passes_with_common_typescript_utils() -> None:
     assert check_shared_library_used(repo, language="typescript") == []
 
 
-def test_check_shared_library_ts_flags_missing_common_typescript_utils() -> None:
-    """XSTACK-001 must fire when common-typescript-utils is absent from package.json."""
+def test_check_shared_library_ts_never_flags() -> None:
+    """XSTACK-001 is Python-only: common-typescript-utils is retired."""
     repo = _make_repo(
         {
             "package.json": '{"name":"x","dependencies":{}}\n',
             "src/index.ts": "export const x = 1\n",
         }
     )
-    findings = check_shared_library_used(repo, language="typescript")
-    assert any(f["rule_id"] == "XSTACK-001" for f in findings)
+    assert check_shared_library_used(repo, language="typescript") == []
 
 
 def test_run_all_checks_xstack001_honoured_via_check_exceptions() -> None:
@@ -1366,22 +1365,19 @@ def test_check_split_package_identity_flags_undocumented_split(tmp_path: Path) -
 # ── Shared library declaration ─────────────────────────────────────────────
 
 
-def test_check_shared_library_used_ts_flags_when_absent_everywhere(
+def test_run_all_checks_react_app_without_shared_library_passes(
     tmp_path: Path,
 ) -> None:
-    """XSTACK-001 flagged when the shared library dep is absent."""
-    app_pkg = tmp_path / "package.json"
-    app_pkg.write_text('{"name": "app", "dependencies": {}}')
+    """A react-app with no shared library dep gets no XSTACK-001 finding."""
+    (tmp_path / "package.json").write_text(
+        '{"name": "app", "dependencies": {"react": "19"}}'
+    )
     src = tmp_path / "src"
     src.mkdir()
-    (src / "index.ts").write_text("// no shared lib import")
+    (src / "main.tsx").write_text("export const x = 1\n")
 
-    findings = check_shared_library_used(
-        tmp_path,
-        language="typescript",
-    )
-    rule_ids = [f["rule_id"] for f in findings]
-    assert "XSTACK-001" in rule_ids
+    result = run_all_checks(tmp_path, language="typescript")
+    assert not [f for f in result.findings if f["rule_id"] == "XSTACK-001"]
 
 
 # ── Category A: trigger cog exclusion ─────────────────────────────────────
