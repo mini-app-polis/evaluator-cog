@@ -1,3 +1,10 @@
+## [3.54.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.5...v3.54.6) (2026-10-08)
+
+
+### Bug Fixes
+
+* **deterministic:** drop the TypeScript half of XSTACK-001 ([4059c31](https://github.com/mini-app-polis/evaluator-cog/commit/4059c319e726c120920a6dae648879ce597f8a98))
+
 ## [3.54.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.4...v3.54.5) (2026-10-08)
 
 
