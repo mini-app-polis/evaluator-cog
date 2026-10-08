@@ -1,3 +1,11 @@
+## [3.54.7](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.6...v3.54.7) (2026-10-08)
+
+
+### Bug Fixes
+
+* **conformance:** split the LLM assessment when a reply is truncated ([da002a4](https://github.com/mini-app-polis/evaluator-cog/commit/da002a43c3113e6b19100d8188cf6b96a9266c1b))
+* **observability:** read Sentry DSN from SENTRY_DSN_COGS and tag service ([b5d88b6](https://github.com/mini-app-polis/evaluator-cog/commit/b5d88b645659a2da1a08d2e297cd7b64cef7955a))
+
 ## [3.54.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.5...v3.54.6) (2026-10-08)
 
 
