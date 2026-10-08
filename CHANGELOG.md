@@ -1,3 +1,10 @@
+## [3.54.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.4...v3.54.5) (2026-10-08)
+
+
+### Bug Fixes
+
+* **deterministic:** XSTACK-007 judges the uv.lock version, not the declared floor ([b5e010c](https://github.com/mini-app-polis/evaluator-cog/commit/b5e010cf0bdbb77abda4a0ea183797def1582255))
+
 ## [3.54.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.3...v3.54.4) (2026-10-08)
 
 
