@@ -1,3 +1,11 @@
+## [3.54.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.3...v3.54.4) (2026-10-08)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils ([8a3719a](https://github.com/mini-app-polis/evaluator-cog/commit/8a3719a7cc91e43adf69f5b18ae492a77d81a2ff))
+* **deps:** bump python-dotenv ([fb45181](https://github.com/mini-app-polis/evaluator-cog/commit/fb45181e4d639030391bfb54f6db9a3cdcb630c8))
+
 ## [3.54.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.2...v3.54.3) (2026-10-08)
 
 
