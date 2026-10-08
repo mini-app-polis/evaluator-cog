@@ -14,6 +14,14 @@ manifest and a shared-library list from the registry, and filed its
 findings under ecosystem-standards — so a repo that bumped its pin passed
 its own evaluation and still showed the warning until the next fleet run.
 
+What is judged is the version the repo actually runs. Where ``uv.lock``
+resolves a dependency, the locked version is the one compared: the fleet's
+consumers declare a wide range on their own libraries (``>=5,<6``) and let
+the lock, kept current by Dependabot and the release-triggered commons
+update, pick the version. The declared floor is not a pin there, and a
+stale floor beneath a current lock is not a finding. A dependency with no
+lock entry falls back to its declaration.
+
 A registry that cannot be reached is not a finding. A lookup that fails
 leaves that dependency unjudged, and the check says nothing about it:
 an outage at PyPI must never read as a stale pin.
@@ -179,10 +187,38 @@ class _Pin:
     name: str
     spec: str
     where: str
+    #: True when ``spec`` is the version ``uv.lock`` resolved, not a declaration.
+    locked: bool = False
+
+
+def _uv_locked(repo_path: Path) -> dict[str, str]:
+    """``{normalized name: version}`` for every package ``uv.lock`` resolves."""
+    path = repo_path / "uv.lock"
+    if not path.is_file():
+        return {}
+    try:
+        data = tomllib.loads(path.read_text(errors="replace"))
+    except (tomllib.TOMLDecodeError, ValueError):
+        return {}
+    packages = data.get("package")
+    if not isinstance(packages, list):
+        return {}
+    locked: dict[str, str] = {}
+    for package in packages:
+        if not isinstance(package, dict):
+            continue
+        name, version = package.get("name"), package.get("version")
+        if isinstance(name, str) and isinstance(version, str):
+            locked[_normalize(name)] = version
+    return locked
 
 
 def _python_pins(repo_path: Path) -> tuple[str, list[_Pin]]:
-    """``(own distribution name, pins)`` from the root ``pyproject.toml``."""
+    """``(own distribution name, pins)`` from the root ``pyproject.toml``.
+
+    A dependency ``uv.lock`` resolves is reported at its locked version;
+    only one the lock does not record falls back to its declaration.
+    """
     path = repo_path / "pyproject.toml"
     if not path.is_file():
         return "", []
@@ -205,6 +241,7 @@ def _python_pins(repo_path: Path) -> tuple[str, list[_Pin]]:
             where = f"project.optional-dependencies.{extra}"
             requirements += [(d, where) for d in group if isinstance(d, str)]
 
+    locked = _uv_locked(repo_path)
     pins: list[_Pin] = []
     for requirement, where in requirements:
         match = _REQ_NAME_RE.match(requirement)
@@ -220,7 +257,14 @@ def _python_pins(repo_path: Path) -> tuple[str, list[_Pin]]:
                 source.get("tag") or source.get("rev") or source.get("branch") or spec
             )
             where = f"[tool.uv.sources].{name}"
-        pins.append(_Pin("pypi", name.split("[", 1)[0], spec, where))
+        base = name.split("[", 1)[0]
+        # A source override stays judged by its tag or rev: a branch or SHA
+        # there is CD-020's finding, and the lock would hide it.
+        version = None if isinstance(source, dict) else locked.get(_normalize(base))
+        if version:
+            pins.append(_Pin("pypi", base, version, "uv.lock", locked=True))
+        else:
+            pins.append(_Pin("pypi", base, spec, where))
     return own, pins
 
 
@@ -308,18 +352,32 @@ def check_xstack_007(
             continue
 
         declared = pin.spec.strip()
+        if pin.locked:
+            subject = (
+                f"uv.lock resolves '{pin.name}' ({published.org_repo}) to {declared}"
+            )
+            remedy = (
+                f"Run `uv lock --upgrade-package {pin.name}`, run the test "
+                f"suite against {published.latest}, and release."
+            )
+        else:
+            subject = (
+                f"{pin.where} pins '{pin.name}' ({published.org_repo}) at '{declared}'"
+            )
+            remedy = (
+                f"Raise the floor of '{pin.name}' in {pin.where} to "
+                f"{published.latest}, run the test suite against it, and "
+                f"release."
+            )
         findings.append(
             _finding(
                 CHECK_ID,
                 "WARN",
                 _DIMENSION,
-                f"{pin.where} pins '{pin.name}' ({published.org_repo}) at "
-                f"'{declared}', but its latest release is {published.latest} — "
+                f"{subject}, but its latest release is {published.latest} — "
                 f"{reason}. Consumers more than one minor behind force the "
                 f"library to keep two API shapes alive at once.",
-                f"Raise the floor of '{pin.name}' in {pin.where} to "
-                f"{published.latest}, run the test suite against it, and "
-                f"release.",
+                remedy,
             )
         )
     return findings

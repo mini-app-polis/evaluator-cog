@@ -131,6 +131,58 @@ def test_uv_source_tag_is_the_pin(tmp_path: Path) -> None:
     assert "v5.10.0" in findings[0]["finding"]
 
 
+def _lock(repo: Path, packages: dict[str, str]) -> None:
+    entries = "".join(
+        f'[[package]]\nname = "{name}"\nversion = "{version}"\n\n'
+        for name, version in packages.items()
+    )
+    (repo / "uv.lock").write_text(f"version = 1\n\n{entries}")
+
+
+def test_current_lock_beneath_an_old_floor_is_not_stale(tmp_path: Path) -> None:
+    repo = _pyproject(tmp_path, _consumer(["miniapppolis-common-utils>=5.0,<6"]))
+    _lock(repo, {"consumer-cog": "0.0.0", "miniapppolis-common-utils": "5.13.0"})
+    resolve = _resolver({("pypi", "miniapppolis-common-utils"): _UTILS})
+    assert check_xstack_007(repo, resolve) == []
+
+
+def test_stale_lock_is_flagged_with_the_lock_remedy(tmp_path: Path) -> None:
+    repo = _pyproject(tmp_path, _consumer(["miniapppolis-common-utils>=5,<6"]))
+    _lock(repo, {"miniapppolis_common_utils": "5.10.2"})
+    resolve = _resolver({("pypi", "miniapppolis-common-utils"): _UTILS})
+    findings = check_xstack_007(repo, resolve)
+    assert len(findings) == 1
+    assert "uv.lock resolves 'miniapppolis-common-utils'" in findings[0]["finding"]
+    assert "to 5.10.2" in findings[0]["finding"]
+    assert "3 minors behind" in findings[0]["finding"]
+    assert "uv lock --upgrade-package" in findings[0]["suggestion"]
+
+
+def test_unlocked_dependency_falls_back_to_the_declaration(tmp_path: Path) -> None:
+    repo = _pyproject(tmp_path, _consumer(["miniapppolis-common-utils>=5.11.0,<6"]))
+    _lock(repo, {"consumer-cog": "0.0.0"})
+    resolve = _resolver({("pypi", "miniapppolis-common-utils"): _UTILS})
+    findings = check_xstack_007(repo, resolve)
+    assert len(findings) == 1
+    assert "project.dependencies pins" in findings[0]["finding"]
+
+
+def test_uv_source_override_ignores_the_lock(tmp_path: Path) -> None:
+    extra = (
+        "\n[tool.uv.sources]\n"
+        'common-python-utils = { git = "https://github.com/mini-app-polis/'
+        'common-python-utils.git", tag = "v5.10.0" }\n'
+    )
+    repo = _pyproject(tmp_path, _consumer(["common-python-utils"], extra))
+    _lock(repo, {"common-python-utils": "5.13.0"})
+    resolve = _resolver(
+        {("pypi", "common-python-utils"): Published("5.13.1", _UTILS.org_repo)}
+    )
+    findings = check_xstack_007(repo, resolve)
+    assert len(findings) == 1
+    assert "v5.10.0" in findings[0]["finding"]
+
+
 def test_optional_dependencies_are_read(tmp_path: Path) -> None:
     extra = (
         '\n[project.optional-dependencies]\ndev = ["miniapppolis-common-utils>=5.1"]\n'
