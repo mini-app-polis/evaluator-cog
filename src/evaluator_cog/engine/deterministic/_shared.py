@@ -26,7 +26,6 @@ Finding = dict[str, Any]
 # here. See common-python-utils/docs/pypi-package-publishing.md §7.
 PYTHON_SHARED_LIBRARY_NAMES = ("miniapppolis-common-utils", "common-python-utils")
 IDENTITY_LIBRARY_NAMES = ("miniapppolis-identity", "identity")
-TYPESCRIPT_SHARED_LIBRARY_NAMES = ("common-typescript-utils",)
 
 
 def declares_shared_library(text: str, names: tuple[str, ...]) -> bool:
