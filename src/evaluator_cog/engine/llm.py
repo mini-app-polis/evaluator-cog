@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Collection
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
@@ -250,6 +251,16 @@ class LLMResponseError(RuntimeError):
     """
 
 
+class LLMTruncatedError(LLMResponseError):
+    """The reply stopped at ``max_tokens``.
+
+    Distinct from an unreadable reply because it has a remedy: ask about
+    fewer rules at a time, so each answer is shorter. A larger ceiling is not
+    one — the call is not streamed and has a fixed timeout, so a longer
+    answer turns a truncation into a timeout.
+    """
+
+
 def _anthropic_messages_create(
     *,
     api_key: str,
@@ -305,7 +316,7 @@ def _anthropic_messages_create(
                 break
         time.sleep(_anthropic_retry_delay(response, attempt))
     if data.get("stop_reason") == "max_tokens":
-        raise LLMResponseError(
+        raise LLMTruncatedError(
             f"response truncated at max_tokens={max_tokens} "
             f"(model {data.get('model') or model})"
         )
@@ -448,6 +459,66 @@ Rules:
 """
 
 
+def _resolved_rule_ids(
+    checked_rule_ids: set[str] | None, deterministic_findings: list[dict]
+) -> set[str]:
+    """Rules the deterministic engine has already settled, one way or the other."""
+    resolved = (checked_rule_ids or set()) | {
+        str(f.get("rule_id") or "")
+        for f in deterministic_findings
+        if f.get("rule_id") != "CHECKER"
+    }
+    # EVAL-002 is assessed deterministically via the standards_version field check.
+    # Always mark it as checked so the LLM does not re-assess it.
+    resolved.add("EVAL-002")
+    return resolved
+
+
+def _select_soft_rules(
+    standards_rules: list[dict],
+    all_checked: set[str],
+    check_exceptions: list[str] | None,
+    all_skipped_ids: frozenset[str] | None,
+) -> list[dict]:
+    """The rules the LLM is asked to assess, in catalog order."""
+    # Also exclude rules that are auto-excepted for this repo type/traits or
+    # explicitly excepted via check_exceptions — the LLM should only see rules
+    # that are genuinely in scope and not already resolved.
+    all_excepted = (all_skipped_ids or frozenset()) | set(check_exceptions or [])
+    # Exclude rules the catalog has routed to the deterministic engine. Those
+    # belong to engine/deterministic.py regardless of whether the check
+    # function has been implemented yet — forwarding them to the LLM would
+    # invite inconsistent judgements on rules that have a single, canonical
+    # deterministic interpretation. Rules without a routing marker (legacy
+    # pre-audit rules) are classified as deterministic by default, which
+    # preserves existing behaviour for the rules the engine already runs.
+    return [
+        r
+        for r in standards_rules
+        if r["id"] not in all_checked
+        and r["id"] not in all_excepted
+        and r.get("check_mode", "deterministic") == "llm"
+    ]
+
+
+def soft_rule_ids(
+    *,
+    standards_rules: list[dict],
+    deterministic_findings: list[dict],
+    checked_rule_ids: set[str] | None = None,
+    check_exceptions: list[str] | None = None,
+    all_skipped_ids: frozenset[str] | None = None,
+) -> list[str]:
+    """Ids of the rules :func:`build_conformance_prompt` asks the LLM about."""
+    all_checked = _resolved_rule_ids(checked_rule_ids, deterministic_findings)
+    return [
+        r["id"]
+        for r in _select_soft_rules(
+            standards_rules, all_checked, check_exceptions, all_skipped_ids
+        )
+    ]
+
+
 def build_conformance_prompt(
     *,
     repo_id: str,
@@ -462,8 +533,13 @@ def build_conformance_prompt(
     exception_reasons: dict[str, str] | None = None,
     all_skipped_ids: frozenset[str] | None = None,
     repo_path: Path | None = None,
+    only_rule_ids: Collection[str] | None = None,
 ) -> str:
-    """Build the LLM prompt for soft-rule conformance assessment."""
+    """Build the LLM prompt for soft-rule conformance assessment.
+
+    ``only_rule_ids`` narrows the rules to assess to those ids — one part of
+    an assessment split because a single answer would not fit.
+    """
     evaluator_yaml_content = ""
     if repo_path is not None:
         evaluator_yaml_path = repo_path / "evaluator.yaml"
@@ -487,32 +563,15 @@ def build_conformance_prompt(
         )
         or "(none)"
     )
-    all_checked = (checked_rule_ids or set()) | {
-        str(f.get("rule_id") or "")
-        for f in deterministic_findings
-        if f.get("rule_id") != "CHECKER"
-    }
-    # EVAL-002 is assessed deterministically via the standards_version field check.
-    # Always mark it as checked so the LLM does not re-assess it.
-    all_checked.add("EVAL-002")
-    # Also exclude rules that are auto-excepted for this repo type/traits or
-    # explicitly excepted via check_exceptions — the LLM should only see rules
-    # that are genuinely in scope and not already resolved.
-    all_excepted = (all_skipped_ids or frozenset()) | set(check_exceptions or [])
-    # Exclude rules the catalog has routed to the deterministic engine. Those
-    # belong to engine/deterministic.py regardless of whether the check
-    # function has been implemented yet — forwarding them to the LLM would
-    # invite inconsistent judgements on rules that have a single, canonical
-    # deterministic interpretation. Rules without a routing marker (legacy
-    # pre-audit rules) are classified as deterministic by default, which
-    # preserves existing behaviour for the rules the engine already runs.
-    soft_rules = [
-        r
-        for r in standards_rules
-        if r["id"] not in all_checked
-        and r["id"] not in all_excepted
-        and r.get("check_mode", "deterministic") == "llm"
-    ]
+    all_checked = _resolved_rule_ids(checked_rule_ids, deterministic_findings)
+    soft_rules = _select_soft_rules(
+        standards_rules, all_checked, check_exceptions, all_skipped_ids
+    )
+    if only_rule_ids is not None:
+        # One part of a split assessment: the rest are asked about in
+        # another call (see flows/conformance.py).
+        wanted = set(only_rule_ids)
+        soft_rules = [r for r in soft_rules if r["id"] in wanted]
     soft_rules_text = (
         "\n".join(
             f"- {r['id']} [{r['severity']}]: {r['title']}\n"

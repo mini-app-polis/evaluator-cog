@@ -11,11 +11,13 @@ import respx
 
 from evaluator_cog.engine.llm import (
     LLMResponseError,
+    LLMTruncatedError,
     _anthropic_messages_create,
     _gather_evidence_files,
     _normalize_finding,
     _parse_findings_from_claude,
     build_conformance_prompt,
+    soft_rule_ids,
 )
 
 # ---------------------------------------------------------------------------
@@ -228,6 +230,40 @@ def test_anthropic_messages_create_raises_when_truncated() -> None:
         _anthropic_messages_create(
             api_key="k", model="m", max_tokens=100, user_prompt="x"
         )
+
+
+@respx.mock
+def test_a_truncated_answer_is_its_own_error() -> None:
+    """Still an LLMResponseError, so nothing grades it; distinct, so the
+    conformance flow can ask again about fewer rules."""
+    respx.post("https://api.anthropic.com/v1/messages").mock(
+        return_value=httpx.Response(
+            200, json={"content": [], "stop_reason": "max_tokens"}
+        )
+    )
+    with pytest.raises(LLMTruncatedError):
+        _anthropic_messages_create(
+            api_key="k", model="m", max_tokens=100, user_prompt="x"
+        )
+
+
+@respx.mock
+def test_an_unreadable_answer_is_not_a_truncation() -> None:
+    respx.post("https://api.anthropic.com/v1/messages").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": "hi"}],
+                "stop_reason": "end_turn",
+            },
+        )
+    )
+    text = _anthropic_messages_create(
+        api_key="k", model="m", max_tokens=100, user_prompt="x"
+    )
+    with pytest.raises(LLMResponseError) as raised:
+        _parse_findings_from_claude(text)
+    assert not isinstance(raised.value, LLMTruncatedError)
 
 
 # ---------------------------------------------------------------------------
@@ -740,3 +776,89 @@ def test_anthropic_does_not_retry_a_read_timeout(slept: list[float]) -> None:
     with pytest.raises(httpx.ReadTimeout):
         _call()
     assert route.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Splitting the soft rules — only_rule_ids and soft_rule_ids
+# ---------------------------------------------------------------------------
+
+_SPLIT_RULES = [
+    {
+        "id": "A-1",
+        "severity": "WARN",
+        "title": "a",
+        "check_notes": "n",
+        "check_mode": "llm",
+    },
+    {
+        "id": "A-2",
+        "severity": "WARN",
+        "title": "b",
+        "check_notes": "n",
+        "check_mode": "llm",
+    },
+    {
+        "id": "A-3",
+        "severity": "WARN",
+        "title": "c",
+        "check_notes": "n",
+        "check_mode": "llm",
+    },
+    {"id": "D-1", "severity": "WARN", "title": "d", "check_notes": "n"},
+]
+
+
+def _rules_to_assess(prompt: str) -> str:
+    return prompt.split("RULES TO ASSESS:")[1].split("WHAT YOU ARE AND ARE NOT")[0]
+
+
+def _split_prompt(**kwargs: object) -> str:
+    return build_conformance_prompt(
+        repo_id="r",
+        service_type="pipeline-cog",
+        language="python",
+        standards_version="7.13.0",
+        deterministic_findings=[],
+        standards_rules=_SPLIT_RULES,
+        repo_path=None,
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_soft_rule_ids_are_the_rules_the_prompt_asks_about() -> None:
+    """LLM-routed, not excepted, not already settled — in catalog order."""
+    ids = soft_rule_ids(
+        standards_rules=_SPLIT_RULES,
+        deterministic_findings=[{"rule_id": "A-2"}],
+        check_exceptions=["A-3"],
+    )
+    assert ids == ["A-1"]
+    assessed = _rules_to_assess(
+        build_conformance_prompt(
+            repo_id="r",
+            service_type="pipeline-cog",
+            language="python",
+            standards_version="7.13.0",
+            deterministic_findings=[{"rule_id": "A-2"}],
+            standards_rules=_SPLIT_RULES,
+            check_exceptions=["A-3"],
+            repo_path=None,
+        )
+    )
+    assert "A-1 [" in assessed
+    for rid in ("A-2", "A-3", "D-1"):
+        assert f"{rid} [" not in assessed
+
+
+def test_without_only_rule_ids_every_soft_rule_is_assessed() -> None:
+    assessed = _rules_to_assess(_split_prompt())
+    for rid in ("A-1", "A-2", "A-3"):
+        assert f"{rid} [" in assessed
+
+
+def test_only_rule_ids_narrows_the_rules_to_assess() -> None:
+    assessed = _rules_to_assess(_split_prompt(only_rule_ids=["A-2", "D-1"]))
+    assert "A-2 [" in assessed
+    # D-1 is not an LLM rule: naming it does not route it to the LLM.
+    for rid in ("A-1", "A-3", "D-1"):
+        assert f"{rid} [" not in assessed
