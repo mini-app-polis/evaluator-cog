@@ -45,9 +45,11 @@ log = logger_mod.get_logger()
 # invocations, so this runs once per cold start — initialising on every
 # call would pay the setup repeatedly and register duplicate integrations.
 sentry_sdk.init(
-    dsn=os.getenv("SENTRY_DSN"),
+    dsn=os.getenv("SENTRY_DSN_COGS"),
     environment=os.getenv("ENVIRONMENT", "production"),
 )
+# Shared cogs project: the tag is what tells this cog's events apart.
+sentry_sdk.get_global_scope().set_tag("service", "evaluator-cog")
 
 
 def _mode_label(body: str) -> str:
