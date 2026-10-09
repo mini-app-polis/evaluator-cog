@@ -206,15 +206,24 @@ via `POST /v1/evaluations` on api-kaianolevine-com. Each finding includes
 
 ## Running locally
 
-Prerequisites: Python 3.11+, uv
+Prerequisites: Python 3.11+, uv, and the
+[Doppler CLI](https://docs.doppler.com/docs/install-cli). Secrets come from
+Doppler's shared `dev` config — nothing reads a `.env` file, and local runs
+never use `prd`.
+
 ```bash
+brew install gnupg dopplerhq/cli/doppler   # once per machine
+doppler login                              # once per machine
+
+doppler setup                              # once per clone: reads doppler.yaml
 uv sync --all-extras
 pre-commit install
 pre-commit run --all-files
-uv run pytest
+uv run pytest                              # no Doppler needed
+uv run check-doppler-keys                  # every required .env.example name is in dev
 ```
 
-Copy `.env.example` to `.env` and fill in values before running.
+Anything that needs secrets runs under `doppler run -- …`.
 
 ## Wiring into a Prefect flow
 
