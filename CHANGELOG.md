@@ -1,3 +1,11 @@
+## [3.55.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.55.0...v3.55.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **deterministic:** CD-011 parses doppler.yaml and catches every env_file form ([bda1cf7](https://github.com/mini-app-polis/evaluator-cog/commit/bda1cf71f6313a8d158343755202a702233312e3))
+* **deterministic:** satisfy mypy in CD-011's Config and doppler.yaml checks ([6034743](https://github.com/mini-app-polis/evaluator-cog/commit/60347433c920060196f35b1b3a0be65f56d1bfbe))
+
 # [3.55.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.8...v3.55.0) (2026-10-09)
 
 
