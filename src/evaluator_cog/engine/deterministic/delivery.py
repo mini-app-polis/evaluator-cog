@@ -655,7 +655,12 @@ def check_structured_logging(repo_path: Path) -> list[Finding]:
 
 #: The Doppler project every Python repo pins local development to.
 _DOPPLER_PROJECT = "mini-app-polis-ecosystem"
-_DOPPLER_PROJECT_RE = re.compile(r"^\s*-?\s*project:\s*(\S+)\s*$", re.MULTILINE)
+_DOPPLER_CONFIG = "dev"
+
+
+def _not_none(value: ast.AST) -> bool:
+    """Whether an ``env_file`` value names a file: anything but a literal None."""
+    return not (isinstance(value, ast.Constant) and value.value is None)
 
 
 def _reads_dotenv(tree: ast.AST) -> bool:
@@ -664,13 +669,19 @@ def _reads_dotenv(tree: ast.AST) -> bool:
 
     Structural rather than textual, so a module that only quotes those
     names — this checker, a test fixture, a docstring — is not flagged.
+    ``env_file`` is caught in every form pydantic-settings accepts it: a
+    ``SettingsConfigDict``/``dict`` keyword or key, a ``model_config``
+    dict literal, a v1 ``class Config`` attribute, and ``_env_file=`` at
+    construction. Only an explicit None is allowed through.
     """
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             if any(a.name.split(".")[0] == "dotenv" for a in node.names):
                 return True
         elif isinstance(node, ast.ImportFrom):
-            if (node.module or "").split(".")[0] == "dotenv":
+            # A relative import (level > 0) names a module of the package's
+            # own, whatever it is called.
+            if node.level == 0 and (node.module or "").split(".")[0] == "dotenv":
                 return True
         elif isinstance(node, ast.Call):
             func = node.func
@@ -683,15 +694,71 @@ def _reads_dotenv(tree: ast.AST) -> bool:
             )
             if name == "load_dotenv":
                 return True
-            if name == "SettingsConfigDict":
-                for kw in node.keywords:
-                    if (
-                        kw.arg == "env_file"
-                        and isinstance(kw.value, ast.Constant)
-                        and kw.value.value is not None
-                    ):
-                        return True
+            for kw in node.keywords:
+                if kw.arg == "_env_file" and _not_none(kw.value):
+                    return True
+                if (
+                    kw.arg == "env_file"
+                    and name in ("SettingsConfigDict", "dict")
+                    and _not_none(kw.value)
+                ):
+                    return True
+        elif isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=True):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "env_file"
+                    and _not_none(value)
+                ):
+                    return True
+        elif isinstance(node, ast.ClassDef) and node.name == "Config":
+            for stmt in node.body:
+                targets = (
+                    stmt.targets
+                    if isinstance(stmt, ast.Assign)
+                    else [stmt.target]
+                    if isinstance(stmt, ast.AnnAssign) and stmt.value is not None
+                    else []
+                )
+                if any(
+                    isinstance(t, ast.Name) and t.id == "env_file" for t in targets
+                ) and _not_none(stmt.value):
+                    return True
     return False
+
+
+def _doppler_pin(doppler_yaml: Path) -> str | None:
+    """What is wrong with ``doppler.yaml``, or None when it pins the repo to
+    the ecosystem project's dev config."""
+    import yaml
+
+    if not doppler_yaml.is_file():
+        return "doppler.yaml is missing."
+    try:
+        loaded = yaml.safe_load(doppler_yaml.read_text())
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return "doppler.yaml is not valid YAML."
+    setup = loaded.get("setup") if isinstance(loaded, dict) else None
+    # Doppler accepts one mapping or a list of them (one per path).
+    entries = setup if isinstance(setup, list) else [setup]
+    entries = [e for e in entries if isinstance(e, dict)]
+    if not any(e.get("project") == _DOPPLER_PROJECT for e in entries):
+        return f"doppler.yaml does not name the {_DOPPLER_PROJECT} project."
+    if not any(
+        e.get("project") == _DOPPLER_PROJECT and e.get("config") == _DOPPLER_CONFIG
+        for e in entries
+    ):
+        return (
+            f"doppler.yaml does not pin the {_DOPPLER_CONFIG} config; "
+            "local runs never use prd."
+        )
+    return None
+
+
+def _requirement_name(requirement: str) -> str:
+    """A requirement's project name, normalized as PEP 503 does."""
+    name = re.split(r"[\s\[<>=!~;@(]", requirement.strip(), maxsplit=1)[0]
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def _doppler_local_dev_findings(repo_path: Path) -> list[Finding]:
@@ -699,10 +766,13 @@ def _doppler_local_dev_findings(repo_path: Path) -> list[Finding]:
 
     A repo that declares ``.env.example`` (it has secrets) and
     ``pyproject.toml`` (it is Python) must pin itself to the ecosystem's
-    Doppler project in ``doppler.yaml``, so ``doppler setup`` asks nothing
-    and ``doppler run`` injects the shared ``dev`` config; and nothing in it
-    may read a ``.env`` file, which is how secrets end up on disk with no
-    sign of where a value came from.
+    Doppler project and its dev config in ``doppler.yaml``, so ``doppler
+    setup`` asks nothing and ``doppler run`` injects the shared ``dev``
+    config; and nothing in it may read a ``.env`` file, which is how secrets
+    end up on disk with no sign of where a value came from.
+
+    A file it cannot read is skipped rather than raised: one unreadable file
+    must not cost the rest of CD-011, the committed-.env check included.
     """
     if not (repo_path / ".env.example").is_file():
         return []
@@ -711,38 +781,28 @@ def _doppler_local_dev_findings(repo_path: Path) -> list[Finding]:
         return []
 
     findings: list[Finding] = []
-    doppler_yaml = repo_path / "doppler.yaml"
-    project = None
-    if doppler_yaml.is_file():
-        m = _DOPPLER_PROJECT_RE.search(doppler_yaml.read_text())
-        project = m.group(1) if m else None
-    if project != _DOPPLER_PROJECT:
+    problem = _doppler_pin(repo_path / "doppler.yaml")
+    if problem is not None:
         findings.append(
             _finding(
                 "CD-011",
                 "WARN",
                 "cd_readiness",
-                (
-                    "doppler.yaml is missing."
-                    if not doppler_yaml.is_file()
-                    else f"doppler.yaml does not name the {_DOPPLER_PROJECT} project."
-                ),
-                f"Add doppler.yaml pinning the repo to {_DOPPLER_PROJECT} / dev "
-                "(setup: - project: … config: dev) so doppler run needs no setup "
-                "questions.",
+                problem,
+                f"Add doppler.yaml pinning the repo to {_DOPPLER_PROJECT} / "
+                f"{_DOPPLER_CONFIG} (setup: - project: … config: dev) so "
+                "doppler run needs no setup questions.",
             )
         )
 
-    with suppress(OSError, tomllib.TOMLDecodeError):
+    with suppress(OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         deps = (
             tomllib.loads(pyproject.read_text())
             .get("project", {})
             .get("dependencies", [])
         )
         if any(
-            re.split(r"[\s\[<>=!~;]", d.strip(), maxsplit=1)[0].lower()
-            == "python-dotenv"
-            for d in deps
+            isinstance(d, str) and _requirement_name(d) == "python-dotenv" for d in deps
         ):
             findings.append(
                 _finding(
@@ -760,7 +820,7 @@ def _doppler_local_dev_findings(repo_path: Path) -> list[Finding]:
         for path in sorted(src.rglob("*.py")):
             try:
                 tree = ast.parse(path.read_text())
-            except (SyntaxError, UnicodeDecodeError, ValueError):
+            except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
                 continue
             if _reads_dotenv(tree):
                 findings.append(
