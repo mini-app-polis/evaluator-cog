@@ -778,13 +778,63 @@ def test_cd011_skips_repos_without_secrets_or_without_python() -> None:
     assert check_no_hardcoded_secrets(not_python) == []
 
 
-def test_cd011_flags_python_dotenv_as_a_dependency() -> None:
+@pytest.mark.parametrize(
+    "doppler_yaml",
+    [
+        'setup:\n  - project: "mini-app-polis-ecosystem"  # pinned\n    config: dev\n',
+        "setup:\n  project: mini-app-polis-ecosystem\n  config: dev\n",
+    ],
+)
+def test_cd011_accepts_quoted_commented_and_single_mapping_doppler_yaml(
+    doppler_yaml: str,
+) -> None:
+    repo = _make_repo(
+        {
+            ".env.example": "TOKEN=\n",
+            "pyproject.toml": _PYPROJECT,
+            "doppler.yaml": doppler_yaml,
+        }
+    )
+    assert check_no_hardcoded_secrets(repo) == []
+
+
+def test_cd011_flags_a_doppler_yaml_pinned_to_prd() -> None:
+    repo = _make_repo(
+        {
+            ".env.example": "TOKEN=\n",
+            "pyproject.toml": _PYPROJECT,
+            "doppler.yaml": "setup:\n  - project: mini-app-polis-ecosystem\n"
+            "    config: prd\n",
+        }
+    )
+    assert _cd011(check_no_hardcoded_secrets(repo)) == [
+        "doppler.yaml does not pin the dev config; local runs never use prd."
+    ]
+
+
+def test_cd011_flags_a_doppler_yaml_that_is_not_yaml() -> None:
+    repo = _make_repo(
+        {
+            ".env.example": "TOKEN=\n",
+            "pyproject.toml": _PYPROJECT,
+            "doppler.yaml": "setup: [unclosed\n",
+        }
+    )
+    assert _cd011(check_no_hardcoded_secrets(repo)) == [
+        "doppler.yaml is not valid YAML."
+    ]
+
+
+@pytest.mark.parametrize(
+    "requirement", ["python-dotenv>=1.0,<2.0", "Python_Dotenv[cli]", "python.dotenv"]
+)
+def test_cd011_flags_python_dotenv_as_a_dependency(requirement: str) -> None:
     repo = _make_repo(
         {
             ".env.example": "TOKEN=\n",
             "doppler.yaml": _DOPPLER_YAML,
             "pyproject.toml": "[project]\nname='x'\n"
-            "dependencies = ['python-dotenv>=1.0,<2.0']\n",
+            f"dependencies = ['{requirement}']\n",
         }
     )
     assert _cd011(check_no_hardcoded_secrets(repo)) == [
@@ -799,6 +849,12 @@ def test_cd011_flags_python_dotenv_as_a_dependency() -> None:
         "import dotenv\n",
         "from pydantic_settings import SettingsConfigDict\n"
         "model_config = SettingsConfigDict(env_file='.env', extra='ignore')\n",
+        "model_config = SettingsConfigDict(env_file=('.env', '.env.prod'))\n",
+        "model_config = {'env_file': '.env'}\n",
+        "class Settings:\n    class Config:\n        env_file = '.env'\n",
+        "settings = Settings(_env_file='.env')\n",
+        "import dotenv.main\n",
+        "import os, dotenv\ndotenv.load_dotenv()\n",
     ],
 )
 def test_cd011_flags_source_that_reads_a_env_file(source: str) -> None:
@@ -824,7 +880,9 @@ def test_cd011_does_not_flag_source_that_only_names_dotenv() -> None:
             "doppler.yaml": _DOPPLER_YAML,
             "src/my_pkg/rules.py": "NAMES = ('load_dotenv', 'dotenv', 'env_file')\n"
             "from pydantic_settings import SettingsConfigDict\n"
-            "model_config = SettingsConfigDict(env_file=None)\n",
+            "from .dotenv_rules import RULES\n"
+            "model_config = SettingsConfigDict(env_file=None)\n"
+            "other = {'env_file': None}\n",
         }
     )
     assert check_no_hardcoded_secrets(repo) == []
