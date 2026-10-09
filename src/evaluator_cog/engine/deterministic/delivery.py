@@ -653,12 +653,137 @@ def check_structured_logging(repo_path: Path) -> list[Finding]:
     return findings
 
 
+#: The Doppler project every Python repo pins local development to.
+_DOPPLER_PROJECT = "mini-app-polis-ecosystem"
+_DOPPLER_PROJECT_RE = re.compile(r"^\s*-?\s*project:\s*(\S+)\s*$", re.MULTILINE)
+
+
+def _reads_dotenv(tree: ast.AST) -> bool:
+    """Whether a module imports dotenv, calls load_dotenv, or points a
+    pydantic-settings config at a ``.env`` file.
+
+    Structural rather than textual, so a module that only quotes those
+    names — this checker, a test fixture, a docstring — is not flagged.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(a.name.split(".")[0] == "dotenv" for a in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if (node.module or "").split(".")[0] == "dotenv":
+                return True
+        elif isinstance(node, ast.Call):
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else ""
+            )
+            if name == "load_dotenv":
+                return True
+            if name == "SettingsConfigDict":
+                for kw in node.keywords:
+                    if (
+                        kw.arg == "env_file"
+                        and isinstance(kw.value, ast.Constant)
+                        and kw.value.value is not None
+                    ):
+                        return True
+    return False
+
+
+def _doppler_local_dev_findings(repo_path: Path) -> list[Finding]:
+    """CD-011's local-development half, for Python repos with secrets.
+
+    A repo that declares ``.env.example`` (it has secrets) and
+    ``pyproject.toml`` (it is Python) must pin itself to the ecosystem's
+    Doppler project in ``doppler.yaml``, so ``doppler setup`` asks nothing
+    and ``doppler run`` injects the shared ``dev`` config; and nothing in it
+    may read a ``.env`` file, which is how secrets end up on disk with no
+    sign of where a value came from.
+    """
+    if not (repo_path / ".env.example").is_file():
+        return []
+    pyproject = repo_path / "pyproject.toml"
+    if not pyproject.is_file():
+        return []
+
+    findings: list[Finding] = []
+    doppler_yaml = repo_path / "doppler.yaml"
+    project = None
+    if doppler_yaml.is_file():
+        m = _DOPPLER_PROJECT_RE.search(doppler_yaml.read_text())
+        project = m.group(1) if m else None
+    if project != _DOPPLER_PROJECT:
+        findings.append(
+            _finding(
+                "CD-011",
+                "WARN",
+                "cd_readiness",
+                (
+                    "doppler.yaml is missing."
+                    if not doppler_yaml.is_file()
+                    else f"doppler.yaml does not name the {_DOPPLER_PROJECT} project."
+                ),
+                f"Add doppler.yaml pinning the repo to {_DOPPLER_PROJECT} / dev "
+                "(setup: - project: … config: dev) so doppler run needs no setup "
+                "questions.",
+            )
+        )
+
+    with suppress(OSError, tomllib.TOMLDecodeError):
+        deps = (
+            tomllib.loads(pyproject.read_text())
+            .get("project", {})
+            .get("dependencies", [])
+        )
+        if any(
+            re.split(r"[\s\[<>=!~;]", d.strip(), maxsplit=1)[0].lower()
+            == "python-dotenv"
+            for d in deps
+        ):
+            findings.append(
+                _finding(
+                    "CD-011",
+                    "WARN",
+                    "cd_readiness",
+                    "python-dotenv is a runtime dependency.",
+                    "Remove it: secrets come from Doppler (doppler run locally), "
+                    "never from a .env file.",
+                )
+            )
+
+    src = repo_path / "src"
+    if src.is_dir():
+        for path in sorted(src.rglob("*.py")):
+            try:
+                tree = ast.parse(path.read_text())
+            except (SyntaxError, UnicodeDecodeError, ValueError):
+                continue
+            if _reads_dotenv(tree):
+                findings.append(
+                    _finding(
+                        "CD-011",
+                        "WARN",
+                        "cd_readiness",
+                        f"{path.relative_to(repo_path)} reads a .env file "
+                        "(dotenv, or a pydantic-settings env_file).",
+                        "Read the process environment only; run under "
+                        "doppler run locally.",
+                    )
+                )
+                break
+    return findings
+
+
 def check_no_hardcoded_secrets(repo_path: Path) -> list[Finding]:
     """CD-011: Doppler as canonical secret store."""
     CHECK_ID = "CD-011"
     import re
 
-    findings = []
+    findings = _doppler_local_dev_findings(repo_path)
 
     tracked = _tracked_paths(repo_path)
     for env_file in sorted(repo_path.rglob(".env*")):
