@@ -1,3 +1,10 @@
+# [3.55.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.8...v3.55.0) (2026-10-09)
+
+
+### Features
+
+* **deterministic:** CD-011 flags a missing doppler.yaml and .env reading ([00ff437](https://github.com/mini-app-polis/evaluator-cog/commit/00ff437066dadbf4fec56bd7a159ae0a8ec9cad8))
+
 ## [3.54.8](https://github.com/mini-app-polis/evaluator-cog/compare/v3.54.7...v3.54.8) (2026-10-09)
 
 
