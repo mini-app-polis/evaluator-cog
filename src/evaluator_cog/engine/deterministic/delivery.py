@@ -713,16 +713,21 @@ def _reads_dotenv(tree: ast.AST) -> bool:
                     return True
         elif isinstance(node, ast.ClassDef) and node.name == "Config":
             for stmt in node.body:
-                targets = (
-                    stmt.targets
-                    if isinstance(stmt, ast.Assign)
-                    else [stmt.target]
-                    if isinstance(stmt, ast.AnnAssign) and stmt.value is not None
-                    else []
-                )
-                if any(
-                    isinstance(t, ast.Name) and t.id == "env_file" for t in targets
-                ) and _not_none(stmt.value):
+                targets: list[ast.expr]
+                assigned: ast.expr | None
+                if isinstance(stmt, ast.Assign):
+                    targets, assigned = stmt.targets, stmt.value
+                elif isinstance(stmt, ast.AnnAssign):
+                    targets, assigned = [stmt.target], stmt.value
+                else:
+                    continue
+                if (
+                    assigned is not None
+                    and any(
+                        isinstance(t, ast.Name) and t.id == "env_file" for t in targets
+                    )
+                    and _not_none(assigned)
+                ):
                     return True
     return False
 
@@ -740,8 +745,8 @@ def _doppler_pin(doppler_yaml: Path) -> str | None:
         return "doppler.yaml is not valid YAML."
     setup = loaded.get("setup") if isinstance(loaded, dict) else None
     # Doppler accepts one mapping or a list of them (one per path).
-    entries = setup if isinstance(setup, list) else [setup]
-    entries = [e for e in entries if isinstance(e, dict)]
+    candidates = setup if isinstance(setup, list) else [setup]
+    entries: list[dict] = [e for e in candidates if isinstance(e, dict)]
     if not any(e.get("project") == _DOPPLER_PROJECT for e in entries):
         return f"doppler.yaml does not name the {_DOPPLER_PROJECT} project."
     if not any(
