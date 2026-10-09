@@ -8,7 +8,8 @@ Doppler; `cogs.tf` there lists the names) at cold start and **read again at
 the start of every invocation**, so a value changed in Doppler applies to
 the next job once the sync has run — no deploy or cold start. If SSM cannot
 be reached on a refresh, the values already loaded are kept. The rest is
-set by Terraform — the `.env` file is for running the handler locally.
+set by Terraform. Locally, run under `doppler run` with Doppler's `dev`
+config; nothing reads a `.env` file.
 
 ## ANTHROPIC_API_KEY
 
