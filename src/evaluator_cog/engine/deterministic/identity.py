@@ -2418,6 +2418,42 @@ _BEARER_MARKERS = (
 _SIGNATURE_MARKERS = ("hmac.new(", "digestmod", "hexdigest(")
 
 
+def _reads_a_cookie(node: ast.Call, enclosing: ast.AST | None) -> bool:
+    """Whether an operand of the comparison was read from a cookie.
+
+    CD-019 credentials arrive in the ``Authorization`` header. A value the
+    server set in a cookie and reads back — an OAuth ``state`` nonce bound
+    to the browser that started the flow, a CSRF token — is checked against
+    the caller's copy, not presented as a credential, and has no
+    ``identity.apikey`` equivalent. An operand counts when it reads
+    ``.cookies`` directly or is a name the enclosing function assigned from
+    an expression that does.
+    """
+    operands = [*node.args, *(kw.value for kw in node.keywords)]
+    if any(".cookies" in _unparse(arg) for arg in operands):
+        return True
+    if enclosing is None:
+        return False
+    names = {arg.id for arg in operands if isinstance(arg, ast.Name)}
+    if not names:
+        return False
+    for stmt in ast.walk(enclosing):
+        if isinstance(stmt, ast.Assign):
+            targets = stmt.targets
+        elif isinstance(stmt, ast.AnnAssign | ast.NamedExpr):
+            targets = [stmt.target]
+        else:
+            continue
+        bound = {t.id for t in targets if isinstance(t, ast.Name)}
+        if (
+            bound & names
+            and stmt.value is not None
+            and ".cookies" in _unparse(stmt.value)
+        ):
+            return True
+    return False
+
+
 def _enclosing_functions(tree: ast.AST) -> dict[ast.Call, ast.AST]:
     """Map each call to the innermost function containing it.
 
@@ -2449,11 +2485,14 @@ def _compares_a_bearer_credential(node: ast.Call, enclosing: ast.AST | None) -> 
     ``identity.clerk`` or ``identity.apikey`` instead — has no meaning for
     either.
 
-    Two signals, read from the call and the function around it:
+    Three signals, read from the call and the function around it:
 
       - A comparison whose scope computes an HMAC is verifying a signature
         over a payload. A signature is not a credential presented by a
         caller, whatever it is compared with.
+      - A comparison against a value read back from a cookie is checking
+        a browser-bound nonce (OAuth ``state``, CSRF), not a presented
+        credential — see :func:`_reads_a_cookie`.
       - Otherwise it is in scope only where the Bearer path is visible —
         an ``Authorization`` header, or a machine-key or Clerk lookup.
 
@@ -2468,6 +2507,8 @@ def _compares_a_bearer_credential(node: ast.Call, enclosing: ast.AST | None) -> 
     if enclosing is not None:
         haystack = f"{haystack}\n{_unparse(enclosing).lower()}"
     if any(marker in haystack for marker in _SIGNATURE_MARKERS):
+        return False
+    if _reads_a_cookie(node, enclosing):
         return False
     return any(marker in haystack for marker in _BEARER_MARKERS)
 

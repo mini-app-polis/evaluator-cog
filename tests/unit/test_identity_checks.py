@@ -1728,6 +1728,44 @@ def test_cd030_2_ignores_a_body_signature(tmp_path: Path) -> None:
     assert _clause(check_cd_030(repo), "CD-030", 2) == []
 
 
+def test_cd030_2_ignores_an_oauth_state_read_from_a_cookie(tmp_path: Path) -> None:
+    """A state nonce bound to the browser is not a presented credential.
+
+    The handler around it talks about tokens (it renews one), which used to
+    be enough to put the comparison on the Bearer path.
+    """
+    repo = _api_repo(
+        tmp_path,
+        "src/pkg/routers/oauth_callback.py",
+        "import hmac\n"
+        "\n"
+        "from . import spotify_token\n"
+        "\n"
+        "\n"
+        "async def callback(request, code: str | None, state: str | None):\n"
+        "    expected = request.cookies.get('reauth_state')\n"
+        "    if not (state and expected and hmac.compare_digest(state, expected)):\n"
+        "        return 400\n"
+        "    await spotify_token.renew(code)\n"
+        "    return 200\n",
+    )
+    assert _clause(check_cd_030(repo), "CD-030", 2) == []
+
+
+def test_cd030_2_ignores_a_cookie_read_inline(tmp_path: Path) -> None:
+    """The cookie read may sit in the comparison itself."""
+    repo = _api_repo(
+        tmp_path,
+        "src/pkg/routers/csrf.py",
+        "import hmac\n"
+        "\n"
+        "\n"
+        "def check_csrf_token(request, token: str) -> bool:\n"
+        "    return hmac.compare_digest(token, request.cookies.get('csrf', ''))\n",
+    )
+    assert _clause(check_cd_030(repo), "CD-030", 2) == []
+
+
 def test_cd030_2_still_flags_a_local_bearer_comparison(tmp_path: Path) -> None:
     """The clause keeps its subject: a machine key compared in-repo."""
     repo = _api_repo(
