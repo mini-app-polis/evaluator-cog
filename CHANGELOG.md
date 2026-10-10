@@ -1,3 +1,10 @@
+## [3.55.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.55.2...v3.55.3) (2026-10-10)
+
+
+### Bug Fixes
+
+* **cd-030:** treat cookie-bound nonces as out of scope for the credential comparison check ([2c47b8a](https://github.com/mini-app-polis/evaluator-cog/commit/2c47b8a90c98e273562f89eec72099d767054817))
+
 ## [3.55.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.55.1...v3.55.2) (2026-10-09)
 
 
