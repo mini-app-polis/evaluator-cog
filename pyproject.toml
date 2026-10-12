@@ -30,6 +30,11 @@ dev = [
 ]
 
 [tool.uv]
+# The uv every lock in the fleet is written with. setup-uv reads this in CI,
+# and an older or newer local uv refuses to run instead of rewriting the
+# lock's revision. Upgrading uv is a fleet sweep: bump this everywhere, then
+# re-lock, in commits of their own.
+required-version = "==0.13.0"
 package = true
 
 [build-system]
