@@ -1,3 +1,10 @@
+# [3.56.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.55.6...v3.56.0) (2026-10-15)
+
+
+### Features
+
+* **standards:** CD-021 checkable for Railway-hosted services ([57b59ec](https://github.com/mini-app-polis/evaluator-cog/commit/57b59ec1c1b756843f56e6cf8ed1dd3d69a5592c))
+
 ## [3.55.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.55.5...v3.55.6) (2026-10-12)
 
 
