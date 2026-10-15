@@ -1,4 +1,4 @@
-"""Deterministic container / platform-descriptor checks: CD-017, CD-022..CD-024."""
+"""Deterministic container / platform-descriptor checks: CD-017, CD-021..CD-024."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 
 from evaluator_cog.engine.deterministic.containers import (
     check_cd_017,
+    check_cd_021,
     check_cd_022,
     check_cd_023,
     check_cd_024,
@@ -489,3 +490,93 @@ def test_rel_is_repo_relative_when_the_path_is_inside(tmp_path: Path) -> None:
     from evaluator_cog.engine.deterministic.containers import _rel
 
     assert _rel(tmp_path / "railway.json", tmp_path) == "railway.json"
+
+
+# --- CD-021 ------------------------------------------------------------------
+
+_DOCKERFILE = "FROM python:3.11@sha256:" + "a" * 64 + "\nUSER app\n"
+
+
+def test_cd021_is_silent_without_a_railway_descriptor(tmp_path: Path) -> None:
+    """A Lambda cog, a library or a site has no Railway build to define."""
+    assert check_cd_021(tmp_path) == []
+    _write(tmp_path, "Dockerfile", _DOCKERFILE)
+    assert check_cd_021(tmp_path) == []
+
+
+def test_cd021_flags_a_railway_service_with_no_dockerfile(tmp_path: Path) -> None:
+    _railway(tmp_path, _good_deploy())
+
+    findings = check_cd_021(tmp_path)
+
+    assert _ids(findings) == {"CD-021"}
+    assert len(findings) == 1  # the builder is not reported on top
+    assert "no Dockerfile at the repository root" in _blob(findings)
+    assert findings[0]["severity"] == "WARN"
+
+
+def test_cd021_flags_a_dockerfile_the_descriptor_does_not_select(
+    tmp_path: Path,
+) -> None:
+    _railway(tmp_path, {**_good_deploy(), "build": {"builder": "RAILPACK"}})
+    _write(tmp_path, "Dockerfile", _DOCKERFILE)
+
+    findings = check_cd_021(tmp_path)
+
+    assert _ids(findings) == {"CD-021"}
+    assert "build.builder is 'RAILPACK'" in _blob(findings)
+
+
+def test_cd021_flags_an_unset_builder(tmp_path: Path) -> None:
+    _railway(tmp_path, _good_deploy())
+    _write(tmp_path, "Dockerfile", _DOCKERFILE)
+
+    assert "build.builder is missing" in _blob(check_cd_021(tmp_path))
+
+
+def test_cd021_passes_a_selected_dockerfile_in_railway_json_or_toml(
+    tmp_path: Path,
+) -> None:
+    _railway(tmp_path, {**_good_deploy(), "build": {"builder": "DOCKERFILE"}})
+    _write(tmp_path, "Dockerfile", _DOCKERFILE)
+    assert check_cd_021(tmp_path) == []
+
+    other = tmp_path / "toml"
+    _write(other, "railway.toml", '[build]\nbuilder = "dockerfile"\n')
+    _write(other, "Dockerfile", _DOCKERFILE)
+    assert check_cd_021(other) == []
+
+
+def test_cd021_reads_railway_infrastructure_as_code(tmp_path: Path) -> None:
+    """db-ops declares its services in .railway/railway.ts, not railway.json."""
+    _write(
+        tmp_path,
+        ".railway/railway.ts",
+        'service("db-poller", {\n'
+        '  build: { builder: "DOCKERFILE" as const, dockerfilePath: "Dockerfile" },\n'
+        "});\n",
+    )
+    assert _ids(check_cd_021(tmp_path)) == {"CD-021"}  # no Dockerfile yet
+
+    _write(tmp_path, "Dockerfile", _DOCKERFILE)
+    assert check_cd_021(tmp_path) == []
+
+
+def test_cd021_flags_iac_that_leaves_the_builder_to_railway(tmp_path: Path) -> None:
+    _write(tmp_path, ".railway/railway.py", 'service("api", start="uvicorn app:app")\n')
+    _write(tmp_path, "Dockerfile", _DOCKERFILE)
+
+    findings = check_cd_021(tmp_path)
+
+    assert _ids(findings) == {"CD-021"}
+    assert 'does not set builder: "DOCKERFILE"' in _blob(findings)
+
+
+def test_cd021_python_iac_keyword_form_counts(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        ".railway/railway.py",
+        'service("api", build={"builder": "DOCKERFILE"})\n',
+    )
+    _write(tmp_path, "Dockerfile", _DOCKERFILE)
+    assert check_cd_021(tmp_path) == []

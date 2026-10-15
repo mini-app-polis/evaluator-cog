@@ -1,4 +1,4 @@
-"""Container and platform-descriptor rule checks (CD-017, CD-022..CD-024).
+"""Container and platform-descriptor rule checks (CD-017, CD-021..CD-024).
 
 These rules all ask the same underlying question from different
 angles: *is this service's runtime defined in version control, or is it
@@ -18,15 +18,18 @@ it from three rules at once would triple the noise and obscure which
 rule is actually open. A repo with no Dockerfile should show exactly one
 container finding, not three.
 
-*CD-021 has no check.* It is a `gap` scoped to no repo type while no
-service carries a Dockerfile: with the gap universal, a check could only
-restate it once per service per run. Its check_notes in the catalog
-record what to restore when the first image definition appears.
+*CD-021 asks only of Railway-hosted repositories.* Its subject is a
+repository that carries a Railway descriptor — ``railway.json``,
+``railway.toml`` or Infrastructure-as-Code under ``.railway/``. A pipeline
+cog on Lambda deploys a zip onto a runtime its infra module pins, so it
+has no image to define and the check stays silent there, as CD-022 and
+CD-023 stay silent without a Dockerfile.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -345,6 +348,113 @@ def check_cd_017(repo_path: Path) -> list[Finding]:
             )
         )
 
+    return findings
+
+
+#: Railway Infrastructure-as-Code authoring files, one of which a repository
+#: keeps. Only TypeScript is generally available; Python and Go are beta.
+_RAILWAY_IAC_FILES = ("railway.ts", "railway.py", "railway.go")
+
+#: ``builder: "DOCKERFILE"`` in TypeScript or Go, ``builder="DOCKERFILE"`` in
+#: Python. The file is code and is not evaluated here, so this reads the one
+#: setting the rule asks about rather than the whole graph.
+_IAC_DOCKERFILE_BUILDER = re.compile(
+    r"""["']?builder["']?\s*[:=]\s*["']DOCKERFILE["']"""
+)
+
+
+def _railway_iac_file(repo_path: Path) -> Path | None:
+    """The repository's ``.railway/railway.{ts,py,go}``, if it has one."""
+    for name in _RAILWAY_IAC_FILES:
+        candidate = repo_path / ".railway" / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def check_cd_021(repo_path: Path) -> list[Finding]:
+    """CD-021: a Railway-hosted service defines its runtime image.
+
+    The subject is a repository Railway builds: one carrying a Railway
+    descriptor — ``railway.json`` or ``railway.toml``, or Infrastructure as
+    Code in ``.railway/``, which replaces them (config as code stops being
+    read on 2026-12-01). Anything else — a Lambda cog, a library, a static
+    site — has no Railway build to define, and the check stays silent.
+
+    Two conditions, each its own finding:
+
+    *A Dockerfile at the repository root.* Without one the builder infers
+    the base image, interpreter patch and system packages at build time,
+    and none of them is recorded anywhere a reader can see.
+
+    *The descriptor selects it.* A Dockerfile the platform does not use is
+    not a runtime definition. ``railway.json`` / ``railway.toml`` must set
+    ``build.builder`` to ``DOCKERFILE``; an IaC file must say
+    ``builder: "DOCKERFILE"``. Railway would pick up a root Dockerfile on
+    its own, but then the choice lives in the platform's default rather
+    than in the repository, which is the thing this rule exists to move.
+
+    The second condition is only asked once the first holds: without a
+    Dockerfile, naming the builder too would report one gap twice.
+    """
+    CHECK_ID = "CD-021"
+    findings: list[Finding] = []
+
+    descriptor, data, _error = _load_platform_descriptor(repo_path)
+    iac = _railway_iac_file(repo_path)
+    source = iac or descriptor
+    if source is None:
+        return findings
+    rel = _rel(source, repo_path)
+
+    dockerfile, _text = _read_dockerfile(repo_path)
+    if dockerfile is None:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                _DIMENSION,
+                f"This Railway-hosted service ({rel}) has no Dockerfile at the "
+                f"repository root, so its base image, interpreter patch and "
+                f"system packages are inferred by the builder at build time "
+                f"and recorded nowhere.",
+                "Add a root Dockerfile with digest-pinned base images (CD-022) "
+                "and a non-root final stage (CD-023), and select it in the "
+                "Railway descriptor.",
+            )
+        )
+        return findings
+
+    if iac is not None:
+        try:
+            selects = bool(
+                _IAC_DOCKERFILE_BUILDER.search(
+                    iac.read_text(encoding="utf-8", errors="replace")
+                )
+            )
+        except OSError:
+            selects = False
+        where = f'{rel} does not set builder: "DOCKERFILE"'
+    else:
+        build = (data or {}).get("build")
+        builder = build.get("builder") if isinstance(build, dict) else None
+        selects = isinstance(builder, str) and builder.upper() == "DOCKERFILE"
+        shown = "missing" if builder is None else repr(builder)
+        where = f'{rel}: build.builder is {shown}, not "DOCKERFILE"'
+
+    if not selects:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                _DIMENSION,
+                f"{where} — the Dockerfile is there, but which builder runs is "
+                f"left to the platform's default rather than declared.",
+                f"Select the Dockerfile explicitly in {rel}: build.builder "
+                f'"DOCKERFILE" in railway.json, or builder: "DOCKERFILE" in '
+                f".railway/railway.ts.",
+            )
+        )
     return findings
 
 
