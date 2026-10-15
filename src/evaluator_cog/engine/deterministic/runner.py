@@ -44,6 +44,7 @@ from evaluator_cog.engine.deterministic.config import (
 )
 from evaluator_cog.engine.deterministic.containers import (
     check_cd_017,
+    check_cd_021,
     check_cd_022,
     check_cd_023,
     check_cd_024,
@@ -902,9 +903,10 @@ def run_all_checks(
 
     # cd_readiness — container and platform-descriptor rules.
     # CD-022 and CD-023 skip silently where no Dockerfile exists; the
-    # absence of an image definition is CD-021's gap, which has no check
-    # while no service carries a Dockerfile (see its catalog check_notes).
+    # absence of an image definition is CD-021's, and CD-021 asks it only
+    # of a repository with a Railway descriptor or .railway/ IaC.
     _run(check_cd_017, "CD-017")
+    _run(check_cd_021, "CD-021")
     _run(check_cd_022, "CD-022")
     _run(check_cd_023, "CD-023")
     # CD-024 reads the pipeline cogs' limits in mini-app-polis/infra and
