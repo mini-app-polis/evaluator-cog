@@ -232,6 +232,80 @@ def test_no_time_left_to_start_is_a_retry_not_a_run() -> None:
     process.assert_not_called()
 
 
+def test_the_shared_run_deadline_is_set_a_request_before_the_stop() -> None:
+    """The library's retry loops stop starting attempts early enough that
+    the last one they start still ends before the worker stops the run."""
+    from mini_app_polis.deadline import remaining_seconds
+
+    from evaluator_cog import _deadline
+
+    seen: list[float | None] = []
+    with patch.object(
+        lw, "process_message", lambda _b: seen.append(remaining_seconds())
+    ):
+        lw.lambda_handler(_event(_body()), _Context(remaining_ms=900_000))
+
+    expected = (
+        900 - _deadline.DEADLINE_MARGIN_SECONDS - (_deadline.REQUEST_HEADROOM_SECONDS)
+    )
+    assert seen == [pytest.approx(expected, abs=1)]
+    # Scoped to the run: nothing after it inherits a spent deadline.
+    assert remaining_seconds() is None
+
+
+def test_the_shared_run_deadline_never_goes_negative() -> None:
+    """Less left than the margin and the headroom: already reached, not a
+    deadline in the past that reads as more time than none."""
+    from mini_app_polis.deadline import remaining_seconds
+
+    from evaluator_cog import _deadline
+
+    remaining_ms = int(
+        (_deadline.DEADLINE_MARGIN_SECONDS + _deadline.REQUEST_HEADROOM_SECONDS / 2)
+        * 1000
+    )
+    seen: list[float | None] = []
+    with patch.object(
+        lw, "process_message", lambda _b: seen.append(remaining_seconds())
+    ):
+        lw.lambda_handler(_event(_body()), _Context(remaining_ms=remaining_ms))
+
+    assert seen == [pytest.approx(0, abs=1)]
+
+
+def test_no_context_sets_no_shared_run_deadline() -> None:
+    from mini_app_polis.deadline import remaining_seconds
+
+    seen: list[float | None] = []
+    with patch.object(
+        lw, "process_message", lambda _b: seen.append(remaining_seconds())
+    ):
+        lw.lambda_handler(_event(_body()), None)
+
+    assert seen == [None]
+
+
+def test_a_run_refused_by_the_shared_deadline_fails_like_one_stopped_at_it() -> None:
+    """RunDeadlineReached takes the RunOutOfTime path: reported, and handed
+    back for redelivery."""
+    from mini_app_polis.deadline import RunDeadlineReached
+
+    from evaluator_cog import _deadline
+
+    for exc in (
+        _deadline.RunOutOfTime("stopped"),
+        RunDeadlineReached("Run deadline reached while listing"),
+    ):
+        with (
+            patch.object(lw, "process_message", side_effect=exc),
+            patch.object(lw, "_report_failure") as reported,
+        ):
+            result = lw.lambda_handler(_event(_body()), _Context(remaining_ms=900_000))
+
+        assert result == {"batchItemFailures": [{"itemIdentifier": "m-0"}]}
+        reported.assert_called_once_with("a queued evaluation", exc)
+
+
 def test_an_unreadable_message_is_reported_once_not_on_every_redelivery() -> None:
     """Five receives of one bad message were five identical findings. The
     dead-letter queue it lands in has an alarm of its own (PIPE-021)."""
