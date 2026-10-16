@@ -12,6 +12,7 @@ from evaluator_cog.engine.deterministic._shared import (
     _is_checker_self_source,
     _is_inside_string_literal,
 )
+from evaluator_cog.engine.deterministic.containers import _railway_iac_file
 
 
 def check_railway_hosted_api(
@@ -20,7 +21,10 @@ def check_railway_hosted_api(
     """API-001: API services are hosted on Railway (deterministic slice).
 
     Implements Railway deployment artifact presence (condition 1) and
-    framework dependency presence (condition 3). Workflow-based checks for
+    framework dependency presence (condition 3). The artifact is
+    Infrastructure as Code under ``.railway/`` (the same file CD-017 and
+    CD-024 read), or ``railway.toml`` / ``railway.json`` / ``nixpacks.toml``
+    at the repo root. Workflow-based checks for
     competing hosts belong to other rules.
 
     TODO(API-001-condition-2): ecosystem.yaml per-service ``host: railway`` is
@@ -32,6 +36,7 @@ def check_railway_hosted_api(
         (repo_path / "railway.toml").exists()
         or (repo_path / "railway.json").exists()
         or (repo_path / "nixpacks.toml").exists()
+        or _railway_iac_file(repo_path) is not None
     )
     if not has_railway:
         findings.append(
@@ -39,8 +44,12 @@ def check_railway_hosted_api(
                 "API-001",
                 "WARN",
                 "structural_conformance",
-                "Railway deployment configuration is missing (expected railway.toml, railway.json, or nixpacks.toml at repo root).",
-                "Add Railway configuration so deployments are explicit and reviewable.",
+                "Railway deployment configuration is missing (expected "
+                ".railway/railway.{ts,py,go}, or railway.toml, railway.json "
+                "or nixpacks.toml at repo root).",
+                "Declare the service in .railway/railway.ts so deployments are "
+                "explicit and reviewable (Railway stops reading railway.json "
+                "on 2026-12-01).",
             )
         )
 
