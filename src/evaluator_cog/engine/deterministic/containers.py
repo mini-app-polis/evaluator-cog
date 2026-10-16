@@ -223,13 +223,106 @@ def _states_limit(data: dict[str, Any], tokens: tuple[str, ...]) -> bool:
     return False
 
 
+#: Railway Infrastructure-as-Code authoring files, one of which a repository
+#: keeps. Only TypeScript is generally available; Python and Go are beta.
+_RAILWAY_IAC_FILES = ("railway.ts", "railway.py", "railway.go")
+
+#: ``builder: "DOCKERFILE"`` in TypeScript or Go, ``builder="DOCKERFILE"`` in
+#: Python. The file is code and is not evaluated here, so this reads the one
+#: setting the rule asks about rather than the whole graph.
+_IAC_DOCKERFILE_BUILDER = re.compile(
+    r"""["']?builder["']?\s*[:=]\s*["']DOCKERFILE["']"""
+)
+
+
+def _railway_iac_file(repo_path: Path) -> Path | None:
+    """The repository's ``.railway/railway.{ts,py,go}``, if it has one."""
+    for name in _RAILWAY_IAC_FILES:
+        candidate = repo_path / ".railway" / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+#: Settings CD-017 and CD-024 read from an IaC file. TypeScript and Go write
+#: ``key: value``, Python ``key=value``; Python may also spell a key in snake
+#: case. Each pattern matches every occurrence, since one file can declare
+#: several services.
+_IAC_RESTART_POLICY = re.compile(
+    r"""\brestart_?policy_?type["']?\s*[:=]\s*["']([A-Za-z_]+)["']""",
+    re.IGNORECASE,
+)
+_IAC_MAX_RETRIES = re.compile(
+    r"""\brestart_?policy_?max_?retries["']?\s*[:=]\s*([^\s,})\]]+)""",
+    re.IGNORECASE,
+)
+_IAC_START_COMMAND = re.compile(
+    r"""\b(?:startCommand|start_command|start|command)["']?\s*[:=]\s*(["'`])(.*?)\1""",
+    re.DOTALL,
+)
+
+
+def _iac_limit(token: str) -> re.Pattern[str]:
+    """A key naming ``token`` (``memoryBytes``, ``cpu``) with a non-null value."""
+    return re.compile(
+        r"\b[A-Za-z_]*" + token + r"""[A-Za-z_]*["']?\s*[:=]\s*"""
+        r"(?!null\b|None\b|undefined\b)[^\s,})\]]",
+        re.IGNORECASE,
+    )
+
+
+_IAC_MEMORY_LIMIT = _iac_limit("memory")
+_IAC_CPU_LIMIT = _iac_limit("cpu")
+
+
+def _read_iac(repo_path: Path) -> tuple[Path | None, str | None]:
+    """``(path, code)`` for the repository's IaC file, comments removed.
+
+    Whole-line comments are dropped (``//``, ``#``, and the ``*`` lines of a
+    block comment) so a setting named in prose — "the restart policy is
+    ON_FAILURE" in a header comment — is not read as declared. ``(path,
+    None)`` means the file exists but could not be read.
+    """
+    path = _railway_iac_file(repo_path)
+    if path is None:
+        return None, None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return path, None
+    code = "\n".join(
+        line
+        for line in text.splitlines()
+        if not line.lstrip().startswith(("//", "#", "*", "/*"))
+    )
+    return path, code
+
+
+def _dockerfile_sets_start(repo_path: Path) -> bool:
+    """True if the root Dockerfile's final stage has a CMD or ENTRYPOINT."""
+    _path, text = _read_dockerfile(repo_path)
+    if text is None:
+        return False
+    instructions = _dockerfile_instructions(text)
+    final_from = max(
+        (i for i, (_n, ins, _a) in enumerate(instructions) if ins == "FROM"),
+        default=None,
+    )
+    if final_from is None:
+        return False
+    return any(
+        ins in ("CMD", "ENTRYPOINT") and args.strip()
+        for _n, ins, args in instructions[final_from + 1 :]
+    )
+
+
 def check_cd_017(repo_path: Path) -> list[Finding]:
     """CD-017: the Railway restart policy is version-controlled and correct.
 
     A restart policy that lives only in the dashboard is invisible to
     review and lost on service recreation, so condition (1) treats a
-    missing or malformed ``railway.json`` as terminal — there is nothing
-    to inspect and the remaining conditions would each restate the same
+    missing or malformed descriptor as terminal — there is nothing to
+    inspect and the remaining conditions would each restate the same
     fact, so the check returns after the first finding.
 
     Conditions (2) and (3) encode the policy itself: ``ON_FAILURE`` with
@@ -237,53 +330,50 @@ def check_cd_017(repo_path: Path) -> list[Finding]:
     different directions — one gives up on a transient fault, the other
     hides a crash loop — so both are flagged with the value named.
 
-    Condition (4) is the subtle one. A ``railway.json`` that omits
-    ``startCommand`` leaves the effective start command dashboard-owned,
-    which defeats the purpose of committing the file in the first place:
-    the deploy still is not reproducible from the repository.
+    Condition (4) is the subtle one. A descriptor that omits the start
+    command leaves the effective start command dashboard-owned, which
+    defeats the purpose of committing the file in the first place: the
+    deploy still is not reproducible from the repository. Where the
+    descriptor selects the root Dockerfile, a CMD or ENTRYPOINT in its
+    final stage is the start command, also in version control, and
+    satisfies the condition — declaring it in both places is how two
+    of them drift.
 
-    ``railway.toml`` counts. Railway accepts either spelling and CD-024
-    already reads both; this check looked only for ``railway.json`` and
-    so reported deejaytools-com, whose descriptor is a railway.toml, for
-    having no restart policy at all. Which file the policy lives in was
-    never the rule's question.
+    The descriptor is any of ``railway.json``, ``railway.toml`` or
+    Infrastructure as Code in ``.railway/``. Railway stops reading the
+    first two on 2026-12-01, and a repository that migrated used to fail
+    here as having no restart policy at all; which file the policy lives
+    in was never the rule's question. A repository holding both is part
+    way through that migration, and ``.railway/`` is what it is moving
+    to, so that is what is read.
     """
+    iac, code = _read_iac(repo_path)
+    if iac is not None:
+        return _check_cd_017_iac(repo_path, iac, code)
+
     CHECK_ID = "CD-017"
     findings: list[Finding] = []
 
-    search_roots: list[Path] = [repo_path]
-
-    target: Path | None = None
-    data: dict[str, Any] | None = None
-    error: str | None = None
-    found_root: Path = repo_path
-    for root in search_roots:
-        candidate, candidate_data, candidate_error = _load_platform_descriptor(root)
-        if candidate is not None:
-            target, data, error = candidate, candidate_data, candidate_error
-            found_root = root
-            break
+    target, data, error = _load_platform_descriptor(repo_path)
 
     if target is None:
-        looked_in = ", ".join(_rel(r / "railway.json", repo_path) for r in search_roots)
         findings.append(
             _finding(
                 CHECK_ID,
                 "ERROR",
                 _DIMENSION,
-                f"No railway.json or railway.toml found (looked at: "
-                f"{looked_in}) — the restart policy is therefore "
-                f"dashboard-owned and not version-controlled.",
-                "Commit a railway.json (or railway.toml) with a deploy block "
-                'setting restartPolicyType to "ON_FAILURE", '
-                "restartPolicyMaxRetries to at least 10, and an explicit "
-                "startCommand.",
+                "No railway.json or railway.toml found, and no "
+                ".railway/railway.{ts,py,go} — the restart policy is "
+                "therefore dashboard-owned and not version-controlled.",
+                "Declare the service in .railway/railway.ts (Railway stops "
+                "reading railway.json on 2026-12-01) with restartPolicyType "
+                '"ON_FAILURE", restartPolicyMaxRetries of at least 10, and an '
+                "explicit start command.",
             )
         )
         return findings
 
-    # Relative to the root it was actually found under.
-    rel = _rel(target, found_root)
+    rel = _rel(target, repo_path)
     if data is None:
         findings.append(
             _finding(
@@ -333,7 +423,11 @@ def check_cd_017(repo_path: Path) -> list[Finding]:
         )
 
     start_command = deploy.get("startCommand")
-    if not isinstance(start_command, str) or not start_command.strip():
+    has_start = isinstance(start_command, str) and bool(start_command.strip())
+    build = data.get("build")
+    builder = build.get("builder") if isinstance(build, dict) else None
+    selects_dockerfile = isinstance(builder, str) and builder.upper() == "DOCKERFILE"
+    if not has_start and not (selects_dockerfile and _dockerfile_sets_start(repo_path)):
         shown = "missing" if "startCommand" not in deploy else repr(start_command)
         findings.append(
             _finding(
@@ -343,33 +437,93 @@ def check_cd_017(repo_path: Path) -> list[Finding]:
                 f"{rel}: deploy.startCommand is {shown} — the effective start "
                 f"command is left dashboard-owned, which defeats the purpose of "
                 f"committing railway.json.",
-                "Add an explicit deploy.startCommand to railway.json so the "
-                "process the service runs is defined in version control.",
+                "Add an explicit deploy.startCommand to railway.json, or a CMD "
+                "to the root Dockerfile it selects, so the process the service "
+                "runs is defined in version control.",
             )
         )
 
     return findings
 
 
-#: Railway Infrastructure-as-Code authoring files, one of which a repository
-#: keeps. Only TypeScript is generally available; Python and Go are beta.
-_RAILWAY_IAC_FILES = ("railway.ts", "railway.py", "railway.go")
+def _check_cd_017_iac(repo_path: Path, iac: Path, code: str | None) -> list[Finding]:
+    """CD-017 read from ``.railway/railway.{ts,py,go}``.
 
-#: ``builder: "DOCKERFILE"`` in TypeScript or Go, ``builder="DOCKERFILE"`` in
-#: Python. The file is code and is not evaluated here, so this reads the one
-#: setting the rule asks about rather than the whole graph.
-_IAC_DOCKERFILE_BUILDER = re.compile(
-    r"""["']?builder["']?\s*[:=]\s*["']DOCKERFILE["']"""
-)
+    The file is code and is not evaluated: the settings are matched as
+    text, as CD-021 matches the builder. One file may declare several
+    services, so every restart policy it states must be ``ON_FAILURE``
+    and every retry count at least 10 — a single compliant service does
+    not cover a sibling left on ``NEVER``. A retry count that is not a
+    literal integer (a constant, an expression) cannot be read and is
+    reported as such rather than guessed at.
+    """
+    CHECK_ID = "CD-017"
+    findings: list[Finding] = []
+    rel = _rel(iac, repo_path)
 
+    if code is None:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                _DIMENSION,
+                f"{rel} could not be read — the restart policy cannot be verified.",
+                f"Make {rel} readable UTF-8 text so its deploy settings can be "
+                f"checked.",
+            )
+        )
+        return findings
 
-def _railway_iac_file(repo_path: Path) -> Path | None:
-    """The repository's ``.railway/railway.{ts,py,go}``, if it has one."""
-    for name in _RAILWAY_IAC_FILES:
-        candidate = repo_path / ".railway" / name
-        if candidate.is_file():
-            return candidate
-    return None
+    policies = _IAC_RESTART_POLICY.findall(code)
+    wrong = sorted({p for p in policies if p != "ON_FAILURE"})
+    if not policies or wrong:
+        shown = "not set" if not policies else ", ".join(repr(p) for p in wrong)
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                _DIMENSION,
+                f'{rel}: restartPolicyType is {shown}, expected "ON_FAILURE".',
+                f'Set restartPolicyType: "ON_FAILURE" in the deploy block of '
+                f"every service in {rel} so transient faults restart but a "
+                f"crash loop stays visible.",
+            )
+        )
+
+    retries = _IAC_MAX_RETRIES.findall(code)
+    low = sorted({r for r in retries if not r.isdigit() or int(r) < 10})
+    if not retries or low:
+        shown = "not set" if not retries else ", ".join(low)
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                _DIMENSION,
+                f"{rel}: restartPolicyMaxRetries is {shown}, expected a literal "
+                f"integer of at least 10.",
+                f"Set restartPolicyMaxRetries to 10 or more, as a number, in "
+                f"the deploy block of every service in {rel}.",
+            )
+        )
+
+    has_start = any(cmd.strip() for _q, cmd in _IAC_START_COMMAND.findall(code))
+    selects_dockerfile = bool(_IAC_DOCKERFILE_BUILDER.search(code))
+    if not has_start and not (selects_dockerfile and _dockerfile_sets_start(repo_path)):
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                _DIMENSION,
+                f"{rel} declares no start command, and no CMD in a root "
+                f"Dockerfile it selects — the effective start command is left "
+                f"dashboard-owned.",
+                f"Declare startCommand in {rel}, or select the root Dockerfile "
+                f'(builder: "DOCKERFILE") and give its final stage a CMD — '
+                f"one of the two, not both.",
+            )
+        )
+
+    return findings
 
 
 def check_cd_021(repo_path: Path) -> list[Finding]:
@@ -659,6 +813,12 @@ def check_cd_024(
     value anywhere in the descriptor, satisfies the rule; the check is
     that a ceiling is stated at all.
 
+    The descriptor may be Infrastructure as Code in ``.railway/``, which
+    replaces ``railway.json`` / ``railway.toml`` from 2026-12-01 and is
+    preferred when both exist. It is code, so the limits are matched as
+    text — any setting naming memory, and any naming CPU, with a value
+    that is not null — rather than evaluated.
+
     Unlike CD-022 and CD-023, a missing descriptor is a failure here
     rather than a silent skip: the catalog notes say so explicitly, and
     a service with no platform descriptor has by definition declared no
@@ -673,6 +833,29 @@ def check_cd_024(
     CHECK_ID = "CD-024"
     findings: list[Finding] = []
 
+    iac, code = _read_iac(repo_path)
+    if iac is not None:
+        rel = _rel(iac, repo_path)
+        stated = {
+            "memory": code is not None and bool(_IAC_MEMORY_LIMIT.search(code)),
+            "CPU": code is not None and bool(_IAC_CPU_LIMIT.search(code)),
+        }
+        for kind, ok in stated.items():
+            if not ok:
+                findings.append(
+                    _finding(
+                        CHECK_ID,
+                        "WARN",
+                        _DIMENSION,
+                        f"{rel} declares no {kind} limit — no setting naming a "
+                        f"{kind} ceiling is present, or its value is null.",
+                        f"Declare the ceiling in {rel}: deploy.limitOverride."
+                        f"containers.{'memoryBytes' if kind == 'memory' else 'cpu'}"
+                        f" on each service.",
+                    )
+                )
+        return findings
+
     descriptor, data, error = _load_platform_descriptor(repo_path)
 
     if descriptor is None:
@@ -681,10 +864,11 @@ def check_cd_024(
                 CHECK_ID,
                 "WARN",
                 _DIMENSION,
-                "No railway.json or railway.toml at the repository root, so "
-                "this service declares no memory or CPU ceiling.",
-                "Add a railway.json (or railway.toml) at the repository root "
-                "declaring explicit memory and CPU limits for the service.",
+                "No railway.json or railway.toml at the repository root, and "
+                "no .railway/railway.{ts,py,go}, so this service declares no "
+                "memory or CPU ceiling.",
+                "Declare the service in .railway/railway.ts with "
+                "deploy.limitOverride.containers.cpu and memoryBytes set.",
             )
         )
         return findings
