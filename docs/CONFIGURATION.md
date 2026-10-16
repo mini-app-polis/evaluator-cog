@@ -51,8 +51,9 @@ KAIANO_API_BASE_URL_DEV=
 ## EVALUATOR_COG_API_KEY
 
 This cog's own named API key, matching the machine name it declares to
-`KaianoApiClient`. There is no fallback — unset or wrong means 401 on every
-call to the API. See ecosystem-standards CD-019.
+`KaianoApiClient`. Unset, the shared client falls back to the generic
+`KAIANO_API_KEY`; with neither, every call to the API fails, and a wrong key
+is a 401. See ecosystem-standards CD-019.
 
 ```
 EVALUATOR_COG_API_KEY=YOUR_EVALUATOR_COG_API_KEY
@@ -85,17 +86,6 @@ Required for the conformance flow to download private repos as zipballs.
 
 ```
 GITHUB_TOKEN=your-github-token
-```
-
-## HEALTHCHECKS_URL_EVALUATOR
-
-Healthchecks.io ping URL for Layer 1 observability. Pinged at the end of a
-fleet pass — specifically by `run_introspection`, which is the once-per-pass
-job. It is a ping and not a check: what it reports is that a pass reached
-its end, and Healthchecks.io watches for its *absence*.
-
-```
-HEALTHCHECKS_URL_EVALUATOR=https://hc-ping.com/your-uuid
 ```
 
 ## ENVIRONMENT
@@ -132,3 +122,7 @@ replaced by the queue, and a service with no listener needs no guard on it.
 
 **`PREFECT_API_KEY` / `PREFECT_API_URL`** — evaluator-cog does not run under
 Prefect (ADR-0004) and no longer depends on it in any form.
+
+**`HEALTHCHECKS_URL_EVALUATOR`** — there is no Healthchecks.io check for the
+evaluator. The ping code that read this was removed rather than left pinging
+nothing.

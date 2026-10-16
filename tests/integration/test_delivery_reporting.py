@@ -10,8 +10,7 @@ the process. Every instrument said the run was healthy —
   - the flow logged "EVAL-003: posted 1 findings" and two more like it,
     because that line reported len(findings_handed_over) rather than
     what the API accepted;
-  - the flow finished Completed, so no failure hook fired and
-    _on_completion pinged Healthchecks.io green.
+  - the flow finished Completed, so no failure hook fired.
 
 Three independent signals reporting success during a total delivery
 failure. These tests pin the corrected behaviour.

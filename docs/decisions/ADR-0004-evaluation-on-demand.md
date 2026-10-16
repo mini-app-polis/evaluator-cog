@@ -6,6 +6,19 @@ Date: 2026-09-13
 
 Accepted. Supersedes [0001](./ADR-0001-parameterized-single-conformance-flow.md).
 
+**Superseded in part (2026-09).** The decision stands: `handler(event)` is the
+unit of work, evaluation is triggered by releases rather than a schedule, and
+`mode` travels on the event. The transport described below does not.
+`POST /invoke`, `POST /sweep` and `railway.json` were replaced by an SQS queue
+and a Lambda worker: api-kaianolevine-com enqueues one repository via
+`POST /v1/evaluations/runs` and fans a fleet pass out via
+`POST /v1/evaluations/fleet`, and the checks scoped to no repository run as
+their own `run_introspection()` job rather than at the tail of a sweep. The
+`threading.Lock` and module state under Consequences became a per-run
+`RunContext`. See [aws-foundation.md](../aws-foundation.md) and
+[serverless-migration.md](../serverless-migration.md); no separate ADR records
+the queue decision. The body below is left as written.
+
 ## Context
 
 evaluator-cog ran as a single Prefect deployment on a daily cron, and that

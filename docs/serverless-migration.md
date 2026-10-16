@@ -1,5 +1,13 @@
 # Make evaluation reliable under burst, and able to idle at zero
 
+> **Historical journal.** This is the working record of the migration as it
+> happened, kept for its reasoning. It is not maintained as current
+> documentation: file paths and Terraform references predate the move of the
+> AWS resources into mini-app-polis/infra, and mechanisms it describes (the
+> Railway consumer, Prefect, the evaluator's Healthchecks ping) have since
+> been removed. For the current shape see the [README](../README.md) and
+> [aws-foundation.md](aws-foundation.md).
+
 **Goal:** give conformance evaluation durable retries and real concurrency, and
 let the fleet's services stop holding memory while doing nothing.
 

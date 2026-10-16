@@ -12,8 +12,7 @@ traits:
 # behind an SQS queue: api-kaianolevine-com puts a message on the queue when
 # a repository releases, and fans out one message per repository plus one for
 # the fleet-scoped checks when the standards catalog or the evaluator itself
-# releases. The event source mapping invokes the function. pipeline_eval.py
-# remains a library module called in-process by other cogs.
+# releases. The event source mapping invokes the function.
 #
 # That is what pipeline-cog means now (ecosystem-standards ADR-009), so the
 # Prefect-era exemptions this file used to carry are gone with the rules

@@ -37,9 +37,9 @@ class PostResult:
     ``post_findings`` used to compute this, log one line of it, and throw
     it away. On 2026-09-03 that cost two full conformance runs: the
     evaluator computed ~162 findings across 13 repos, every POST failed
-    before leaving the process, and the flow still finished Completed and
-    pinged Healthchecks green — because a swallowed failure is
-    indistinguishable from success to every caller.
+    before leaving the process, and the flow still finished Completed —
+    because a swallowed failure is indistinguishable from success to
+    every caller.
 
     Returning the outcome is what lets the flow tell the difference. The
     load-bearing property is :attr:`total_failure`: attempted work that

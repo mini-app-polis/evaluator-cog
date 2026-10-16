@@ -35,5 +35,3 @@ def _production_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     non-production path set ENVIRONMENT themselves.
     """
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.delenv("PREFECT_TRIGGER_ENABLED", raising=False)
-    monkeypatch.delenv("HEALTHCHECKS_ENABLED", raising=False)
