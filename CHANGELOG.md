@@ -1,3 +1,12 @@
+## [3.58.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.58.0...v3.58.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **deadline:** stop shared-library retries short of the Lambda deadline ([6d34986](https://github.com/mini-app-polis/evaluator-cog/commit/6d3498604ec28936396bc1de7fe45818b29bc613))
+* **deps:** bump miniapppolis-common-utils to 6.1.0 ([3344d6d](https://github.com/mini-app-polis/evaluator-cog/commit/3344d6df15bc2003c30c30d80a3009bea231b97b))
+* **deps:** bump miniapppolis-common-utils to 6.1.1 ([182359e](https://github.com/mini-app-polis/evaluator-cog/commit/182359e3f1919de8df478040e946597138fdfc85))
+
 # [3.58.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.57.4...v3.58.0) (2026-10-16)
 
 
