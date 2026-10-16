@@ -38,8 +38,8 @@ CheckMode = Literal["deterministic", "llm"]
 _MARKER_RE = re.compile(r"^\s*(DETERMINISTIC|LLM)\s+CHECK\s*\.", re.IGNORECASE)
 
 # Rules we've already warned about in this process — prevents log spam
-# when the same rule appears in multiple flow invocations within one
-# Prefect worker process.
+# when the same rule appears in multiple invocations within one
+# worker process.
 _warned_once: set[str] = set()
 
 

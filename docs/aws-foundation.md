@@ -1,8 +1,8 @@
 # The AWS foundation: one queue, one function
 
-**Status: built and proven, bar the CI deploy path.** The implementation is
-`infra/` and the runbook is [infra/README.md](../infra/README.md); this document
-is the decision record and the remaining work. Anything operational —  how to
+**Status: built and proven.** The implementation now lives in
+mini-app-polis/infra (`cogs.tf`, `modules/cog-worker`) and the runbook is that
+repository's README; this document is the decision record. Anything operational —  how to
 apply, how to test the DLQ, what to hand step 2 — lives in that README rather
 than being repeated here.
 
@@ -22,10 +22,8 @@ follow-up.
 
 **Terraform from the start, not click-ops.** Click-ops is defensible for two
 resources and stops being defensible at five cogs, and a console setup called
-temporary becomes permanent by default. State is local: CI needs none, so the
-only consumer is one workstation, and an S3 backend would buy a bootstrap
-chicken-and-egg for little. The cost is real — lose the state file and these
-resources are orphaned and must be re-imported by hand.
+temporary becomes permanent by default. State started local; it
+now lives in an S3 backend in mini-app-polis/infra (`backend.tf`).
 
 **Terraform owns configuration; CI owns code.** The deploy role can call
 `UpdateFunctionCode` and `GetFunction` and nothing else, so a compromised
@@ -60,27 +58,26 @@ Two things were verified rather than assumed:
   300-second function timeout and the visibility timeout derived from it; it is
   the lever if failures should escalate faster.
 
-## What is left
+## What was left
 
-**The CI deploy path.** `.github/workflows/deploy-worker.yml` exists but GitHub
-will not dispatch a `workflow_dispatch` workflow until it is on the default
-branch. Once it is: set `AWS_DEPLOY_ROLE_ARN`, `AWS_REGION` and
-`AWS_FUNCTION_NAME` as repository *variables* (not secrets — none of them are
-secret), then run the workflow by hand. It fails if the checksum AWS reports is
-not the artifact that run built, so a green run is evidence rather than an
-assumption.
+**The CI deploy path** is done. The `deploy` job in `ci.yml` calls the shared
+`lambda-deploy.yml` on each release tag, reading `AWS_DEPLOY_ROLE_ARN`,
+`AWS_REGION` and `AWS_FUNCTION_NAME` from repository *variables*. It fails if
+the checksum AWS reports is not the artifact that run built, so a green run is
+evidence rather than an assumption.
 
-**Raise the Lambda concurrency quota** before reserved concurrency can be set at
-all. A new account is far below the 100 unreserved executions AWS requires to be
-left over, so any positive value fails at apply time with a message that does
-not sound like a quota. Until then the account limit is itself the throttle.
+**The Lambda concurrency quota** has been raised: reserved concurrency could
+not be set at all while a new account was below the 100 unreserved executions
+AWS requires to be left over. deejay and transcription now set
+`reserved_concurrency = 1` in mini-app-polis/infra `cogs.tf`; the evaluator
+is limited by `max_concurrency` on its event source mapping instead.
 
 ## Non-goals
 
 - No Step Functions, no fan-in coordinator, no EventBridge.
 - Not the other four cogs. This is one queue and one function; generalising to
-  the fleet is what happens after the pilot proves the shape. `infra/account.tf`
-  is the account-level part that does not repeat.
+  the fleet is what happens after the pilot proves the shape. `account.tf`
+  in mini-app-polis/infra is the account-level part that does not repeat.
 - Not a migration of anything off Railway. The API and Postgres stay.
 
 ## Settled

@@ -7,7 +7,6 @@ import re
 import time
 from collections.abc import Collection
 from contextlib import suppress
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -367,96 +366,6 @@ def _parse_findings_from_claude(text: str) -> tuple[list[dict[str, Any]], bool]:
         if isinstance(item, dict):
             validated.append(item)
     return [_normalize_finding(item) for item in validated], False
-
-
-def _build_prompt_csv(
-    *,
-    run_id: str,
-    standards_version: str,
-    sets_imported: int,
-    sets_failed: int,
-    sets_skipped: int,
-    total_tracks: int,
-    failed_set_labels: list[str],
-    api_ingest_success: bool,
-    sets_attempted: int,
-    unrecognized_filename_skips: int,
-    duplicate_csv_count: int,
-) -> str:
-    """Build the LLM evaluation prompt for a CSV processing pipeline run.
-
-    Returns a prompt string instructing Claude to emit a JSON findings payload
-    assessing the run against pipeline_consistency standards.
-    """
-    failed_labels = ", ".join(failed_set_labels) if failed_set_labels else "(none)"
-    return f"""You are evaluating a DJ set CSV processing pipeline run against engineering standards v{standards_version}.
-
-CSV PROCESSING evaluation context:
-- GitHub Actions run_id: {run_id}
-- sets_attempted: CSV files encountered for processing ({sets_attempted})
-- sets_imported: successfully processed CSVs (uploaded as Google Sheet, moved to archive) ({sets_imported})
-- sets_failed: CSVs renamed with FAILED_ prefix ({sets_failed})
-- sets_skipped: non-CSV files moved out of the source folder ({sets_skipped})
-- unrecognized_filename_skips: files skipped due to filename format ({unrecognized_filename_skips})
-- possible_duplicate_csv: CSVs renamed as possible_duplicate_ and not uploaded ({duplicate_csv_count})
-- total_tracks: total track rows across successfully processed sets ({total_tracks})
-- failed_set_labels: {failed_labels}
-- api_ingest_success: all API ingest attempts succeeded, or none were required ({api_ingest_success})
-
-Respond with ONLY valid JSON (no markdown) in this exact shape:
-{{"findings":[{{"dimension":"pipeline_consistency","severity":"INFO|WARN|ERROR","finding":"...","suggestion":""}}]}}
-
-Rules:
-- severity must be INFO, WARN, or ERROR (uppercase).
-- dimension should be pipeline_consistency unless a different dimension is clearly justified.
-- Cover gaps between counts (e.g. attempted vs imported vs failed vs duplicates).
-- If api_ingest_success is false, include at least one WARN or ERROR about API ingest.
-"""
-
-
-def _build_prompt_collection(
-    *,
-    run_id: str,
-    standards_version: str,
-    folders_processed: int,
-    tabs_written: int,
-    total_sets: int,
-    json_snapshot_written: bool,
-    folder_names: list[str],
-) -> str:
-    """Build the LLM evaluation prompt for a DJ set collection update pipeline run.
-
-    Returns a prompt string instructing Claude to emit a JSON findings payload
-    assessing the collection rebuild run against pipeline_consistency standards.
-    """
-    current_year = datetime.now().year
-    formatted_folder_names = ", ".join(folder_names) if folder_names else "(none)"
-    return f"""You are evaluating a DJ set COLLECTION UPDATE pipeline run against engineering standards v{standards_version}.
-
-COLLECTION_UPDATE evaluation context:
-- This run rebuilt the master DJ set collection spreadsheet and JSON snapshot.
-- No CSV processing happened in this run.
-- GitHub Actions run_id: {run_id}
-- folders_processed: {folders_processed}
-- tabs_written: {tabs_written}
-- total_sets: {total_sets}
-- json_snapshot_written: {json_snapshot_written}
-- folder_names: {formatted_folder_names}
-- current_year: {current_year}
-
-Evaluate collection update conformance using these rules:
-- If tabs_written == 0 and folders_processed > 0: emit WARN "No tabs written despite N folders processed"
-- If json_snapshot_written is False: emit ERROR "JSON snapshot write failed"
-- If folder_names does not include current_year: emit WARN "Current year folder missing"
-- If total_sets == 0 and folders_processed > 0: emit WARN "No sets found across any folder"
-- Otherwise: emit INFO confirming counts
-
-Respond with ONLY valid JSON (no markdown) in this exact shape:
-{{"findings":[{{"dimension":"pipeline_consistency","severity":"INFO|WARN|ERROR","finding":"...","suggestion":""}}]}}
-
-Rules:
-- severity must be INFO, WARN, or ERROR (uppercase).
-"""
 
 
 def _resolved_rule_ids(

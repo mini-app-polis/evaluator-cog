@@ -16,11 +16,8 @@ An AWS Lambda behind an SQS queue, two engine modules:
 - `evaluator_cog.flows.conformance` — `handler(event)` is the unit of work: one
   repository, downloaded as a **zipball** from GitHub and run through the
   deterministic and/or LLM checks. `run_introspection()` is the rest of a fleet
-  pass — the six checks that grade the inventory, the stored findings and the
+  pass — the four checks that grade the inventory, the stored findings and the
   catalog itself, which no repository owns
-- `evaluator_cog.flows.pipeline_eval` — post-run behavioral evaluation; calls
-  Claude, posts findings. A library module called in-process by other cogs,
-  not a served deployment
 - `evaluator_cog.engine.deterministic` — file/AST/YAML rule checks (100+ rules)
 - `evaluator_cog.engine.llm` — soft rule assessment, prompt builders, response parsing
 
@@ -40,11 +37,13 @@ Rules arrive as a compiled catalog from `GET /v1/standards/catalog`. This repo d
 not check out ecosystem-standards.
 
 Findings are written to the `pipeline_evaluations` table via
-`api-kaianolevine-com` with `source=flow_inline` (run reports),
-`source=conformance_deterministic` / `conformance_check` (findings),
-`source=data_quality` and `source=standards_drift` (the fleet-scoped checks).
-`source=prefect_webhook` and `source=flow_hook` are legacy values on existing
-rows; nothing writes them here any more.
+`api-kaianolevine-com` with `source=conformance_deterministic` /
+`conformance_llm` (findings; an LLM-mode service that could not be evaluated
+is posted as `conformance_check`), `source=data_quality` and
+`source=standards_drift` (the fleet-scoped checks). Run reports are not
+findings: they go to `POST /v1/notify` and are not stored.
+`source=flow_inline`, `source=prefect_webhook` and `source=flow_hook` are
+legacy values on existing rows; nothing writes them here any more.
 
 ## Standards coverage
 
@@ -71,27 +70,18 @@ via the `applies_to` list in each rule's catalog entry.
 - **File/YAML scans** (majority): pyproject.toml, package.json, .github/workflows/*.yml,
   .env.example, CHANGELOG.md, and similar presence/content checks.
 - **AST scans** (Python source): route decorators, Pydantic models, SQLAlchemy
-  models, Settings class field parity, Prefect flow/task decorators, public
-  docstring coverage.
+  models, Settings class field parity, public docstring coverage.
 - **Astro parsing**: `.astro` frontmatter/script-region splitting for FE-006, FE-009, FE-010.
 
 Zipball downloads do not include `.git/` history, so rules that require git log
 or tags are not run in evaluator-cog today (see **Not yet implemented**).
 
-**Registered under rule IDs the catalog no longer contains** — these emit findings
-against rules that do not exist and must be removed:
-
-| Orphaned check | Note |
-|---|---|
-| CD-012 | Retired 2026-09 (ADR-008). The check also gives inverted advice — it tells repos to acquire Clerk M2M JWTs and replace static keys, which is now backwards |
-| AUTH-001 | Retired 2026-09 (ADR-008), superseded by AUTH-003 |
-| TEST-GAP-001 | Pre-existing. Not in the current catalog |
-
 **Implemented, and where they run.** EVAL-003, EVAL-007, XSTACK-006 and
 XSTACK-008 carry `applies_to: None` — they grade the inventory,
 the stored findings and the catalog rather than any repository's source, so no
 per-repository job owns them. They run in `run_introspection()`, once per fleet
-pass, asked for by `POST /v1/evaluations/introspection`. Their findings are
+pass, enqueued by `POST /v1/evaluations/fleet` (or on its own by
+`POST /v1/evaluations/introspection`). Their findings are
 filed against whoever has to act: EVAL-003 under evaluator-cog (it grades the
 evaluator's own output), the rest under ecosystem-standards. XSTACK-007
 (shared-library pins) is a per-repo check: the stale pin is the consuming
@@ -110,12 +100,8 @@ jobs each clone a repository.
 | VER-001 | Need git history (conventional commits on last 20) — requires full clone |
 | VER-002 | Need git history (BREAKING CHANGE on major tags) — requires full clone |
 | PRIN-008 | Need git history (fix commits touch tests) — requires full clone |
-| AUTH-003 | Replaces retired AUTH-001. Needs route enumeration by registration call (decorators plus `add_api_route`), not by literal path |
-| AUTH-004 | New. Needs to verify the guard delegates to `identity.policy` and audits both branches |
-| CD-019 | Replaces retired CD-012. The existing CD-012 check gives inverted advice and must be removed, not adapted |
-| CD-020 | New. Needs `.releaserc.json` parsing, `uv lock --check`, and a pyproject `dependencies` vs `[tool.uv.sources]` comparison |
 | CD-004 | Needs GitHub API (verify pinned action tags exist); rate-limited |
-| EVAL-002, EVAL-006 | Need runtime SQL queries against `pipeline_evaluations` table |
+| EVAL-002 (table half), EVAL-006 | Need runtime SQL queries against `pipeline_evaluations` table. EVAL-002's source scan for hardcoded versions does run |
 
 **LLM-routed rules** (catalog-marked `LLM CHECK.`): META-004, PIPE-013, PIPE-014,
 PIPE-015, PRIN-010, XSTACK-005. These pass through the routing layer in
@@ -195,9 +181,6 @@ assessment.
 `evaluation.repository` names a repository and the services it carries, from
 which the source is downloaded from GitHub as a zipball;
 `evaluation.introspection` asks for the checks that belong to no repository.
-Separately, pipeline run metrics (sets imported, failed, skipped, track counts)
-passed directly from calling cogs via `evaluate_pipeline_run()` — a library
-call, not a message.
 
 **Outputs:** Structured findings written to the `pipeline_evaluations` table
 via `POST /v1/evaluations` on api-kaianolevine-com. Each finding includes
@@ -224,46 +207,6 @@ uv run check-doppler-keys                  # every required .env.example name is
 ```
 
 Anything that needs secrets runs under `doppler run -- …`.
-
-## Wiring into a Prefect flow
-
-For **other** cogs. evaluator-cog itself no longer runs under Prefect
-(ADR-0004); this is how a Prefect-managed cog reports its own run to
-`pipeline_eval`, which is unchanged.
-
-```python
-from evaluator_cog.flows.pipeline_eval import evaluate_pipeline_run
-
-# At the end of your flow:
-evaluate_pipeline_run(
-    run_id=os.environ.get("GITHUB_RUN_ID", "local-run"),
-    repo="your-repo-name",
-    ...
-)
-
-# For crash/failure detection, add hooks to your @flow decorator:
-def _handle_flow_failure(flow, flow_run, state) -> None:
-    evaluate_pipeline_run(
-        run_id=str(flow_run.id),
-        repo="your-repo-name",
-        direct_finding_text=f"Flow entered {state.name} unexpectedly",
-        direct_severity="ERROR" if "crash" in state.name.lower() else "WARN",
-        ...
-    )
-
-@flow(
-    name="your-flow-name",
-    on_failure=[_handle_flow_failure],
-    on_crashed=[_handle_flow_failure],
-)
-def your_flow():
-    ...
-```
-
-## Prefect automation setup
-
-See `docs/PREFECT_AUTOMATION.md` for setting up the Prefect Cloud automation
-that triggers evaluation on FAILED and CRASHED state changes.
 
 ## Versioning
 

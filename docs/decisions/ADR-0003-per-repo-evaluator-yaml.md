@@ -6,6 +6,13 @@ Date: 2026-04-10
 
 Accepted
 
+**Note (2026-10).** The decision stands; two details under Consequences are
+dated. This repo's `evaluator.yaml` no longer carries the PIPE-006, PIPE-002
+or CD-012 deferrals it cites, and `ecosystem.yaml` no longer records monorepo
+membership — the ecosystem has no monorepo (see
+[0002](./ADR-0002-monorepo-sibling-finding-deduplication.md)). The body below
+is left as written.
+
 ## Context
 
 Early versions of ecosystem-standards used a single central `ecosystem.yaml`

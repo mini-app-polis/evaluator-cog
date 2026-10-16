@@ -35,7 +35,7 @@ What becomes easier or more difficult to do because of this change?
 
 ## Index
 
-- [0001. Parameterized single conformance flow instead of two deployments](./ADR-0001-parameterized-single-conformance-flow.md)
+- [0001. Parameterized single conformance flow instead of two deployments](./ADR-0001-parameterized-single-conformance-flow.md) — superseded
 - [0002. Deduplicate findings across monorepo sibling apps](./ADR-0002-monorepo-sibling-finding-deduplication.md) — superseded
 - [0003. Per-repo evaluator.yaml for exemptions, deferrals, and type scoping](./ADR-0003-per-repo-evaluator-yaml.md)
-- [0004. Evaluation on demand, behind an HTTP handler](./ADR-0004-evaluation-on-demand.md)
+- [0004. Evaluation on demand, behind an HTTP handler](./ADR-0004-evaluation-on-demand.md) — superseded in part (transport is now SQS + Lambda)

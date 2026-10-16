@@ -194,7 +194,7 @@ def process_message(body: str) -> None:
         run_introspection(
             run_id=run_id,
             # The fan-out pass to grade. Only XSTACK-008 reads it, and it
-            # is optional on purpose: the other five checks grade the
+            # is optional on purpose: the other three checks grade the
             # registry, the catalog and the stored findings, none of which
             # belong to a pass.
             pass_run_id=str(payload.get("pass_run_id") or ""),
@@ -267,7 +267,7 @@ def _report_introspection(*, ctx: RunContext) -> None:
 
     Notable whatever the tally, matching the per-repository report and for
     the same reason: something asked for this run and is waiting to hear
-    it happened. These six checks are the ones nobody would notice had
+    it happened. These four checks are the ones nobody would notice had
     stopped — they grade the inventory and the table rather than any
     repository, so no release goes red when they quietly do nothing.
     """

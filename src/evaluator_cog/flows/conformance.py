@@ -6,7 +6,7 @@ through the API; a whole-fleet pass is N of them, dispatched by the API
 from the registry. It does not know which of those it is serving, and
 that is the point.
 
-``run_introspection()`` is the rest of a fleet pass: the six checks that
+``run_introspection()`` is the rest of a fleet pass: the four checks that
 carry ``applies_to: None`` and grade the inventory, the stored findings
 and the catalog itself. No repository owns them, so they get their own
 job.
@@ -30,10 +30,10 @@ mode='llm':
   Posts findings with source='conformance_llm'.
   run_id prefix: 'conformance-{version}-{uuid}'
 
-The sweep additionally runs the applies_to-absent checks once per pass:
+``run_introspection()`` runs the applies_to-absent checks once per pass:
   EVAL-003 posts with source='data_quality' (runtime data-quality on
   stored findings).
-  EVAL-007 posts with source='standards_drift' (catalog vs evaluator).
+  EVAL-007, XSTACK-006 and XSTACK-008 post with source='standards_drift'.
 These have no repository to attach to, so a per-repository invoke is not
 a place they could run.
 """
@@ -49,7 +49,6 @@ import time
 import uuid
 import zipfile
 from collections.abc import Callable
-from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -206,10 +205,10 @@ class RunContext:
     #: systemic fault — no route, no credential, no service — not N
     #: unlucky findings, and it must fail the run rather than log a
     #: warning. Before this, the 2026-09-03 runs computed ~162 findings
-    #: across 13 repos, posted zero, and still finished Completed with a
-    #: green Healthchecks ping, because ``post_findings`` swallowed every
-    #: error and the "posted N findings" log line reported the length of
-    #: the list handed over rather than what the API accepted.
+    #: across 13 repos, posted zero, and still finished Completed, because
+    #: ``post_findings`` swallowed every error and the "posted N findings"
+    #: log line reported the length of the list handed over rather than
+    #: what the API accepted.
     tally: PostResult = field(default_factory=PostResult)
 
     #: Coverage, as opposed to delivery. :attr:`tally` answers "did the
@@ -343,11 +342,10 @@ class FindingDeliveryError(RuntimeError):
 def _assert_findings_were_delivered(prefect_log: Any, *, ctx: RunContext) -> None:
     """Fail the run when nothing reached the API.
 
-    Raising is the point. The caller stops before pinging Healthchecks.io,
-    and the adapter reports an ERROR to the notification channel — so a run
-    that delivered nothing cannot read as a healthy one from outside. A
-    partial failure has already been warned about per emitter and does not
-    fail the run.
+    Raising is the point. The adapter reports an ERROR to the notification
+    channel — so a run that delivered nothing cannot read as a healthy one
+    from outside. A partial failure has already been warned about per
+    emitter and does not fail the run.
     """
     if not ctx.tally.total_failure:
         return
@@ -357,30 +355,6 @@ def _assert_findings_were_delivered(prefect_log: Any, *, ctx: RunContext) -> Non
         f"not. Check KAIANO_API_BASE_URL and EVALUATOR_COG_API_KEY on "
         f"this service. Last error: {ctx.tally.last_error}"
     )
-
-
-def _ping_healthcheck() -> None:
-    """Tell Healthchecks.io a fleet pass finished clean. Never raises.
-
-    Called at the tail of :func:`run_introspection`, which is the
-    once-per-pass job now that the sweep is gone. It was the sweep's tail
-    before that, and a Prefect ``on_completion`` hook before that — which
-    is why it is a ping and not a check: the fact being reported is that a
-    pass reached its end, and a per-repository job is not that fact.
-
-    Moving it mattered. Healthchecks.io watches for *absence*, so deleting
-    the sweep without rehoming this would have stopped the pings and fired
-    the check — reporting the evaluator dead at the moment it started
-    working properly.
-    """
-    import urllib.request
-
-    url = os.getenv("HEALTHCHECKS_URL_EVALUATOR", "").strip()
-    if not url:
-        return
-    with suppress(Exception):
-        _timeout = int(os.environ.get("EVALUATOR_HEALTHCHECK_TIMEOUT_SECONDS", "10"))
-        urllib.request.urlopen(url, timeout=_timeout)
 
 
 def _fetch_yaml(url: str) -> dict:
@@ -1891,7 +1865,7 @@ def run_introspection(
     own message, dispatched deliberately rather than on a schedule.
 
     ``pass_run_id`` names the fan-out pass to grade, and only XSTACK-008
-    uses it. Omitted, five of the six checks still run correctly against
+    uses it. Omitted, the other three checks still run correctly against
     the registry, the catalog and the stored findings; XSTACK-008 reports
     nothing, which is indistinguishable from every repository resolving.
     Pass it whenever there is a pass to name.
@@ -1938,18 +1912,13 @@ def run_introspection(
         ctx.report.ok(completed)
         if completed < _APPLIES_TO_ABSENT_CHECKS:
             # A check that raised was logged and skipped, and the run went
-            # on. Said here as well, because "five of six ran" and "six ran
+            # on. Said here as well, because "three of four ran" and "four ran
             # and found nothing" are the same silence from outside.
             ctx.report.issue(
                 "check_failed",
                 f"{_APPLIES_TO_ABSENT_CHECKS - completed} of "
                 f"{_APPLIES_TO_ABSENT_CHECKS} did not complete",
             )
-
-    # Before the report, matching what the sweep did: the ping says the
-    # pass reached its end, and it should not depend on a notification
-    # channel being reachable.
-    _ping_healthcheck()
 
     log.info(
         "introspection: complete — %d of %d checks, %d findings offered, "
