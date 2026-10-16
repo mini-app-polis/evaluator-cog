@@ -1,3 +1,10 @@
+## [3.57.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.57.0...v3.57.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **standards:** API-001 reads .railway/ infrastructure as code ([941be5b](https://github.com/mini-app-polis/evaluator-cog/commit/941be5b01437b02f48672da6887c99bfb6c969f0))
+
 # [3.57.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.56.1...v3.57.0) (2026-10-16)
 
 
