@@ -1,3 +1,10 @@
+# [3.57.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.56.1...v3.57.0) (2026-10-16)
+
+
+### Features
+
+* **standards:** CD-017 and CD-024 read .railway/ infrastructure as code ([68783c4](https://github.com/mini-app-polis/evaluator-cog/commit/68783c4a055e6acb158647820a2a00d40e9f8940))
+
 ## [3.56.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.56.0...v3.56.1) (2026-10-15)
 
 
