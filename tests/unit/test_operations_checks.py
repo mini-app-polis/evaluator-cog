@@ -195,6 +195,100 @@ def test_ops002_release_workflow_counts_as_a_migration_entry_point(
     assert check_ops_002(tmp_path) == []
 
 
+_MIGRATION_SCRIPT = (
+    "import os\n"
+    "\n"
+    "url = os.environ.get('DATABASE_URL_MIGRATIONS') or os.environ['DATABASE_URL']\n"
+)
+
+
+def test_ops002_dockerfile_cmd_counts_as_a_migration_entry_point(
+    tmp_path: Path,
+) -> None:
+    """MINI-78: the start command lives in the image's CMD, not railway.json."""
+    _write(tmp_path, "src/app/config.py", _TWO_SETTINGS)
+    _write(tmp_path, "scripts/apply_migrations.py", _MIGRATION_SCRIPT)
+    _write(
+        tmp_path,
+        "Dockerfile",
+        "FROM python:3.11-slim\n"
+        'CMD ["/bin/sh", "-c", "python scripts/apply_migrations.py '
+        '&& exec uvicorn app.main:app --port ${PORT:-8080}"]\n',
+    )
+    assert check_ops_002(tmp_path) == []
+
+
+def test_ops002_dockerfile_shell_form_cmd_counts(tmp_path: Path) -> None:
+    _write(tmp_path, "src/app/config.py", _TWO_SETTINGS)
+    _write(tmp_path, "scripts/apply_migrations.py", _MIGRATION_SCRIPT)
+    _write(
+        tmp_path,
+        "Dockerfile",
+        "FROM python:3.11-slim\n"
+        "CMD python scripts/apply_migrations.py && exec uvicorn app.main:app\n",
+    )
+    assert check_ops_002(tmp_path) == []
+
+
+def test_ops002_dockerfile_cmd_running_a_script_that_reads_neither_setting(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path, "src/app/config.py", _TWO_SETTINGS)
+    _write(tmp_path, "scripts/apply_migrations.py", "print('migrating')\n")
+    _write(
+        tmp_path,
+        "Dockerfile",
+        "FROM python:3.11-slim\n"
+        'CMD ["/bin/sh", "-c", "python scripts/apply_migrations.py && uvicorn x"]\n',
+    )
+    findings = check_ops_002(tmp_path)
+    assert len(findings) == 1
+    assert "No migration entry point references" in findings[0]["finding"]
+    assert "scripts/apply_migrations.py" in findings[0]["finding"]
+
+
+def test_ops002_only_the_final_dockerfile_stage_counts(tmp_path: Path) -> None:
+    """A CMD in a builder stage never runs, so it names no entry point."""
+    _write(tmp_path, "src/app/config.py", _TWO_SETTINGS)
+    _write(tmp_path, "scripts/apply_migrations.py", _MIGRATION_SCRIPT)
+    _write(
+        tmp_path,
+        "Dockerfile",
+        "FROM python:3.11 AS builder\n"
+        "CMD python scripts/apply_migrations.py\n"
+        "FROM python:3.11-slim\n"
+        'CMD ["uvicorn", "app.main:app"]\n',
+    )
+    findings = check_ops_002(tmp_path)
+    assert len(findings) == 1
+    assert "no migration entry point" in findings[0]["finding"]
+
+
+def test_ops002_railway_json_start_command_still_counts(tmp_path: Path) -> None:
+    _write(tmp_path, "src/app/config.py", _TWO_SETTINGS)
+    _write(tmp_path, "scripts/apply_migrations.py", _MIGRATION_SCRIPT)
+    _write(
+        tmp_path,
+        "railway.json",
+        '{"deploy": {"startCommand": '
+        '"python scripts/apply_migrations.py && uvicorn app.main:app"}}\n',
+    )
+    assert check_ops_002(tmp_path) == []
+
+
+def test_ops002_railway_iac_start_command_counts(tmp_path: Path) -> None:
+    _write(tmp_path, "src/app/config.py", _TWO_SETTINGS)
+    _write(tmp_path, "scripts/apply_migrations.py", _MIGRATION_SCRIPT)
+    _write(
+        tmp_path,
+        ".railway/railway.ts",
+        "export default defineRailway({\n"
+        '  deploy: { startCommand: "python scripts/apply_migrations.py && uvicorn x" },\n'
+        "});\n",
+    )
+    assert check_ops_002(tmp_path) == []
+
+
 # --- OPS-003 -----------------------------------------------------------------
 
 _GOOD_SLO = (
