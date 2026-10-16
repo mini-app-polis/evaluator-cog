@@ -201,12 +201,15 @@ def _reads_setting(tree: ast.AST, field: str) -> bool:
 
 
 # A fourth migration entry point shape, alongside the three check_notes
-# names. A service deployed from a platform descriptor runs its migration
-# step from that descriptor's start command — `python
-# scripts/apply_migrations.py && uvicorn ...` — and the script it names is
-# the migration entry point as surely as an alembic env.py is. Looking
-# only for alembic, drizzle and workflow files reports "no migration entry
-# point" at a repo whose entry point is sitting in railway.json.
+# names. A service runs its migration step from its start command —
+# `python scripts/apply_migrations.py && uvicorn ...` — and the script it
+# names is the migration entry point as surely as an alembic env.py is.
+# The start command lives in one of three places: the final stage's CMD or
+# ENTRYPOINT in the root Dockerfile (the same source CD-017 accepts), a
+# railway.json/railway.toml deploy.startCommand, or a start command set in
+# .railway/railway.{ts,py,go}. Looking only for alembic, drizzle and
+# workflow files reports "no migration entry point" at a repo whose entry
+# point is sitting in its Dockerfile.
 _START_COMMAND_KEYS = ("railway.json", "railway.toml")
 _SCRIPT_SUFFIXES = (".py", ".sh", ".ts", ".js", ".mjs")
 
@@ -223,46 +226,91 @@ def _names_migration_role(name: str) -> bool:
     return any(token in low for token in _MIGRATION_ROLE_TOKENS)
 
 
-def _start_command_scripts(repo_path: Path) -> list[Path]:
-    """Scripts named by the platform descriptor's deploy start command.
-
-    Every whitespace-separated token of the start command that looks
-    like a script path and exists in the repo. Tokens are matched
-    against the filesystem rather than parsed as a shell command:
-    `&&`, flags and interpreter names simply do not resolve to files,
-    so they fall out without needing a shell grammar.
-    """
+def _descriptor_start_command(repo_path: Path) -> str | None:
+    """``deploy.startCommand`` from railway.json, else railway.toml."""
     import json as _json
-    import shlex
+    import tomllib
 
-    data: Any = None
     for name in _START_COMMAND_KEYS:
         path = repo_path / name
         if not path.is_file():
             continue
         try:
             text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        try:
-            if name.endswith(".json"):
-                data = _json.loads(text)
-            else:
-                import tomllib
-
-                data = tomllib.loads(text)
+            data = _json.loads(text) if name.endswith(".json") else tomllib.loads(text)
         except Exception:
             continue
-        break
+        deploy = data.get("deploy") if isinstance(data, dict) else None
+        command = deploy.get("startCommand") if isinstance(deploy, dict) else None
+        if isinstance(command, str) and command.strip():
+            return command
+        return None
+    return None
 
-    if not isinstance(data, dict):
+
+def _dockerfile_start_commands(repo_path: Path) -> list[str]:
+    """CMD and ENTRYPOINT of the root Dockerfile's final stage, as text.
+
+    Only the final stage runs, so earlier stages' instructions are
+    ignored. Exec form (``CMD ["/bin/sh", "-c", "python x.py && ..."]``)
+    is decoded and its elements joined with spaces; shell form is taken
+    as written. Either way the result is a command line whose script
+    tokens ``_scripts_named_by`` can resolve.
+    """
+    import json as _json
+
+    from evaluator_cog.engine.deterministic.containers import (
+        _dockerfile_instructions,
+        _read_dockerfile,
+    )
+
+    _path, text = _read_dockerfile(repo_path)
+    if text is None:
         return []
-    deploy = data.get("deploy")
-    if not isinstance(deploy, dict):
+    instructions = _dockerfile_instructions(text)
+    final_from = max(
+        (i for i, (_n, ins, _a) in enumerate(instructions) if ins == "FROM"),
+        default=None,
+    )
+    if final_from is None:
         return []
-    command = deploy.get("startCommand")
-    if not isinstance(command, str) or not command.strip():
+    commands: list[str] = []
+    for _n, ins, args in instructions[final_from + 1 :]:
+        if ins not in ("CMD", "ENTRYPOINT") or not args.strip():
+            continue
+        command = args.strip()
+        if command.startswith("["):
+            try:
+                parts = _json.loads(command)
+            except ValueError:
+                parts = None
+            if isinstance(parts, list) and all(isinstance(p, str) for p in parts):
+                command = " ".join(parts)
+        commands.append(command)
+    return commands
+
+
+def _iac_start_commands(repo_path: Path) -> list[str]:
+    """Start commands set in ``.railway/railway.{ts,py,go}``, read as text."""
+    from evaluator_cog.engine.deterministic.containers import (
+        _IAC_START_COMMAND,
+        _read_iac,
+    )
+
+    _path, code = _read_iac(repo_path)
+    if code is None:
         return []
+    return [m.group(2) for m in _IAC_START_COMMAND.finditer(code) if m.group(2)]
+
+
+def _scripts_named_by(repo_path: Path, command: str) -> list[Path]:
+    """Every token of `command` that looks like a script path and exists.
+
+    Tokens are matched against the filesystem rather than parsed as a
+    shell command: `&&`, flags and interpreter names simply do not
+    resolve to files, so they fall out without needing a shell grammar.
+    """
+    import shlex
 
     try:
         tokens = shlex.split(command)
@@ -271,11 +319,35 @@ def _start_command_scripts(repo_path: Path) -> list[Path]:
 
     found: list[Path] = []
     for token in tokens:
+        token = token.rstrip(";")
         if not token.endswith(_SCRIPT_SUFFIXES):
             continue
         candidate = repo_path / token
         if candidate.is_file() and candidate not in found:
             found.append(candidate)
+    return found
+
+
+def _start_command_scripts(repo_path: Path) -> list[Path]:
+    """Scripts named by the service's start command, wherever it is declared.
+
+    Three sources, all read: the root Dockerfile's final-stage CMD or
+    ENTRYPOINT, the platform descriptor's ``deploy.startCommand``, and a
+    start command in ``.railway/railway.{ts,py,go}``. A repo that moved its
+    start command from railway.json into the image (MINI-69) keeps the same
+    migration entry point, so it must keep the same answer here.
+    """
+    commands = _dockerfile_start_commands(repo_path)
+    descriptor = _descriptor_start_command(repo_path)
+    if descriptor:
+        commands.append(descriptor)
+    commands.extend(_iac_start_commands(repo_path))
+
+    found: list[Path] = []
+    for command in commands:
+        for path in _scripts_named_by(repo_path, command):
+            if path not in found:
+                found.append(path)
     return found
 
 
@@ -374,7 +446,8 @@ def check_ops_002(repo_path: Path) -> list[Finding]:
                 f"declared ({', '.join(conn_fields)}) but no migration entry "
                 f"point was found — searched for an alembic env, a drizzle "
                 f"config, a release-workflow migrate step, and any script "
-                f"named by the platform descriptor's start command.",
+                f"named by the start command (root Dockerfile CMD or "
+                f"ENTRYPOINT, railway.json/railway.toml, or .railway/).",
                 "Add an alembic env.py (or drizzle.config.ts, or a migrate "
                 "step in the release workflow) that reads the migration-only "
                 "connection setting, so it is provable which role runs DDL.",
