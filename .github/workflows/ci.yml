@@ -106,8 +106,8 @@ jobs:
 
   # A fleet sweep, not a single repository. A new evaluator can reach a
   # different verdict on every repo in the fleet, so all of them are stale
-  # at once — and the four checks that scope to no repository (EVAL-003,
-  # XSTACK-006, XSTACK-008, EVAL-007) have nowhere else to run.
+  # at once — and the checks that scope to no repository have nowhere
+  # else to run.
   #
   # The sweep must run on the evaluator this release built, which is the
   # entire reason for the trigger — so it waits on the deploy job, which

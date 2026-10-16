@@ -429,33 +429,6 @@ def check_naming_conventions(repo_path: Path) -> list[Finding]:
     return findings
 
 
-def check_failed_prefix(repo_path: Path) -> list[Finding]:
-    """PY-012: FAILED_ prefix for failed inputs."""
-    CHECK_ID = "PY-012"
-    findings: list[Finding] = []
-    src = repo_path / "src"
-    if not src.is_dir():
-        return findings
-
-    content = production_python_text(repo_path)
-    has_file_processing = (
-        ("shutil" in content or "pathlib" in content)
-        and "except" in content
-        and ("move(" in content or "rename(" in content)
-    )
-    if has_file_processing and "FAILED_" not in content:
-        findings.append(
-            _finding(
-                "PY-012",
-                "WARN",
-                "structural_conformance",
-                "File-processing exception paths do not use FAILED_ prefixing.",
-                "Rename failed input files with FAILED_ to make failures visible and auditable.",
-            )
-        )
-    return findings
-
-
 def check_dedup_handling_present(repo_path: Path) -> list[Finding]:
     """PY-013: Deduplication handling is visible in source.
 

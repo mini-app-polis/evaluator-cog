@@ -21,7 +21,6 @@ from evaluator_cog.engine.deterministic import (
     check_env_example_settings_parity,
     check_eval_003,
     check_eval_007,
-    check_failed_prefix,
     check_healthchecks_integration,
     check_mypy_in_ci,
     check_naming_conventions,
@@ -564,40 +563,6 @@ def test_check_naming_conventions_passes_snake_case(tmp_path: Path) -> None:
     (repo / "src" / "my_package" / "process_files.py").write_text("x = 1\n")
     (repo / "pyproject.toml").write_text('[project]\nname = "my-package"\n')
     findings = check_naming_conventions(repo)
-    assert findings == []
-
-
-def test_check_failed_prefix_flags_missing() -> None:
-    repo = _make_repo(
-        {
-            "src/my_pkg/worker.py": (
-                "import shutil\nfrom pathlib import Path\n"
-                "def go(p: Path):\n"
-                "    try:\n"
-                "        shutil.move(str(p), 'ok.csv')\n"
-                "    except Exception:\n"
-                "        shutil.move(str(p), 'failed.csv')\n"
-            )
-        }
-    )
-    findings = check_failed_prefix(repo)
-    assert any(f["rule_id"] == "PY-012" for f in findings)
-
-
-def test_check_failed_prefix_passes_when_present() -> None:
-    repo = _make_repo(
-        {
-            "src/my_pkg/worker.py": (
-                "import shutil\nfrom pathlib import Path\n"
-                "def go(p: Path):\n"
-                "    try:\n"
-                "        shutil.move(str(p), 'ok.csv')\n"
-                "    except Exception:\n"
-                "        shutil.move(str(p), f'FAILED_{p.name}')\n"
-            )
-        }
-    )
-    findings = check_failed_prefix(repo)
     assert findings == []
 
 
