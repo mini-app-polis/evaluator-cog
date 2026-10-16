@@ -129,7 +129,6 @@ from evaluator_cog.engine.deterministic.pipeline import (
 from evaluator_cog.engine.deterministic.python import (
     check_common_python_utils_dep,
     check_dedup_handling_present,
-    check_failed_prefix,
     check_finally_cleanup,
     check_mypy_in_ci,
     check_naming_conventions,
@@ -468,7 +467,6 @@ def run_all_checks(
             )
         _run(check_no_print_statements, "CD-003")
         _run(check_naming_conventions, "PY-011")
-        _run(check_failed_prefix, "PY-012")
         _run(check_dedup_handling_present, "PY-013")
         _run(check_finally_cleanup, "PY-014")
 

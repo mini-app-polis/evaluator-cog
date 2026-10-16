@@ -136,7 +136,6 @@ from evaluator_cog.engine.deterministic.pipeline import (
 from evaluator_cog.engine.deterministic.python import (
     check_common_python_utils_dep,
     check_dedup_handling_present,
-    check_failed_prefix,
     check_finally_cleanup,
     check_mypy_in_ci,
     check_naming_conventions,
@@ -228,7 +227,6 @@ __all__ = [
     "check_env_var_prefix",
     "check_eval_003",
     "check_eval_007",
-    "check_failed_prefix",
     "check_fastapi_route_docs",
     "check_fetch_error_handling",
     "check_final_evaluation_task",
