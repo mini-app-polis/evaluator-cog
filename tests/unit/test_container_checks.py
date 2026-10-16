@@ -580,3 +580,147 @@ def test_cd021_python_iac_keyword_form_counts(tmp_path: Path) -> None:
     )
     _write(tmp_path, "Dockerfile", _DOCKERFILE)
     assert check_cd_021(tmp_path) == []
+
+
+# --- CD-017 / CD-024 from .railway/ Infrastructure as Code (MINI-68) ---------
+
+_IAC_GOOD = """\
+// restartPolicyType: "NEVER" in a comment is not a setting.
+import { defineRailway, github, project, service } from "railway/iac";
+
+export default defineRailway((ctx) => {
+  const api = service("api", {
+    source: github("mini-app-polis/api", { branch: "main" }),
+    build: { builder: "DOCKERFILE" as const, dockerfilePath: "Dockerfile" },
+    deploy: {
+      startCommand: "uvicorn app:app",
+      restartPolicyType: "ON_FAILURE" as const,
+      restartPolicyMaxRetries: 10,
+      limitOverride: { containers: { cpu: 4, memoryBytes: 4294967296 } },
+    },
+  });
+  return project("p", { resources: [api] });
+});
+"""
+
+_DOCKERFILE_WITH_CMD = (
+    "FROM python:3.11-slim@sha256:" + "a" * 64 + "\n"
+    "USER app\n"
+    'CMD ["/bin/sh", "-c", "exec uvicorn app:app"]\n'
+)
+
+
+def test_cd017_reads_railway_iac(tmp_path: Path) -> None:
+    _write(tmp_path, ".railway/railway.ts", _IAC_GOOD)
+    assert check_cd_017(tmp_path) == []
+
+
+def test_cd017_prefers_iac_over_a_leftover_railway_json(tmp_path: Path) -> None:
+    """Both present is a migration in progress; .railway/ is what is read."""
+    _railway(tmp_path, {"deploy": {"restartPolicyType": "NEVER"}})
+    _write(tmp_path, ".railway/railway.ts", _IAC_GOOD)
+    assert check_cd_017(tmp_path) == []
+
+    _railway(tmp_path, _good_deploy())
+    _write(tmp_path, ".railway/railway.ts", 'service("api", {});\n')
+    assert _ids(check_cd_017(tmp_path)) == {"CD-017"}
+
+
+def test_cd017_iac_flags_every_wrong_policy_and_low_retries(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        ".railway/railway.ts",
+        _IAC_GOOD.replace("restartPolicyMaxRetries: 10", "restartPolicyMaxRetries: 3")
+        + 'service("worker", { deploy: { restartPolicyType: "NEVER" } });\n',
+    )
+    blob = _blob(check_cd_017(tmp_path))
+    assert "'NEVER'" in blob
+    assert "restartPolicyMaxRetries is 3" in blob
+
+
+def test_cd017_iac_ignores_settings_named_only_in_comments(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        ".railway/railway.ts",
+        '// restartPolicyType: "ON_FAILURE", restartPolicyMaxRetries: 10,\n'
+        '// startCommand: "uvicorn app:app"\n'
+        'service("api", {});\n',
+    )
+    findings = check_cd_017(tmp_path)
+    assert len(findings) == 3
+
+
+def test_cd017_iac_flags_a_non_literal_retry_count(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        ".railway/railway.ts",
+        _IAC_GOOD.replace(
+            "restartPolicyMaxRetries: 10", "restartPolicyMaxRetries: RETRIES"
+        ),
+    )
+    assert "RETRIES" in _blob(check_cd_017(tmp_path))
+
+
+def test_cd017_python_iac_keyword_form(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        ".railway/railway.py",
+        'service("api", start="uvicorn app:app",\n'
+        '        deploy={"restartPolicyType": "ON_FAILURE", "restartPolicyMaxRetries": 12})\n',
+    )
+    assert check_cd_017(tmp_path) == []
+
+
+def test_cd017_accepts_a_dockerfile_cmd_the_descriptor_selects(tmp_path: Path) -> None:
+    """The start command may live in the image instead, not in both."""
+    _write(
+        tmp_path,
+        ".railway/railway.ts",
+        _IAC_GOOD.replace('      startCommand: "uvicorn app:app",\n', ""),
+    )
+    assert "declares no start command" in _blob(check_cd_017(tmp_path))
+
+    _write(tmp_path, "Dockerfile", _DOCKERFILE_WITH_CMD)
+    assert check_cd_017(tmp_path) == []
+
+
+def test_cd017_dockerfile_cmd_counts_only_when_selected(tmp_path: Path) -> None:
+    _write(tmp_path, "Dockerfile", _DOCKERFILE_WITH_CMD)
+    deploy = _good_deploy()
+    del deploy["deploy"]["startCommand"]
+    _railway(tmp_path, deploy)
+    assert _ids(check_cd_017(tmp_path)) == {"CD-017"}
+
+    deploy["build"] = {"builder": "DOCKERFILE"}
+    _railway(tmp_path, deploy)
+    assert check_cd_017(tmp_path) == []
+
+
+def test_cd024_reads_railway_iac(tmp_path: Path) -> None:
+    _write(tmp_path, ".railway/railway.ts", _IAC_GOOD)
+    assert check_cd_024(tmp_path) == []
+
+
+def test_cd024_iac_without_limits_flags_both(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        ".railway/railway.ts",
+        _IAC_GOOD.replace(
+            "      limitOverride: { containers: { cpu: 4, memoryBytes: 4294967296 } },\n",
+            "",
+        ),
+    )
+    findings = check_cd_024(tmp_path)
+    assert len(findings) == 2
+    assert "limitOverride" in findings[0]["suggestion"]
+
+
+def test_cd024_iac_null_limit_is_not_a_limit(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        ".railway/railway.ts",
+        _IAC_GOOD.replace("memoryBytes: 4294967296", "memoryBytes: null"),
+    )
+    findings = check_cd_024(tmp_path)
+    assert len(findings) == 1
+    assert "no memory limit" in findings[0]["finding"]
