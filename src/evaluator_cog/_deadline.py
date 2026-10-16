@@ -25,7 +25,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from googleapiclient.http import DEFAULT_HTTP_TIMEOUT_SEC
 from mini_app_polis.deadline import run_deadline
 
 #: How long before the function's timeout a run is stopped, so that it can
@@ -43,7 +42,12 @@ DEADLINE_MARGIN_SECONDS = 30
 #: evaluator-cog makes no Google request through the library today, so
 #: the shared deadline has nothing to act on yet; it is set the same way
 #: as in every cog so a Drive or Sheets call added later is covered.
-REQUEST_HEADROOM_SECONDS: float = DEFAULT_HTTP_TIMEOUT_SEC
+#:
+#: The value is googleapiclient's ``DEFAULT_HTTP_TIMEOUT_SEC``, held here
+#: rather than imported: the Lambda deploy strips the Google client stack
+#: from the zip, so importing it fails the worker at start. A test pins the
+#: two together, so a change upstream fails CI rather than drifting.
+REQUEST_HEADROOM_SECONDS: float = 60.0
 
 
 class RunOutOfTime(Exception):  # noqa: N818 — named for what happened
