@@ -1,3 +1,10 @@
+## [3.57.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.57.1...v3.57.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* ops-002 ([101b931](https://github.com/mini-app-polis/evaluator-cog/commit/101b931c4aa4f7e066dfa4ba5e9c9ee4ac872a8f))
+
 ## [3.57.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.57.0...v3.57.1) (2026-10-16)
 
 
