@@ -1,3 +1,10 @@
+## [3.58.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.58.1...v3.58.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* **deadline:** stop importing googleapiclient, which the Lambda deploy strips ([6a3c642](https://github.com/mini-app-polis/evaluator-cog/commit/6a3c6425a5b3fdfe7f20d866795b849fba8ab698))
+
 ## [3.58.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.58.0...v3.58.1) (2026-10-16)
 
 
