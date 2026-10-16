@@ -1,3 +1,10 @@
+# [3.58.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.57.4...v3.58.0) (2026-10-16)
+
+
+### Features
+
+* **deterministic:** drop PY-012 check ([013759d](https://github.com/mini-app-polis/evaluator-cog/commit/013759d2dcd9fb24e6ce9b2e6a6d5632997fecb7))
+
 ## [3.57.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.57.3...v3.57.4) (2026-10-16)
 
 
