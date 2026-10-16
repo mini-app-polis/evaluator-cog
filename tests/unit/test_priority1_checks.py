@@ -7,6 +7,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from evaluator_cog.engine.deterministic import (
     check_astro_pinned_versions,
     check_gha_not_trigger_relay,
@@ -76,6 +78,22 @@ def test_api001_railway_json_satisfies_condition_one() -> None:
     root = _root({"railway.json": "{}\n"})
     _write_pyproject(root, "[project]\ndependencies=['fastapi']\n")
     assert not any(
+        "railway deployment" in x["finding"].lower()
+        for x in check_railway_hosted_api(root, language="python")
+    )
+
+
+@pytest.mark.parametrize("iac", ["railway.ts", "railway.py", "railway.go"])
+def test_api001_railway_iac_satisfies_condition_one(iac: str) -> None:
+    root = _root({f".railway/{iac}": "export const partial = 'x';\n"})
+    _write_pyproject(root, "[project]\ndependencies=['fastapi']\n")
+    assert check_railway_hosted_api(root, language="python") == []
+
+
+def test_api001_railway_dir_without_iac_file_still_warns() -> None:
+    root = _root({".railway/README.md": "notes\n"})
+    _write_pyproject(root, "[project]\ndependencies=['fastapi']\n")
+    assert any(
         "railway deployment" in x["finding"].lower()
         for x in check_railway_hosted_api(root, language="python")
     )
