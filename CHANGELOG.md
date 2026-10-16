@@ -1,3 +1,10 @@
+## [3.57.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.57.3...v3.57.4) (2026-10-16)
+
+
+### Bug Fixes
+
+* **deps:** require miniapppolis-common-utils 6 (>=6.0.1) ([83924aa](https://github.com/mini-app-polis/evaluator-cog/commit/83924aa8087ad846599df644a639435bba5546fb))
+
 ## [3.57.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.57.2...v3.57.3) (2026-10-16)
 
 
