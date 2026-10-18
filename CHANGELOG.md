@@ -1,3 +1,10 @@
+# [3.59.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.58.6...v3.59.0) (2026-10-18)
+
+
+### Features
+
+* **deterministic:** check CD-038, an empty Sentry DSN in production says so ([efa9b24](https://github.com/mini-app-polis/evaluator-cog/commit/efa9b249a951d1e003986d7e48eeeedda13c2438))
+
 ## [3.58.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.58.5...v3.58.6) (2026-10-18)
 
 
