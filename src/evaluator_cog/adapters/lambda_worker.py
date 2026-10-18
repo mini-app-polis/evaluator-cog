@@ -24,12 +24,11 @@ beside it.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
-import sentry_sdk
 from mini_app_polis import load_secrets, timing
 from mini_app_polis import logger as logger_mod
+from mini_app_polis.sentry import init_sentry
 
 from evaluator_cog._deadline import deadline
 from evaluator_cog.adapters.queue import (
@@ -44,12 +43,9 @@ log = logger_mod.get_logger()
 # At import, not per invocation. A Lambda container is reused across
 # invocations, so this runs once per cold start — initialising on every
 # call would pay the setup repeatedly and register duplicate integrations.
-sentry_sdk.init(
-    dsn=os.getenv("SENTRY_DSN_COGS"),
-    environment=os.getenv("ENVIRONMENT", "production"),
-)
-# Shared cogs project: the tag is what tells this cog's events apart.
-sentry_sdk.get_global_scope().set_tag("service", "evaluator-cog")
+# An empty DSN in production logs an ERROR rather than passing silently
+# (CD-038); the service tag tells this cog's events apart in the shared project.
+init_sentry("evaluator-cog")
 
 
 def _mode_label(body: str) -> str:

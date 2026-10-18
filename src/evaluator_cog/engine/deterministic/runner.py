@@ -63,6 +63,7 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_pnpm_lockfile,
     check_release_gated_on_security,
     check_request_metrics_middleware,
+    check_sentry_dsn_absence_reported,
     check_structured_logging,
     check_terraform_checked_in_ci,
     check_terraform_versions_pinned,
@@ -727,6 +728,11 @@ def run_all_checks(
     # not yet in Python gets the finding, which its deferral suppresses.
     if is_api_service:
         _run(check_request_metrics_middleware, "CD-036")
+    # CD-038 is Layer 3's other half: Sentry wired (CD-002) but carrying
+    # nothing. Not gated on language — the check's subject is a
+    # pyproject.toml, and a repo without one is skipped inside it.
+    if is_pipeline_cog or is_trigger_cog or is_api_service:
+        _run(check_sentry_dsn_absence_reported, "CD-038")
 
     # CD-014 — static-site deploy target
     if _is_static:
