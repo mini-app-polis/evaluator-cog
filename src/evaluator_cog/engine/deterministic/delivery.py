@@ -8,11 +8,13 @@ import json
 import re
 import tomllib
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
+    _is_checker_self_source,
     _tracked_paths,
 )
 from evaluator_cog.engine.deterministic._terraform import (
@@ -1639,4 +1641,383 @@ def check_request_metrics_middleware(repo_path: Path) -> list[Finding]:
             f"application is built.",
         )
     )
+    return findings
+
+
+# ── CD-038: an empty Sentry DSN in production says so ────────────────────────
+
+_SENTRY_INIT = "sentry_sdk.init"
+_ENV_READS = frozenset({"os.getenv", "os.environ.get"})
+#: Logger methods at ERROR or above.
+_ERROR_LOG_METHODS = frozenset({"error", "exception", "critical", "fatal"})
+#: The shared library's environment resolution (mini_app_polis.environment).
+_PRODUCTION_TESTS = frozenset({"is_production", "current_environment"})
+
+
+@dataclass(frozen=True)
+class _DsnSource:
+    """Where a ``sentry_sdk.init`` call's DSN comes from.
+
+    ``variable`` is the name someone has to set — the environment variable
+    or the Settings field. ``local`` is the module variable the value was
+    bound to on its way to the call, when there was one.
+    """
+
+    kind: str  # "environment variable" or "Settings field"
+    variable: str
+    #: The read itself, unparsed, so a guard that repeats it is recognised.
+    expr_text: str
+    local: str | None = None
+
+
+def _parent_links(tree: ast.AST) -> dict[int, tuple[ast.AST, str, int]]:
+    """Map each statement-list child to (parent, field, index)."""
+    links: dict[int, tuple[ast.AST, str, int]] = {}
+    for node in ast.walk(tree):
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                for i, child in enumerate(value):
+                    if isinstance(child, ast.AST):
+                        links[id(child)] = (node, field, i)
+            elif isinstance(value, ast.AST):
+                links[id(value)] = (node, field, -1)
+    return links
+
+
+def _module_str_constants(tree: ast.Module) -> dict[str, str]:
+    """Module-level ``NAME = "literal"`` bindings, for ``os.getenv(NAME)``."""
+    constants: dict[str, str] = {}
+    for stmt in tree.body:
+        if (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        ):
+            constants[stmt.targets[0].id] = stmt.value.value
+    return constants
+
+
+def _unwrap_dsn(expr: ast.expr) -> ast.expr:
+    """Strip the coercions a DSN read wears: ``.strip()``, ``or ""``, ``str()``."""
+    while True:
+        if (
+            isinstance(expr, ast.Call)
+            and isinstance(expr.func, ast.Attribute)
+            and expr.func.attr in {"strip", "lstrip", "rstrip"}
+            and not expr.args
+        ):
+            expr = expr.func.value
+        elif isinstance(expr, ast.BoolOp) and isinstance(expr.op, ast.Or):
+            expr = expr.values[0]
+        elif (
+            isinstance(expr, ast.Call)
+            and isinstance(expr.func, ast.Name)
+            and expr.func.id == "str"
+            and len(expr.args) == 1
+        ):
+            expr = expr.args[0]
+        else:
+            return expr
+
+
+def _direct_source(
+    expr: ast.expr, bindings: dict[str, str], constants: dict[str, str]
+) -> _DsnSource | None:
+    """An env read or a Settings field, or None when it is neither."""
+    expr = _unwrap_dsn(expr)
+    if isinstance(expr, ast.Call) and _qualified(expr.func, bindings) in _ENV_READS:
+        if not expr.args:
+            return None
+        arg = expr.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            name = arg.value
+        elif isinstance(arg, ast.Name) and arg.id in constants:
+            name = constants[arg.id]
+        else:
+            name = ast.unparse(arg)
+        return _DsnSource("environment variable", name, ast.unparse(expr))
+    if isinstance(expr, ast.Attribute) and (
+        expr.attr.isupper() or "dsn" in expr.attr.lower()
+    ):
+        return _DsnSource("Settings field", expr.attr, ast.unparse(expr))
+    return None
+
+
+def _last_binding(scope: ast.AST, name: str, before_line: int) -> ast.expr | None:
+    """The value last assigned to ``name`` in ``scope`` before ``before_line``.
+
+    Nested functions and classes are not entered: their locals are not
+    this scope's.
+    """
+    found: tuple[int, ast.expr] | None = None
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if (
+            any(isinstance(t, ast.Name) and t.id == name for t in targets)
+            and node.lineno < before_line
+            and (found is None or node.lineno > found[0])
+        ):
+            found = (node.lineno, node.value)
+    return found[1] if found else None
+
+
+def _matches_subject(expr: ast.expr, source: _DsnSource) -> bool:
+    """True when ``expr`` is the DSN itself, as a guard would read it.
+
+    The local it was bound to, the same read repeated, or — for a Settings
+    field — the same field on any receiver (``settings.X`` against
+    ``get_settings().X``).
+    """
+    expr = _unwrap_dsn(expr)
+    if source.local and isinstance(expr, ast.Name) and expr.id == source.local:
+        return True
+    if source.kind == "Settings field" and isinstance(expr, ast.Attribute):
+        return expr.attr == source.variable
+    return ast.unparse(expr) == source.expr_text
+
+
+def _is_production_test(expr: ast.expr) -> bool:
+    return any(
+        isinstance(node, ast.Call) and _callee_name(node.func) in _PRODUCTION_TESTS
+        for node in ast.walk(expr)
+    )
+
+
+def _polarity(test: ast.expr, source: _DsnSource) -> str | None:
+    """Which way a guard faces: ``present``, ``empty``, or None.
+
+    ``present`` when the test is true only with a DSN, ``empty`` when only
+    without.
+
+    None when the test does not read the DSN, or reads it in a shape this
+    check does not reason about.
+    """
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        inner = _polarity(test.operand, source)
+        return {"present": "empty", "empty": "present"}.get(inner or "")
+    if isinstance(test, ast.Compare) and len(test.ops) == 1:
+        left, op, right = test.left, test.ops[0], test.comparators[0]
+        if (
+            isinstance(right, ast.Constant)
+            and right.value in (None, "")
+            and _matches_subject(left, source)
+        ):
+            if isinstance(op, (ast.Is, ast.Eq)):
+                return "empty"
+            if isinstance(op, (ast.IsNot, ast.NotEq)):
+                return "present"
+        return None
+    if isinstance(test, ast.BoolOp):
+        parts = [_polarity(v, source) for v in test.values]
+        if isinstance(test.op, ast.And) and "present" in parts:
+            return "present"
+        if isinstance(test.op, ast.Or) and "empty" in parts:
+            return "empty"
+        # `if not dsn and is_production():` — the empty branch, gated on
+        # production, which is what the rule asks for.
+        if isinstance(test.op, ast.And) and "empty" in parts:
+            others = [v for v, p in zip(test.values, parts, strict=True) if p is None]
+            if all(_is_production_test(v) for v in others):
+                return "empty"
+        return None
+    if _matches_subject(test, source):
+        return "present"
+    return None
+
+
+def _reports(stmts: list[ast.stmt]) -> bool:
+    """True when ``stmts`` raise or log at ERROR or above.
+
+    Unconditionally, or under a production test from the shared library's
+    environment resolution. A report behind any other condition does not
+    count. The logger's receiver is not resolved — CD-009 is what checks
+    that a module's logger is the shared one — but the stdlib root logger
+    (``logging.error``) is not accepted.
+    """
+    for stmt in stmts:
+        if isinstance(stmt, ast.Raise):
+            return True
+        if isinstance(stmt, ast.If):
+            if _is_production_test(stmt.test) and _reports(stmt.body):
+                return True
+        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            func = stmt.value.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in _ERROR_LOG_METHODS
+                and not (
+                    isinstance(func.value, ast.Name) and func.value.id == "logging"
+                )
+            ):
+                return True
+        elif isinstance(stmt, (ast.With, ast.AsyncWith)) and _reports(stmt.body):
+            return True
+    return False
+
+
+def _assigns(stmts: list[ast.stmt], name: str | None) -> bool:
+    if not name:
+        return False
+    return any(
+        isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, ast.Store)
+        for stmt in stmts
+        for node in ast.walk(stmt)
+    )
+
+
+def _empty_dsn_problem(
+    call: ast.Call,
+    scope: ast.AST,
+    source: _DsnSource,
+    links: dict[int, tuple[ast.AST, str, int]],
+) -> str | None:
+    """Why an empty DSN reaches this call silently, or None if it does not.
+
+    Two kinds of guard are found: an ``if`` the call sits inside, and an
+    ``if`` that runs before it in the same or an enclosing block. Each
+    guard's empty branch must raise or log at ERROR. A guard whose empty
+    branch rebinds the DSN is a fallback this check does not follow, so it
+    is given the benefit of the doubt.
+    """
+    empty_branches: list[list[ast.stmt]] = []
+    node: ast.AST = call
+    while node is not scope and id(node) in links:
+        parent, field, index = links[id(node)]
+        if isinstance(parent, ast.If) and field in ("body", "orelse"):
+            polarity = _polarity(parent.test, source)
+            if polarity == "present" and field == "body":
+                empty_branches.append(parent.orelse)
+            elif polarity == "empty" and field == "orelse":
+                empty_branches.append(parent.body)
+        if index >= 0 and field in ("body", "orelse", "finalbody", "handlers"):
+            for earlier in getattr(parent, field)[:index]:
+                if (
+                    isinstance(earlier, ast.If)
+                    and _polarity(earlier.test, source) == "empty"
+                ):
+                    empty_branches.append(earlier.body)
+        node = parent
+
+    if not empty_branches:
+        return "nothing checks it for emptiness"
+    for branch in empty_branches:
+        if _assigns(branch, source.local):
+            return None
+        if not _reports(branch):
+            return (
+                "the branch taken when it is empty neither logs at ERROR nor raises"
+                if branch
+                else "nothing runs when it is empty"
+            )
+    return None
+
+
+def check_sentry_dsn_absence_reported(repo_path: Path) -> list[Finding]:
+    """CD-038: a production service with no Sentry DSN says so.
+
+    ``sentry_sdk.init`` with an empty DSN is a documented no-op, and
+    ``if not dsn: return`` is the same no-op written out. Each
+    ``sentry_sdk.init`` call under ``src/`` is traced, within its module,
+    to the environment read or Settings field its ``dsn=`` comes from —
+    directly or through one local binding — and fails when an empty value
+    can reach a path that neither logs at ERROR nor raises. A report under
+    ``is_production()`` / ``current_environment()`` counts: outside
+    production, silence is normal.
+
+    Conservative where the AST runs out: a DSN this cannot trace (a
+    function parameter, a dict lookup) is not reported, and nor is a guard
+    that rebinds the DSN. A module that only calls the shared
+    ``mini_app_polis.sentry.init_sentry`` has no ``sentry_sdk.init`` and so
+    no subject — the helper owns the branch. No ``sentry_sdk.init`` at all
+    is CD-002's finding, not this one's.
+    """
+    CHECK_ID = "CD-038"
+    dimension = "cd_readiness"
+    findings: list[Finding] = []
+    src = repo_path / "src"
+    if not (repo_path / "pyproject.toml").is_file() or not src.is_dir():
+        return findings
+
+    for py in sorted(src.rglob("*.py")):
+        if _is_checker_self_source(py):
+            continue
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+        bindings = _import_bindings(tree)
+        inits = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and _qualified(node.func, bindings) == _SENTRY_INIT
+        ]
+        if not inits:
+            continue
+        links = _parent_links(tree)
+        constants = _module_str_constants(tree)
+        rel = py.relative_to(repo_path).as_posix()
+
+        for call in inits:
+            dsn_expr = next((kw.value for kw in call.keywords if kw.arg == "dsn"), None)
+            if dsn_expr is None and call.args:
+                dsn_expr = call.args[0]
+            if dsn_expr is None:
+                # `**options`, or no DSN at all: nothing here to trace.
+                continue
+            source = _direct_source(dsn_expr, bindings, constants)
+
+            scope: ast.AST = tree
+            walker: ast.AST = call
+            while id(walker) in links:
+                walker = links[id(walker)][0]
+                if isinstance(walker, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    scope = walker
+                    break
+
+            if source is None:
+                bare = _unwrap_dsn(dsn_expr)
+                if not isinstance(bare, ast.Name):
+                    continue
+                bound = _last_binding(scope, bare.id, call.lineno)
+                if bound is None and scope is not tree:
+                    bound = _last_binding(tree, bare.id, call.lineno)
+                traced = _direct_source(bound, bindings, constants) if bound else None
+                if traced is None:
+                    continue
+                source = _DsnSource(
+                    traced.kind, traced.variable, traced.expr_text, local=bare.id
+                )
+            problem = _empty_dsn_problem(call, scope, source, links)
+            if problem is None:
+                continue
+            via = f" (through `{source.local}`)" if source.local else ""
+            findings.append(
+                _finding(
+                    CHECK_ID,
+                    "WARN",
+                    dimension,
+                    f"{rel}:{call.lineno}: sentry_sdk.init takes its DSN from "
+                    f"the {source.kind} {source.variable}{via}, and {problem}. "
+                    f"With {source.variable} unset or empty in production, "
+                    f"Sentry is off and nothing records it.",
+                    "Replace the hand-rolled init with "
+                    "mini_app_polis.sentry.init_sentry(...), which logs an "
+                    "ERROR naming the variable when the DSN is empty in "
+                    "production. Or, on the empty branch, log at ERROR "
+                    f"through the shared logger naming {source.variable}, "
+                    "under is_production() from mini_app_polis.environment.",
+                )
+            )
     return findings
