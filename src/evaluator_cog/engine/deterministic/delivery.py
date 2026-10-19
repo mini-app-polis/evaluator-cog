@@ -1183,7 +1183,8 @@ def check_three_layer_observability(
 ) -> list[Finding]:
     """CD-010: Three-layer observability — Healthchecks + logger + Sentry.
 
-    Language-aware: Python services must use sentry_sdk + common-python-utils;
+    Language-aware: Python services must start Sentry (the shared
+    ``init_sentry``, or ``sentry_sdk`` directly) + common-python-utils;
     TypeScript services must use @sentry/node (or @sentry/react/@sentry/astro)
     + common-typescript-utils. The stack is equivalent; only the package
     names differ.
@@ -1262,14 +1263,21 @@ def check_three_layer_observability(
             )
         )
 
-    # Layer 3: Sentry.
+    # Layer 3: Sentry. A Python service starts it with the shared
+    # mini_app_polis.sentry.init_sentry (CD-038), which owns the sentry_sdk
+    # call, so its own source need not name sentry_sdk at all; a direct
+    # sentry_sdk.init still counts.
     if language == "python":
-        layer3_present = "sentry_sdk" in src_text and (
+        starts_sentry = "sentry_sdk" in src_text or (
+            "mini_app_polis.sentry" in src_text and "init_sentry(" in src_text
+        )
+        layer3_present = starts_sentry and (
             "SENTRY_DSN" in env_text or "SENTRY_DSN" in src_text
         )
         layer3_hint = (
-            "Initialise sentry_sdk at entry point and add SENTRY_DSN "
-            "(or a service-specific variant) to .env.example."
+            "Start Sentry at the entry point with mini_app_polis.sentry."
+            "init_sentry and add SENTRY_DSN (or a service-specific variant, "
+            "e.g. SENTRY_DSN_COGS) to .env.example."
         )
     else:
         layer3_present = (
