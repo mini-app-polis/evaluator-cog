@@ -1,3 +1,10 @@
+## [3.59.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.1...v3.59.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **cd-010:** the shared init_sentry counts as Sentry, as CD-038 already expects ([9ba21ee](https://github.com/mini-app-polis/evaluator-cog/commit/9ba21ee982d67655e505017cf15f8895d41158e6))
+
 ## [3.59.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.0...v3.59.1) (2026-10-19)
 
 
