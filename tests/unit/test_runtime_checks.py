@@ -944,3 +944,56 @@ def test_pipe011_flags_a_pipeline_cog_that_reports_nothing(tmp_path: Path) -> No
 
     assert [f["rule_id"] for f in findings] == ["PIPE-011"]
     assert "pipeline_status" in findings[0]["suggestion"]
+
+
+# --- CD-010 Layer 3: Sentry through the shared helper (MINI-81) ----------------
+
+
+def _sentry_repo(tmp_path: Path, entry: str, env: str) -> Path:
+    (tmp_path / "src" / "cog").mkdir(parents=True)
+    (tmp_path / "src" / "cog" / "worker.py").write_text(entry)
+    (tmp_path / ".env.example").write_text(env)
+    return tmp_path
+
+
+def _layer3(repo: Path) -> list:
+    return [
+        f
+        for f in check_three_layer_observability(repo, cog_subtype="pipeline")
+        if "Layer 3" in f["finding"]
+    ]
+
+
+def test_cd010_counts_the_shared_init_sentry_as_sentry(tmp_path: Path) -> None:
+    """A cog on init_sentry names no sentry_sdk of its own (2026-10-18)."""
+    repo = _sentry_repo(
+        tmp_path,
+        'from mini_app_polis.sentry import init_sentry\ninit_sentry("deejay-cog")\n',
+        "# SENTRY_DSN_COGS=\n",
+    )
+    assert _layer3(repo) == []
+
+
+def test_cd010_still_counts_sentry_sdk_directly(tmp_path: Path) -> None:
+    repo = _sentry_repo(
+        tmp_path,
+        "import sentry_sdk\nsentry_sdk.init(dsn=os.environ['SENTRY_DSN'])\n",
+        "",
+    )
+    assert _layer3(repo) == []
+
+
+def test_cd010_flags_a_service_that_never_starts_sentry(tmp_path: Path) -> None:
+    repo = _sentry_repo(
+        tmp_path, "from mini_app_polis import logger\n", "# SENTRY_DSN_COGS=\n"
+    )
+    assert len(_layer3(repo)) == 1
+
+
+def test_cd010_flags_init_sentry_with_no_dsn_declared(tmp_path: Path) -> None:
+    repo = _sentry_repo(
+        tmp_path,
+        "from mini_app_polis.sentry import init_sentry\ninit_sentry('x')\n",
+        "",
+    )
+    assert len(_layer3(repo)) == 1
