@@ -1,3 +1,11 @@
+## [3.59.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.3...v3.59.4) (2026-10-20)
+
+
+### Bug Fixes
+
+* **deps:** bump certifi to 2026.10.19 for GHSA-6q48-6c7w-9gw2 ([3eef869](https://github.com/mini-app-polis/evaluator-cog/commit/3eef8691423da2e989004af3868be41493588209))
+* **deps:** bump miniapppolis-common-utils to 6.10.0 ([9f203b1](https://github.com/mini-app-polis/evaluator-cog/commit/9f203b1dc7e652b02f9db2779c3fa16b2433adae))
+
 ## [3.59.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.2...v3.59.3) (2026-10-19)
 
 
