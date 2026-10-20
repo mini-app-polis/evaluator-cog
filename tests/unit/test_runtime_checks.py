@@ -946,7 +946,7 @@ def test_pipe011_flags_a_pipeline_cog_that_reports_nothing(tmp_path: Path) -> No
     assert "pipeline_status" in findings[0]["suggestion"]
 
 
-# --- CD-010 Layer 3: Sentry through the shared helper (MINI-81) ----------------
+# --- CD-010 Layer 3: Sentry through the shared helper --------------------------
 
 
 def _sentry_repo(tmp_path: Path, entry: str, env: str) -> Path:

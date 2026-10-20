@@ -334,7 +334,7 @@ def _start_command_scripts(repo_path: Path) -> list[Path]:
     Three sources, all read: the root Dockerfile's final-stage CMD or
     ENTRYPOINT, the platform descriptor's ``deploy.startCommand``, and a
     start command in ``.railway/railway.{ts,py,go}``. A repo that moved its
-    start command from railway.json into the image (MINI-69) keeps the same
+    start command from railway.json into the image keeps the same
     migration entry point, so it must keep the same answer here.
     """
     commands = _dockerfile_start_commands(repo_path)
