@@ -582,7 +582,7 @@ def test_cd021_python_iac_keyword_form_counts(tmp_path: Path) -> None:
     assert check_cd_021(tmp_path) == []
 
 
-# --- CD-017 / CD-024 from .railway/ Infrastructure as Code (MINI-68) ---------
+# --- CD-017 / CD-024 from .railway/ Infrastructure as Code -------------------
 
 _IAC_GOOD = """\
 // restartPolicyType: "NEVER" in a comment is not a setting.

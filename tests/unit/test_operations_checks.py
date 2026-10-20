@@ -205,7 +205,7 @@ _MIGRATION_SCRIPT = (
 def test_ops002_dockerfile_cmd_counts_as_a_migration_entry_point(
     tmp_path: Path,
 ) -> None:
-    """MINI-78: the start command lives in the image's CMD, not railway.json."""
+    """The start command lives in the image's CMD, not railway.json."""
     _write(tmp_path, "src/app/config.py", _TWO_SETTINGS)
     _write(tmp_path, "scripts/apply_migrations.py", _MIGRATION_SCRIPT)
     _write(
