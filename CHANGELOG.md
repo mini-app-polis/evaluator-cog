@@ -1,3 +1,10 @@
+## [3.59.8](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.7...v3.59.8) (2026-10-21)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 6.15.1 ([4f2e23a](https://github.com/mini-app-polis/evaluator-cog/commit/4f2e23ab200bc542402e31c316856a7ab2bee775))
+
 ## [3.59.7](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.6...v3.59.7) (2026-10-21)
 
 
