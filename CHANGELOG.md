@@ -1,3 +1,12 @@
+## [3.59.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.4...v3.59.5) (2026-10-21)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 6.11.0 ([45f7909](https://github.com/mini-app-polis/evaluator-cog/commit/45f7909e1f1351b4d84d943eda4874287b1d0d0c))
+* **deps:** bump miniapppolis-common-utils to 6.11.1 ([7f299cf](https://github.com/mini-app-polis/evaluator-cog/commit/7f299cf62ff027845920757b5f87b58a4a71e718))
+* **deps:** patch vulnerable dependencies (virtualenv) ([844f6b4](https://github.com/mini-app-polis/evaluator-cog/commit/844f6b4deb9f10fa4886b4da432b5dc759dc2136))
+
 ## [3.59.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.3...v3.59.4) (2026-10-20)
 
 
