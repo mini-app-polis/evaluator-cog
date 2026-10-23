@@ -1,9 +1,9 @@
 """Every Discord message says which evaluator ran, against which catalog.
 
-The library stamps ``(processor=X.Y.Z)`` from the installed distribution's
-metadata, and the Lambda deploy strips ``*.dist-info`` — so in production it
-stamps nothing. These tests simulate that by making the library's lookup
-return ``None``.
+The library stamps a version only when the caller passes one, and the
+evaluator passes none: it stamps ``(processor=X.Y.Z, standards=...)`` itself,
+from its own ``__version__``, so nothing depends on installed package
+metadata, which the Lambda deploy strips.
 """
 
 from unittest.mock import patch
@@ -18,7 +18,7 @@ from evaluator_cog import __version__
 
 @pytest.fixture
 def sent(monkeypatch):
-    """Messages as they would be delivered, with no distribution metadata."""
+    """Messages as they would be delivered."""
     monkeypatch.setenv("KAIANO_API_BASE_URL", "https://api.test")
     messages: list[dict] = []
 
@@ -26,10 +26,7 @@ def sent(monkeypatch):
         messages.append(message)
         return True
 
-    with (
-        patch.object(ps, "_resolve_processor_version", return_value=None),
-        patch.object(ps, "_deliver", _capture),
-    ):
+    with patch.object(ps, "_deliver", _capture):
         yield messages
 
 
