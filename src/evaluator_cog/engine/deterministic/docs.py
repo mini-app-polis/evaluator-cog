@@ -11,6 +11,7 @@ from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
 )
+from evaluator_cog.engine.deterministic.config import _settings_declared_fields
 
 
 def check_readme(repo_path: Path) -> list[Finding]:
@@ -49,8 +50,132 @@ def check_changelog(repo_path: Path) -> list[Finding]:
     return findings
 
 
+#: Folders never scanned for environment reads: dependencies, build output,
+#: caches and tests (DOC-004's check_notes).
+_ENV_SCAN_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".venv",
+        "venv",
+        "node_modules",
+        "dist",
+        "build",
+        ".astro",
+        ".vercel",
+        ".next",
+        ".output",
+        "coverage",
+        "__pycache__",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        "tests",
+        "test",
+        "__tests__",
+    }
+)
+_ENV_SCAN_SUFFIXES = frozenset(
+    {".py", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".astro"}
+)
+#: A test file outside a tests folder: test_x.py, x_test.py, x.test.ts, x.spec.ts.
+_ENV_TEST_FILE_RE = re.compile(r"(^test_.*\.py$|_test\.py$|\.(test|spec)\.[a-z]+$)")
+
+_ENV_NAME = r"([A-Z][A-Z0-9_]*)"
+_PY_ENV_READ_RES = (
+    re.compile(r"\b(?:getenv|environ\.get)\(\s*[\"']" + _ENV_NAME + r"[\"']"),
+    re.compile(r"\benviron\[\s*[\"']" + _ENV_NAME + r"[\"']\s*\]"),
+)
+_JS_ENV_READ_RES = (
+    re.compile(r"\b(?:import\.meta\.env|process\.env)\." + _ENV_NAME + r"\b"),
+    re.compile(
+        r"\b(?:import\.meta\.env|process\.env)\[\s*[\"'`]" + _ENV_NAME + r"[\"'`]\s*\]"
+    ),
+)
+#: Vite's own import.meta.env fields, which Astro also sets. They are the
+#: framework's contract, never configuration a repository supplies.
+_VITE_BUILTIN_ENV = frozenset(
+    {"MODE", "BASE_URL", "PROD", "DEV", "SSR", "SITE", "ASSETS_PREFIX"}
+)
+
+#: A name in .env.example, set or commented out: ``NAME=`` or ``# NAME=``.
+_ENV_EXAMPLE_NAME_RE = re.compile(r"^\s*#?\s*" + _ENV_NAME + r"\s*=")
+_EXTERNAL_TOOLING_RE = re.compile(r"^\s*#\s*external tooling\b", re.IGNORECASE)
+
+
+def _env_scan_files(root: Path) -> list[Path]:
+    """Source files under ``root`` that DOC-004 reads for environment reads."""
+    found: list[Path] = []
+    for path in root.rglob("*"):
+        rel_parts = path.relative_to(root).parts
+        if any(part in _ENV_SCAN_SKIP_DIRS for part in rel_parts[:-1]):
+            continue
+        if not path.is_file() or path.suffix not in _ENV_SCAN_SUFFIXES:
+            continue
+        if _ENV_TEST_FILE_RE.search(path.name):
+            continue
+        found.append(path)
+    return sorted(found)
+
+
+def _env_reads(root: Path) -> dict[str, Path]:
+    """Every environment variable read under ``root``, with a file reading it.
+
+    Python: os.environ[...], os.environ.get(...), os.getenv(...), and every
+    field of a Settings class under src/ (a pydantic-settings field is read
+    from the variable of its name). TypeScript, JavaScript and Astro:
+    import.meta.env and process.env, by dot or literal bracket access. A
+    name built at runtime is not collected.
+    """
+    reads: dict[str, Path] = {}
+    for path in _env_scan_files(root):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        patterns = _PY_ENV_READ_RES if path.suffix == ".py" else _JS_ENV_READ_RES
+        for pattern in patterns:
+            for name in pattern.findall(text):
+                if path.suffix != ".py" and name in _VITE_BUILTIN_ENV:
+                    continue
+                reads.setdefault(name, path)
+    src = root / "src"
+    if src.is_dir():
+        for field in _settings_declared_fields(
+            src, include_computed=False, include_plain_assign=False
+        ):
+            reads.setdefault(field.upper(), src)
+    return reads
+
+
+def _env_example_names(text: str) -> tuple[list[str], set[str]]:
+    """Names .env.example lists, in order, and those marked external tooling.
+
+    A comment line starting ``# external tooling`` marks every name after it
+    up to the next blank line, so one explanation can head a block of names.
+    """
+    listed: list[str] = []
+    external: set[str] = set()
+    marked = False
+    for line in text.splitlines():
+        if not line.strip():
+            marked = False
+            continue
+        if _EXTERNAL_TOOLING_RE.match(line):
+            marked = True
+            continue
+        match = _ENV_EXAMPLE_NAME_RE.match(line)
+        if not match:
+            continue
+        name = match.group(1)
+        if name not in listed:
+            listed.append(name)
+        if marked:
+            external.add(name)
+    return listed, external
+
+
 def check_env_example(repo_path: Path) -> list[Finding]:
-    """DOC-004: .env.example is required."""
+    """DOC-004: .env.example exists and lists exactly the variables read."""
     CHECK_ID = "DOC-004"
     findings = []
     # Check root first, then common service subdirectories
@@ -60,7 +185,8 @@ def check_env_example(repo_path: Path) -> list[Finding]:
         repo_path / "backend" / ".env.example",
         repo_path / "server" / ".env.example",
     ]
-    if not any(p.exists() for p in candidates):
+    env_example = next((p for p in candidates if p.exists()), None)
+    if env_example is None:
         findings.append(
             _finding(
                 "DOC-004",
@@ -68,6 +194,41 @@ def check_env_example(repo_path: Path) -> list[Finding]:
                 "documentation_coverage",
                 ".env.example is absent.",
                 "Create .env.example documenting all required environment variables.",
+            )
+        )
+        return findings
+
+    root = env_example.parent
+    try:
+        listed, external = _env_example_names(env_example.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return findings
+    reads = _env_reads(root)
+    rel_env = env_example.relative_to(repo_path)
+
+    for name in sorted(set(reads) - set(listed)):
+        findings.append(
+            _finding(
+                "DOC-004",
+                "WARN",
+                "documentation_coverage",
+                f"{reads[name].relative_to(repo_path)} reads {name}, "
+                f"which {rel_env} does not list.",
+                f"Add {name} to {rel_env}: uncommented if the code has no "
+                "default, commented if it has one.",
+            )
+        )
+    for name in listed:
+        if name in reads or name in external:
+            continue
+        findings.append(
+            _finding(
+                "DOC-004",
+                "WARN",
+                "documentation_coverage",
+                f"{rel_env} lists {name}, which nothing in the repository reads.",
+                f"Remove {name}, or head its block with a '# external tooling' "
+                "comment saying what reads it.",
             )
         )
     return findings
