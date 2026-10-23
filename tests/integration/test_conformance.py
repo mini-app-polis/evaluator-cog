@@ -488,13 +488,11 @@ def test_run_standalone_deterministic_calls_load_evaluator_config(
         mock_load.return_value = cfg
         mock_run_all.return_value = CheckResult(findings=[], checked_rule_ids=set())
         service = {"id": "svc-test", "type": "worker", "dod_type": "new_cog"}
-        prefect_log = MagicMock()
         _run_standalone_deterministic(
             service,
             tmp_path,
             "2.5.0",
             "deterministic-2.5.0-unit",
-            prefect_log,
             ctx=RunContext(),
         )
 
@@ -663,7 +661,6 @@ def test_post_service_findings_substitutes_the_success_row() -> None:
             standards_version="9.9.9",
             run_id="r",
             flow_name="deterministic-conformance",
-            prefect_log=MagicMock(),
         )
 
     findings = post.call_args.kwargs["findings"]

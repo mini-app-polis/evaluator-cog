@@ -183,7 +183,7 @@ def process_message(body: str) -> None:
         # systemic fault. Raising here means the message is not deleted, so
         # the work is retried rather than logged and lost — which is the
         # property the HTTP adapter could not have.
-        _assert_findings_were_delivered(log, ctx=ctx)
+        _assert_findings_were_delivered(ctx=ctx)
         _report_run(event, result, ctx=ctx)
         return
 
@@ -202,7 +202,7 @@ def process_message(body: str) -> None:
             log=log,
             ctx=ctx,
         )
-        _assert_findings_were_delivered(log, ctx=ctx)
+        _assert_findings_were_delivered(ctx=ctx)
         _report_introspection(ctx=ctx)
         return
 

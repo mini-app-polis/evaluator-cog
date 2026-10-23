@@ -128,7 +128,7 @@ def test_delivery_assertion_raises_when_nothing_landed() -> None:
         PostResult(attempted=162, posted=0, failed=162, errors=["Connection failed"])
     )
     with pytest.raises(conf.FindingDeliveryError) as excinfo:
-        conf._assert_findings_were_delivered(MagicMock(), ctx=ctx)
+        conf._assert_findings_were_delivered(ctx=ctx)
     message = str(excinfo.value)
     assert "162" in message
     # The message must name the two variables an operator should check.
@@ -148,7 +148,8 @@ def test_delivery_assertion_is_silent_on_a_partial_failure() -> None:
     ctx.tally.merge(PostResult(attempted=10, posted=9, failed=1))
     prefect_log = MagicMock()
 
-    conf._assert_findings_were_delivered(prefect_log, ctx=ctx)
+    with patch.object(conf, "log", prefect_log):
+        conf._assert_findings_were_delivered(ctx=ctx)
 
     # "Silent" is the claim in the name, so assert it: this function says
     # nothing on a partial failure. The per-emitter warning is raised by
@@ -170,7 +171,8 @@ def test_delivery_assertion_is_silent_when_nothing_was_offered() -> None:
     ctx = conf.RunContext.for_run()
     prefect_log = MagicMock()
 
-    conf._assert_findings_were_delivered(prefect_log, ctx=ctx)
+    with patch.object(conf, "log", prefect_log):
+        conf._assert_findings_were_delivered(ctx=ctx)
 
     assert not prefect_log.warning.called
     assert not prefect_log.error.called
@@ -182,12 +184,15 @@ def test_post_tracked_logs_what_landed_not_what_was_handed_over() -> None:
     """The regression test for the false 'posted N findings' log line."""
     ctx = conf.RunContext.for_run()
     prefect_log = MagicMock()
-    with patch.object(
-        conf,
-        "post_findings",
-        return_value=PostResult(attempted=3, posted=0, failed=3, errors=["nope"]),
+    with (
+        patch.object(conf, "log", prefect_log),
+        patch.object(
+            conf,
+            "post_findings",
+            return_value=PostResult(attempted=3, posted=0, failed=3, errors=["nope"]),
+        ),
     ):
-        conf._post_tracked("EVAL-003", prefect_log, ctx=ctx, findings=[1, 2, 3])
+        conf._post_tracked("EVAL-003", ctx=ctx, findings=[1, 2, 3])
 
     # It must NOT have claimed a successful post.
     assert not prefect_log.info.called, (
@@ -199,13 +204,12 @@ def test_post_tracked_logs_what_landed_not_what_was_handed_over() -> None:
 
 def test_post_tracked_accumulates_across_emitters() -> None:
     ctx = conf.RunContext.for_run()
-    prefect_log = MagicMock()
     for res in (
         PostResult(attempted=2, posted=2),
         PostResult(attempted=3, posted=0, failed=3, errors=["x"]),
     ):
         with patch.object(conf, "post_findings", return_value=res):
-            conf._post_tracked("repo", prefect_log, ctx=ctx, findings=[])
+            conf._post_tracked("repo", ctx=ctx, findings=[])
     assert ctx.tally.attempted == 5
     assert ctx.tally.posted == 2
     assert ctx.tally.failed == 3
@@ -236,7 +240,7 @@ def test_two_evaluations_in_one_process_keep_separate_tallies() -> None:
     def run(name: str) -> None:
         ctx = conf.RunContext.for_run()
         contexts[name] = ctx
-        conf._post_tracked(name, MagicMock(), ctx=ctx, findings=[], repo=name)
+        conf._post_tracked(name, ctx=ctx, findings=[], repo=name)
         both_posted.wait(timeout=5)
         conf._report_issue("repo_download_failed", f"{name}-cog", ctx=ctx)
 
@@ -255,48 +259,6 @@ def test_two_evaluations_in_one_process_keep_separate_tallies() -> None:
     assert contexts["alpha"].report is not contexts["beta"].report
 
 
-def test_every_post_site_in_the_flow_reports_into_the_run_log() -> None:
-    """No emitter may go quiet in the window an operator watches.
-
-    `_post_tracked` falls back to the shared-library logger when no run
-    logger is passed. That logger reaches the service's stdout but not
-    the Prefect run view, so a call site that omits it disappears from
-    the log while the ones around it keep reporting — which is exactly
-    what happened: eleven standalone repos posted silently while the two
-    monorepo apps and every introspection rule reported normally.
-
-    Asserted against the source rather than by running the flow, because
-    the failure is a missing argument at a call site and a behavioural
-    test would need to reach all eight of them.
-
-    The run context needs no equivalent test: it is keyword-only and has
-    no default, so a call site that forgets it is a TypeError rather than
-    a silent write into another run's accounting.
-    """
-    import ast
-    import inspect
-
-    from evaluator_cog.flows import conformance as conf
-
-    tree = ast.parse(inspect.getsource(conf))
-    missing: list[int] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        name = getattr(func, "id", None) or getattr(func, "attr", None)
-        if name != "_post_tracked":
-            continue
-        # (label, prefect_log) are the two positional parameters.
-        if len(node.args) < 2:
-            missing.append(node.lineno)
-
-    assert not missing, (
-        f"_post_tracked called without a run logger at line(s) {missing} — "
-        "those findings would post without saying so in the Prefect run log"
-    )
-
-
 def test_suppressed_duplicates_are_reported_in_the_run_view() -> None:
     """A repo whose only finding is dropped must not log nothing.
 
@@ -311,10 +273,12 @@ def test_suppressed_duplicates_are_reported_in_the_run_view() -> None:
     result.duplicate_details = ["CD-021 for deejay-cog matched the stored row"]
 
     prefect_log = MagicMock()
-    with patch.object(conf, "post_findings", return_value=result):
+    with (
+        patch.object(conf, "log", prefect_log),
+        patch.object(conf, "post_findings", return_value=result),
+    ):
         conf._post_tracked(
             "deejay-cog",
-            prefect_log,
             ctx=conf.RunContext.for_run(),
             findings=[{}],
             repo="deejay-cog",
