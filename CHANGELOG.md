@@ -1,3 +1,12 @@
+## [3.59.11](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.10...v3.59.11) (2026-10-23)
+
+
+### Bug Fixes
+
+* **auth:** accept hyphens in scope names ([97b2ef7](https://github.com/mini-app-polis/evaluator-cog/commit/97b2ef726c4130322365e1a80b273cdcae4c931a))
+* **deps:** bump miniapppolis-common-utils to 6.16.2 ([0d1adc7](https://github.com/mini-app-polis/evaluator-cog/commit/0d1adc716e392f47338a414c784a9fe6aa55752d))
+* **deps:** bump miniapppolis-common-utils to 6.17.0 ([60b22c1](https://github.com/mini-app-polis/evaluator-cog/commit/60b22c145b497e83c2086076f1ae4f287333f510))
+
 ## [3.59.10](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.9...v3.59.10) (2026-10-22)
 
 
