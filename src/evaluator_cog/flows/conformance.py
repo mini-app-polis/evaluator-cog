@@ -15,7 +15,7 @@ job.
 into a serial loop over the fleet. The API fans out instead, so a failure
 retries one repository rather than redelivering a pass that re-evaluates
 everything that already succeeded. The registry-to-events translation it
-did now lives in api-kaianolevine-com's ``services/fleet_registry.py``.
+did now lives in api-kaianolevine-com, behind ``POST /v1/evaluations/fleet``.
 
 Two modes, in both shapes:
 

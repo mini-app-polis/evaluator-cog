@@ -1,7 +1,7 @@
 # The AWS foundation: one queue, one function
 
 **Status: built and proven.** The implementation now lives in
-mini-app-polis/infra (`cogs.tf`, `modules/cog-worker`) and the runbook is that
+mini-app-polis/infra and the runbook is that
 repository's README; this document is the decision record. Anything operational —  how to
 apply, how to test the DLQ, what to hand step 2 — lives in that README rather
 than being repeated here.
@@ -23,7 +23,7 @@ follow-up.
 **Terraform from the start, not click-ops.** Click-ops is defensible for two
 resources and stops being defensible at five cogs, and a console setup called
 temporary becomes permanent by default. State started local; it
-now lives in an S3 backend in mini-app-polis/infra (`backend.tf`).
+now lives in an S3 backend declared in mini-app-polis/infra.
 
 **Terraform owns configuration; CI owns code.** The deploy role can call
 `UpdateFunctionCode` and `GetFunction` and nothing else, so a compromised
@@ -68,16 +68,16 @@ evidence rather than an assumption.
 
 **The Lambda concurrency quota** has been raised: reserved concurrency could
 not be set at all while a new account was below the 100 unreserved executions
-AWS requires to be left over. deejay and transcription now set
-`reserved_concurrency = 1` in mini-app-polis/infra `cogs.tf`; the evaluator
+AWS requires to be left over. deejay and transcription now have a reserved
+concurrency of 1, declared in mini-app-polis/infra; the evaluator
 is limited by `max_concurrency` on its event source mapping instead.
 
 ## Non-goals
 
 - No Step Functions, no fan-in coordinator, no EventBridge.
 - Not the other four cogs. This is one queue and one function; generalising to
-  the fleet is what happens after the pilot proves the shape. `account.tf`
-  in mini-app-polis/infra is the account-level part that does not repeat.
+  the fleet is what happens after the pilot proves the shape. The
+  account-level part that does not repeat is declared in mini-app-polis/infra.
 - Not a migration of anything off Railway. The API and Postgres stay.
 
 ## Settled
