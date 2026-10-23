@@ -81,10 +81,7 @@ _ENV_SCAN_SUFFIXES = frozenset(
 _ENV_TEST_FILE_RE = re.compile(r"(^test_.*\.py$|_test\.py$|\.(test|spec)\.[a-z]+$)")
 
 _ENV_NAME = r"([A-Z][A-Z0-9_]*)"
-_PY_ENV_READ_RES = (
-    re.compile(r"\b(?:getenv|environ\.get)\(\s*[\"']" + _ENV_NAME + r"[\"']"),
-    re.compile(r"\benviron\[\s*[\"']" + _ENV_NAME + r"[\"']\s*\]"),
-)
+_ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _JS_ENV_READ_RES = (
     re.compile(r"\b(?:import\.meta\.env|process\.env)\." + _ENV_NAME + r"\b"),
     re.compile(
@@ -117,6 +114,106 @@ def _env_scan_files(root: Path) -> list[Path]:
     return sorted(found)
 
 
+def _is_env_reader(func: ast.expr) -> bool:
+    """``getenv``, ``os.getenv``, ``environ.get`` or ``os.environ.get``."""
+    if isinstance(func, ast.Name):
+        return func.id == "getenv"
+    if not isinstance(func, ast.Attribute):
+        return False
+    if func.attr == "getenv":
+        return True
+    target = func.value
+    return func.attr == "get" and (
+        (isinstance(target, ast.Name) and target.id == "environ")
+        or (isinstance(target, ast.Attribute) and target.attr == "environ")
+    )
+
+
+def _is_environ(node: ast.expr) -> bool:
+    return (isinstance(node, ast.Name) and node.id == "environ") or (
+        isinstance(node, ast.Attribute) and node.attr == "environ"
+    )
+
+
+def _call_name(func: ast.expr) -> str | None:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+class _EnvReadVisitor(ast.NodeVisitor):
+    """One pass over a module: literal reads, and functions that wrap a read.
+
+    A wrapper is a function that passes one of its own parameters to an
+    environment read, or to another wrapper — ``_require(name)`` around
+    ``os.getenv(name)``. A literal passed to a wrapper in that position is a
+    read, the same as a literal passed to ``os.getenv``.
+    """
+
+    def __init__(self, wrappers: dict[str, int]) -> None:
+        self.wrappers = wrappers
+        self.reads: set[str] = set()
+        self.new_wrappers: dict[str, int] = {}
+        self._stack: list[tuple[str, list[str]]] = []
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        params = [a.arg for a in (*node.args.posonlyargs, *node.args.args)]
+        self._stack.append((node.name, params))
+        self.generic_visit(node)
+        self._stack.pop()
+
+    visit_FunctionDef = _visit_function
+    visit_AsyncFunctionDef = _visit_function
+
+    def _record(self, arg: ast.expr) -> None:
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            if _ENV_NAME_RE.match(arg.value):
+                self.reads.add(arg.value)
+        elif isinstance(arg, ast.Name) and self._stack:
+            name, params = self._stack[-1]
+            if arg.id in params:
+                index = params.index(arg.id)
+                # A method's call site omits self or cls.
+                if params[0] in ("self", "cls"):
+                    index -= 1
+                self.new_wrappers.setdefault(name, index)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if _is_env_reader(node.func) and node.args:
+            self._record(node.args[0])
+        else:
+            called = _call_name(node.func)
+            index = self.wrappers.get(called or "")
+            if index is not None and 0 <= index < len(node.args):
+                self._record(node.args[index])
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        if _is_environ(node.value) and isinstance(node.ctx, ast.Load):
+            self._record(node.slice)
+        self.generic_visit(node)
+
+
+def _python_env_reads(trees: dict[Path, ast.AST]) -> dict[str, Path]:
+    """Names read in Python, directly or through the repository's wrappers."""
+    wrappers: dict[str, int] = {}
+    while True:
+        reads: dict[str, Path] = {}
+        found: dict[str, int] = {}
+        for path, tree in trees.items():
+            visitor = _EnvReadVisitor(wrappers)
+            visitor.visit(tree)
+            for name in sorted(visitor.reads):
+                reads.setdefault(name, path)
+            for name, index in visitor.new_wrappers.items():
+                found.setdefault(name, index)
+        if all(wrappers.get(k) == v for k, v in found.items()):
+            return reads
+        wrappers.update(found)
+
+
 def _env_reads(root: Path) -> dict[str, Path]:
     """Every environment variable read under ``root``, with a file reading it.
 
@@ -127,17 +224,22 @@ def _env_reads(root: Path) -> dict[str, Path]:
     name built at runtime is not collected.
     """
     reads: dict[str, Path] = {}
+    trees: dict[Path, ast.AST] = {}
     for path in _env_scan_files(root):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        patterns = _PY_ENV_READ_RES if path.suffix == ".py" else _JS_ENV_READ_RES
-        for pattern in patterns:
+        if path.suffix == ".py":
+            with suppress(SyntaxError, ValueError):
+                trees[path] = ast.parse(text)
+            continue
+        for pattern in _JS_ENV_READ_RES:
             for name in pattern.findall(text):
-                if path.suffix != ".py" and name in _VITE_BUILTIN_ENV:
-                    continue
-                reads.setdefault(name, path)
+                if name not in _VITE_BUILTIN_ENV:
+                    reads.setdefault(name, path)
+    for name, path in _python_env_reads(trees).items():
+        reads.setdefault(name, path)
     src = root / "src"
     if src.is_dir():
         for field in _settings_declared_fields(

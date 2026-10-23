@@ -513,6 +513,31 @@ def test_doc004_counts_settings_fields_as_reads(tmp_path: Path) -> None:
     assert "LOG_LEVEL" in findings[0]
 
 
+def test_doc004_follows_the_repositorys_own_wrappers(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "FOLDER_ID=\n# DRY_RUN=\n# MAX_ROUNDS=8\n# LEVEL=\n",
+            "src/app/config.py": (
+                "import os\n"
+                "def _require(name):\n"
+                "    return os.getenv(name, '')\n"
+                "def _flag(name):\n"
+                "    return _require(name) == 'true'\n"
+                "class Cfg:\n"
+                "    def number(self, default, name):\n"
+                "        return os.environ.get(name) or default\n"
+                "folder = _require('FOLDER_ID')\n"
+                "dry = _flag('DRY_RUN')\n"
+                "rounds = Cfg().number(8, 'MAX_ROUNDS')\n"
+                "level = os.environ['LEVEL']\n"
+                "os.environ['WRITTEN_ONLY'] = 'x'\n"
+            ),
+        },
+    )
+    assert findings == []
+
+
 def test_doc004_flags_a_listed_name_nothing_reads(tmp_path: Path) -> None:
     findings = _doc004(
         tmp_path,
