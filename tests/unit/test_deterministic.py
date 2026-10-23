@@ -456,6 +456,132 @@ def test_check_env_example_fires_when_absent_everywhere(tmp_path: Path) -> None:
     assert any(f["rule_id"] == "DOC-004" for f in findings)
 
 
+def _doc004(tmp_path: Path, files: dict[str, str]) -> list[str]:
+    for rel, text in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return [f["finding"] for f in check_env_example(tmp_path)]
+
+
+def test_doc004_python_reads_match_env_example(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "API_KEY=\n# TIMEOUT_SECONDS=30\n",
+            "src/app/main.py": (
+                "import os\n"
+                "key = os.environ['API_KEY']\n"
+                "t = os.getenv('TIMEOUT_SECONDS', '30')\n"
+            ),
+        },
+    )
+    assert findings == []
+
+
+def test_doc004_flags_a_python_read_missing_from_env_example(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "API_KEY=\n",
+            "src/app/main.py": (
+                "import os\n"
+                "key = os.environ.get('API_KEY')\n"
+                "region = os.environ.get('AWS_REGION', 'us-east-1')\n"
+            ),
+        },
+    )
+    assert len(findings) == 1
+    assert "reads AWS_REGION" in findings[0]
+    assert "src/app/main.py" in findings[0]
+
+
+def test_doc004_counts_settings_fields_as_reads(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "DATABASE_URL=\n",
+            "src/app/config.py": (
+                "from pydantic_settings import BaseSettings\n"
+                "class Settings(BaseSettings):\n"
+                "    database_url: str\n"
+                "    log_level: str = 'INFO'\n"
+            ),
+        },
+    )
+    assert len(findings) == 1
+    assert "LOG_LEVEL" in findings[0]
+
+
+def test_doc004_flags_a_listed_name_nothing_reads(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "API_KEY=\n# OLD_SETTING=1\n",
+            "src/app/main.py": "import os\nos.getenv('API_KEY')\n",
+        },
+    )
+    assert len(findings) == 1
+    assert "lists OLD_SETTING" in findings[0]
+
+
+def test_doc004_skips_names_marked_external_tooling(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": (
+                "API_KEY=\n"
+                "\n"
+                "# external tooling: read by the shared logger.\n"
+                "# The level for every logger.\n"
+                "# LOGGING_LEVEL=INFO\n"
+                "SENTRY_DSN=\n"
+                "\n"
+                "# Not marked, after the blank line.\n"
+                "STRAY=\n"
+            ),
+            "src/app/main.py": "import os\nos.getenv('API_KEY')\n",
+        },
+    )
+    assert len(findings) == 1
+    assert "lists STRAY" in findings[0]
+
+
+def test_doc004_typescript_and_astro_reads(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "PUBLIC_API_URL=\nSECRET_TOKEN=\n",
+            "src/lib/api.ts": (
+                "const base = import.meta.env.PUBLIC_API_URL;\n"
+                "if (import.meta.env.DEV) console.log(base);\n"
+            ),
+            "src/pages/index.astro": (
+                "---\nconst token = process.env['SECRET_TOKEN'];\n"
+                "const extra = import.meta.env.EXTRA_FLAG;\n---\n"
+            ),
+        },
+    )
+    assert len(findings) == 1
+    assert "reads EXTRA_FLAG" in findings[0]
+    assert "index.astro" in findings[0]
+
+
+def test_doc004_ignores_tests_and_dependencies(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "API_KEY=\n",
+            "src/app/main.py": "import os\nos.getenv('API_KEY')\n",
+            "tests/test_main.py": "import os\nos.getenv('TEST_ONLY')\n",
+            "src/app/main.test.ts": "process.env.SPEC_ONLY\n",
+            "node_modules/pkg/index.js": "process.env.DEP_ONLY\n",
+            ".venv/lib/x.py": "import os\nos.getenv('VENV_ONLY')\n",
+        },
+    )
+    assert findings == []
+
+
 def test_run_all_checks_empty_repo() -> None:
     repo = _make_repo({})
     result = run_all_checks(repo)
