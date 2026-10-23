@@ -538,6 +538,36 @@ def test_doc004_follows_the_repositorys_own_wrappers(tmp_path: Path) -> None:
     assert findings == []
 
 
+def test_doc004_follows_script_wrappers_and_vite_config(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": ("SITE_API=\nSITE_SENTRY_DSN=\nE2E_BASE_URL=\nCI_TOKEN=\n"),
+            "vite.config.ts": (
+                "import { defineConfig, loadEnv } from 'vite';\n"
+                "export default defineConfig(({ mode }) => {\n"
+                "  const apiEnv = loadEnv(mode, '.', 'SITE_API');\n"
+                "  const dsn = loadEnv(mode, '.', 'SITE_').SITE_SENTRY_DSN;\n"
+                "  return { define: {\n"
+                "    'import.meta.env.VITE_API_URL': JSON.stringify(apiEnv.SITE_API),\n"
+                "    'import.meta.env.VITE_DSN': JSON.stringify(dsn),\n"
+                "  } };\n"
+                "});\n"
+            ),
+            "src/client.ts": "const url = import.meta.env.VITE_API_URL;\n",
+            "e2e/env.ts": (
+                "function required(name: string): string {\n"
+                "  const v = process.env[name]?.trim();\n"
+                "  return v ?? '';\n"
+                "}\n"
+                "export const base = required('E2E_BASE_URL');\n"
+                'export const token = required("CI_TOKEN");\n'
+            ),
+        },
+    )
+    assert findings == []
+
+
 def test_doc004_flags_a_listed_name_nothing_reads(tmp_path: Path) -> None:
     findings = _doc004(
         tmp_path,
