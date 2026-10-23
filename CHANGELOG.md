@@ -1,3 +1,18 @@
+# [3.60.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.12...v3.60.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* **conformance:** DOC-004 follows a repository's own env-reading wrappers ([12c243f](https://github.com/mini-app-polis/evaluator-cog/commit/12c243fb3e40514e35e6ef5d5c5618c9cec64071))
+* **deps:** bump miniapppolis-common-utils to 6.22.0 ([de43183](https://github.com/mini-app-polis/evaluator-cog/commit/de4318334898fbb919711ca27d4e99dd2bedc4f2))
+* **deps:** patch vulnerable dependencies (filelock) ([235956a](https://github.com/mini-app-polis/evaluator-cog/commit/235956a84974af256162b6f5ed073fa8b0b72c3b))
+* **deps:** patch vulnerable dependencies (virtualenv) ([d267f8a](https://github.com/mini-app-polis/evaluator-cog/commit/d267f8acd363efbd057e70278f53be0b3f2e5a16))
+
+
+### Features
+
+* **conformance:** DOC-004 compares the env vars a repo reads with its .env.example ([ca0b565](https://github.com/mini-app-polis/evaluator-cog/commit/ca0b565cfe92532dadd515ba7edcfe51fb87bd22))
+
 ## [3.59.12](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.11...v3.59.12) (2026-10-23)
 
 
