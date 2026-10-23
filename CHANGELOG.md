@@ -1,3 +1,12 @@
+## [3.59.12](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.11...v3.59.12) (2026-10-23)
+
+
+### Bug Fixes
+
+* **conformance:** take trait exemptions from the catalog, drop prefect_log, and remove stale CD-009/CD-010 exemptions ([47aa9fa](https://github.com/mini-app-polis/evaluator-cog/commit/47aa9fa5849805251884e0d6bc137e29f00b1a76))
+* **deps:** bump miniapppolis-common-utils to 6.18.0 ([e90f783](https://github.com/mini-app-polis/evaluator-cog/commit/e90f783cfe708038b6f17debd7f1f0fd983e1617))
+* **deps:** bump miniapppolis-common-utils to 6.19.0 ([1df375e](https://github.com/mini-app-polis/evaluator-cog/commit/1df375e2c382b7fb16a73f01842d0075d8078799))
+
 ## [3.59.11](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.10...v3.59.11) (2026-10-23)
 
 
