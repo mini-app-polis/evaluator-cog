@@ -60,12 +60,13 @@ ROUTE_METHODS = frozenset(
 # The dependency-injection wrappers whose argument is the guard.
 DEPENDENCY_MARKERS = frozenset({"Depends", "Security"})
 
-# A string that looks like a scope: dot-separated lowercase identifier
-# segments, two or more. Deliberately looser than the grammar so that a
-# malformed scope is *found* and then reported by AUTH-003 step (5),
-# rather than going unrecognized and silently classifying its route as
-# authenticated-only.
-SCOPE_LIKE_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
+# A string that looks like a scope: dot-separated lowercase segments, two
+# or more, each of letters, digits, hyphens or underscores (the identity
+# store allows hyphens: ``tasks.agent-runs.read``). Deliberately looser
+# than the grammar so that a malformed scope is *found* and then reported
+# by AUTH-003 step (5), rather than going unrecognized and silently
+# classifying its route as authenticated-only.
+SCOPE_LIKE_RE = re.compile(r"^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)+$")
 
 # The grammar: exactly <domain>.<resource>.<action>.
 SCOPE_SEGMENTS = 3

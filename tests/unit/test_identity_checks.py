@@ -99,6 +99,23 @@ def test_auth003_passes_a_scope_guarded_route(tmp_path: Path) -> None:
     assert check_auth_003(_guarded_route_repo(tmp_path)) == []
 
 
+def test_auth003_passes_a_scope_with_a_hyphenated_segment(tmp_path: Path) -> None:
+    """The identity store's scope grammar allows hyphens in a segment."""
+    _write(
+        tmp_path,
+        "src/pkg/routes.py",
+        "from fastapi import APIRouter, Depends\n"
+        "from pkg.guard import require_scope\n"
+        "\n"
+        "router = APIRouter()\n"
+        "\n"
+        '@router.get("/runs")\n'
+        'async def list_runs(_guard=Depends(require_scope("tasks.agent-runs.read"))):\n'
+        "    return []\n",
+    )
+    assert check_auth_003(tmp_path) == []
+
+
 def test_auth003_returns_nothing_when_the_repo_registers_no_routes(
     tmp_path: Path,
 ) -> None:
