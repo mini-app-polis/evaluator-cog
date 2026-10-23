@@ -377,9 +377,6 @@ def _resolved_rule_ids(
         for f in deterministic_findings
         if f.get("rule_id") != "CHECKER"
     }
-    # EVAL-002 is assessed deterministically via the standards_version field check.
-    # Always mark it as checked so the LLM does not re-assess it.
-    resolved.add("EVAL-002")
     return resolved
 
 
@@ -557,11 +554,7 @@ Rules listed under `exemptions` are formally excepted for this repo with documen
 
 Rules listed under `deferrals` are known failures that are intentionally deprioritized — do not raise findings for these rule IDs. They are already tracked.
 
-Traits listed modify which rules apply:
-- `multi-flow`: CD-015 (prefect.serve() pattern) does not apply — the multi-flow structure makes source scanning unreliable for this check.
-- `pipeline-cog-evaluator`: PIPE-011 does not apply — this repo IS the evaluator.
-- `logger-primitive`: CD-009 and XSTACK-001 do not apply — this repo defines the shared logger primitive.
-- `cloudflare-pages`: VER-003, VER-005, VER-006 do not apply — Cloudflare Pages Git integration handles deployment.
+Rules that the repo's `traits` exempt, as the standards catalog defines them, are already left out of the rules to assess below — do not raise findings for them.
 """
     else:
         evaluator_yaml_block = ""
@@ -635,11 +628,6 @@ Evidence discipline:
 Never flag something as missing just because it was not mentioned
 in the deterministic findings — absence of a finding means passing
 Only flag rules where you have genuine positive signal of a problem
-- If you are raising a finding for CD-010 (three-layer observability stack
-  absent or incomplete), do NOT also raise separate findings for CD-002
-  (Sentry absent) or CD-009 (structured logging absent) for the same service.
-  CD-010 is the composite rule — its sub-components are implicit. Raising all
-  three produces duplicate findings for one root cause.
 
 WHAT TO EMIT:
 

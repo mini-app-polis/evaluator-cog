@@ -602,8 +602,7 @@ def run_all_checks(
 
     # Runtime rules — pipeline cogs are Lambda functions behind their own
     # queue, trigger cogs start work through the API (ADR-009). These
-    # replace PIPE-001, PIPE-004, PIPE-006, PIPE-009, PIPE-012, CD-005,
-    # CD-015 and CD-016, which described Prefect on Railway.
+    # replace the retired rules that described Prefect on Railway.
     if is_pipeline_cog:
         _run(check_no_retired_trigger_patterns, "PIPE-008")
         _run(check_db_writes_use_upserts, "PIPE-002")

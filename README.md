@@ -16,9 +16,9 @@ An AWS Lambda behind an SQS queue, two engine modules:
 - `evaluator_cog.flows.conformance` — `handler(event)` is the unit of work: one
   repository, downloaded as a **zipball** from GitHub and run through the
   deterministic and/or LLM checks. `run_introspection()` is the rest of a fleet
-  pass — the four checks that grade the inventory, the stored findings and the
+  pass — the checks that grade the inventory, the stored findings and the
   catalog itself, which no repository owns
-- `evaluator_cog.engine.deterministic` — file/AST/YAML rule checks (100+ rules)
+- `evaluator_cog.engine.deterministic` — file/AST/YAML rule checks
 - `evaluator_cog.engine.llm` — soft rule assessment, prompt builders, response parsing
 
 Nothing here is scheduled and nothing is polled. A repository is evaluated when

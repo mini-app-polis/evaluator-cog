@@ -284,7 +284,6 @@ def _report_note(reason: str, repo_id: str, *, ctx: RunContext) -> None:
 
 def _post_tracked(
     label: str,
-    prefect_log: Any = None,
     *,
     ctx: RunContext,
     **kwargs: Any,
@@ -296,19 +295,11 @@ def _post_tracked(
     ``len(findings)`` — reporting the size of the list you handed over is
     how a total outage came to be logged as success three times in one
     run.
-
-    Pass ``prefect_log`` wherever a run logger is in scope. Omitting it
-    falls back to the shared-library logger, which reaches the service's
-    stdout but not the Prefect run view — so a caller that omits it goes
-    quiet in the window an operator is actually watching, while the
-    callers around it keep reporting. Every call site in this module
-    passes it; the default exists only for callers with no run context.
     """
-    emit = prefect_log if prefect_log is not None else log
     result = post_findings(**kwargs)
     ctx.tally.merge(result)
     if result.posted:
-        emit.info("%s: posted %d findings", label, result.posted)
+        log.info("%s: posted %d findings", label, result.posted)
     if result.duplicates:
         # This is why deejay-cog and evaluator-cog looked absent from the
         # 6.9.1 run rather than suppressed: each computed exactly one
@@ -317,7 +308,7 @@ def _post_tracked(
         # produced no line at all and read as though it had never been
         # processed. A dropped finding is a decision and belongs in the
         # run view, not only in stdout.
-        emit.warning(
+        log.warning(
             "%s: %d of %d findings suppressed as duplicates — %s",
             label,
             result.duplicates,
@@ -325,7 +316,7 @@ def _post_tracked(
             "; ".join(result.duplicate_details) or "no detail recorded",
         )
     if result.failed:
-        emit.warning(
+        log.warning(
             "%s: %d of %d findings failed to POST — last error: %s",
             label,
             result.failed,
@@ -339,7 +330,7 @@ class FindingDeliveryError(RuntimeError):
     """Raised when a run computed findings and delivered none of them."""
 
 
-def _assert_findings_were_delivered(prefect_log: Any, *, ctx: RunContext) -> None:
+def _assert_findings_were_delivered(*, ctx: RunContext) -> None:
     """Fail the run when nothing reached the API.
 
     Raising is the point. The adapter reports an ERROR to the notification
@@ -889,11 +880,6 @@ def run_conformance_check(
     Run deterministic + LLM conformance checks against a cloned repo.
     Posts findings to api-kaianolevine-com when post=True. Never raises.
     """
-    # Named for the run logger it used to resolve. There is no Prefect
-    # runtime to resolve one from any more, and the shared logger is what
-    # reaches the service's stdout either way.
-    prefect_log = log
-
     # Deterministic checks
     try:
         result = run_all_checks(
@@ -920,7 +906,7 @@ def run_conformance_check(
         # checks is indistinguishable from a repo that passed them all.
         _report_issue("deterministic_checks_failed", repo_id, exc, ctx=ctx)
 
-    prefect_log.info(
+    log.info(
         "conformance: %d deterministic findings for %s",
         len(deterministic_findings),
         repo_id,
@@ -1010,15 +996,13 @@ def run_conformance_check(
             llm_findings = [f for f in llm_findings if f not in _dropped_findings]
             if _dropped_findings:
                 for _f in _dropped_findings:
-                    prefect_log.warning(
+                    log.warning(
                         "conformance: dropped spurious passing finding for %s [%s] %s",
                         repo_id,
                         _f.get("rule_id") or "?",
                         (_f.get("finding") or "")[:200],
                     )
-            prefect_log.info(
-                "conformance: %d LLM findings for %s", len(llm_findings), repo_id
-            )
+            log.info("conformance: %d LLM findings for %s", len(llm_findings), repo_id)
         except Exception as exc:
             log.warning("conformance: LLM assessment failed for %s: %s", repo_id, exc)
             _report_issue("llm_assessment_failed", repo_id, exc, ctx=ctx)
@@ -1026,7 +1010,7 @@ def run_conformance_check(
                 f"the LLM assessment failed ({type(exc).__name__}: {exc})"
             )
     else:
-        prefect_log.warning(
+        log.warning(
             "conformance: ANTHROPIC_API_KEY not set, skipping LLM assessment for %s",
             repo_id,
         )
@@ -1083,7 +1067,6 @@ def run_conformance_check(
     if post:
         _post_tracked(
             repo_id,
-            prefect_log,
             ctx=ctx,
             findings=findings_to_post,
             run_id=run_id,
@@ -1101,7 +1084,6 @@ def _run_standalone_conformance(
     repo_path: Path,
     standards_version: str,
     run_id: str,
-    prefect_log: Any,
     rule_applies_to: dict[str, list[str]] | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
@@ -1153,13 +1135,13 @@ def _run_standalone_conformance(
             catalog_schema=catalog_schema,
         )
         _ = all_findings
-        prefect_log.info(
+        log.info(
             "conformance: LLM pass complete for %s (config: %s)",
             repo_id,
             evaluator_cfg.source,
         )
     except Exception as exc:
-        prefect_log.warning("conformance: check failed for %s: %s", repo_id, exc)
+        log.warning("conformance: check failed for %s: %s", repo_id, exc)
         _report_issue("repo_check_failed", repo_id, exc, ctx=ctx)
 
 
@@ -1190,7 +1172,6 @@ def _post_not_evaluated(
     flow_name: str,
     source: str,
     standards_version: str,
-    prefect_log: Any,
 ) -> None:
     """Record that a declared service could not be evaluated in this run.
 
@@ -1209,7 +1190,6 @@ def _post_not_evaluated(
     """
     _post_tracked(
         repo_id,
-        prefect_log,
         ctx=ctx,
         findings=[
             {
@@ -1251,7 +1231,6 @@ def _post_service_findings(
     standards_version: str,
     run_id: str,
     flow_name: str,
-    prefect_log: Any,
 ) -> None:
     """Deliver one service's deterministic findings.
 
@@ -1274,7 +1253,6 @@ def _post_service_findings(
         ]
     _post_tracked(
         repo_id,
-        prefect_log,
         ctx=ctx,
         findings=findings,
         run_id=run_id,
@@ -1290,7 +1268,6 @@ def _evaluate_service_deterministic(
     repo_path: Path,
     standards_version: str,
     run_id: str,
-    prefect_log: Any,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
     *,
@@ -1327,9 +1304,7 @@ def _evaluate_service_deterministic(
         catalog_schema=catalog_schema,
     )
 
-    prefect_log.info(
-        "deterministic: %s using config from %s", repo_id, evaluator_cfg.source
-    )
+    log.info("deterministic: %s using config from %s", repo_id, evaluator_cfg.source)
 
     _repo_started = time.monotonic()
     try:
@@ -1344,14 +1319,10 @@ def _evaluate_service_deterministic(
             evaluator_config=evaluator_cfg,
             rule_catalog=rule_catalog,
             catalog_schema=catalog_schema,
-            progress=lambda note: prefect_log.info(
-                "deterministic: %s: %s", repo_id, note
-            ),
+            progress=lambda note: log.info("deterministic: %s: %s", repo_id, note),
         )
     except Exception as exc:
-        prefect_log.warning(
-            "deterministic: run_all_checks failed for %s: %s", repo_id, exc
-        )
+        log.warning("deterministic: run_all_checks failed for %s: %s", repo_id, exc)
         _post_not_evaluated(
             repo_id,
             f"the deterministic checks raised ({type(exc).__name__}: {exc})",
@@ -1360,11 +1331,10 @@ def _evaluate_service_deterministic(
             flow_name="deterministic-conformance",
             source="conformance_deterministic",
             standards_version=standards_version,
-            prefect_log=prefect_log,
         )
         return None
 
-    prefect_log.info(
+    log.info(
         "deterministic: %d findings for %s (%.1fs)",
         len(result.findings),
         repo_id,
@@ -1378,7 +1348,6 @@ def _run_standalone_deterministic(
     repo_path: Path,
     standards_version: str,
     run_id: str,
-    prefect_log: Any,
     rule_applies_to: dict[str, list[str]] | None = None,
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
@@ -1397,7 +1366,6 @@ def _run_standalone_deterministic(
         repo_path,
         standards_version,
         run_id,
-        prefect_log,
         rule_catalog=rule_catalog,
         catalog_schema=catalog_schema,
         ctx=ctx,
@@ -1411,7 +1379,6 @@ def _run_standalone_deterministic(
         standards_version=standards_version,
         run_id=run_id,
         flow_name="deterministic-conformance",
-        prefect_log=prefect_log,
     )
 
 
@@ -1430,7 +1397,6 @@ def _run_applies_to_absent_checks(
     standards_version: str,
     evaluator_standards_version: str,
     run_id: str,
-    prefect_log: Any,
 ) -> int:
     """Run applies_to-absent checks once per flow invocation.
 
@@ -1459,7 +1425,6 @@ def _run_applies_to_absent_checks(
         if eval_003_findings:
             _post_tracked(
                 "EVAL-003",
-                prefect_log,
                 ctx=ctx,
                 findings=eval_003_findings,
                 run_id=run_id,
@@ -1470,7 +1435,7 @@ def _run_applies_to_absent_checks(
             )
         completed += 1
     except Exception as exc:
-        prefect_log.warning("EVAL-003: check failed: %s", exc)
+        log.warning("EVAL-003: check failed: %s", exc)
 
     # XSTACK-006 — every repo carrying an evaluator.yaml is registered.
     #
@@ -1491,7 +1456,6 @@ def _run_applies_to_absent_checks(
             if _findings:
                 _post_tracked(
                     _rule_id,
-                    prefect_log,
                     ctx=ctx,
                     findings=_findings,
                     run_id=run_id,
@@ -1502,7 +1466,7 @@ def _run_applies_to_absent_checks(
                 )
             completed += 1
         except Exception as exc:
-            prefect_log.warning("%s: check failed: %s", _rule_id, exc)
+            log.warning("%s: check failed: %s", _rule_id, exc)
 
     # XSTACK-008 — every registered repo resolved where the registry says.
     #
@@ -1515,7 +1479,6 @@ def _run_applies_to_absent_checks(
         if xstack_008_findings:
             _post_tracked(
                 "XSTACK-008",
-                prefect_log,
                 ctx=ctx,
                 findings=xstack_008_findings,
                 run_id=run_id,
@@ -1526,7 +1489,7 @@ def _run_applies_to_absent_checks(
             )
         completed += 1
     except Exception as exc:
-        prefect_log.warning("XSTACK-008: check failed: %s", exc)
+        log.warning("XSTACK-008: check failed: %s", exc)
 
     # EVAL-007 — standards/evaluator drift
     try:
@@ -1538,7 +1501,6 @@ def _run_applies_to_absent_checks(
         if eval_007_findings:
             _post_tracked(
                 "EVAL-007",
-                prefect_log,
                 ctx=ctx,
                 findings=eval_007_findings,
                 run_id=run_id,
@@ -1549,7 +1511,7 @@ def _run_applies_to_absent_checks(
             )
         completed += 1
     except Exception as exc:
-        prefect_log.warning("EVAL-007: check failed: %s", exc)
+        log.warning("EVAL-007: check failed: %s", exc)
 
     return completed
 
@@ -1698,7 +1660,6 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                     flow_name=flow_name,
                     source=source,
                     standards_version=standards_version,
-                    prefect_log=log,
                 )
                 result.not_evaluated.append(service_id)
             return result
@@ -1719,7 +1680,6 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                         root,
                         standards_version,
                         event.run_id,
-                        log,
                         rule_applies_to=rule_applies_to,
                         rule_catalog=rule_catalog,
                         catalog_schema=catalog_schema,
@@ -1732,7 +1692,6 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                         root,
                         standards_version,
                         event.run_id,
-                        log,
                         rule_catalog=rule_catalog,
                         catalog_schema=catalog_schema,
                         ctx=ctx,
@@ -1763,7 +1722,6 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                     flow_name=flow_name,
                     source=source,
                     standards_version=standards_version,
-                    prefect_log=log,
                 )
                 result.not_evaluated.append(service_id)
 
@@ -1776,7 +1734,6 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                     standards_version=standards_version,
                     run_id=event.run_id,
                     flow_name=flow_name,
-                    prefect_log=log,
                 )
                 result.evaluated.append(service_id)
 
@@ -1901,7 +1858,6 @@ def run_introspection(
         standards_version=standards_version,
         evaluator_standards_version=standards_version,
         run_id=run_id,
-        prefect_log=log,
     )
 
     # The checks that ran, so the report says what it did. Without this the
