@@ -33,12 +33,16 @@ accident.
 
 from __future__ import annotations
 
-import json
-from typing import Any
-
 from mini_app_polis import logger as logger_mod
+from mini_app_polis.api.contract import (
+    EvaluationIntrospectionMessage,
+    EvaluationRepositoryMessage,
+    EvaluationRepositoryPayload,
+)
+from mini_app_polis.lambda_worker import UnprocessableMessage, parse_message
 from mini_app_polis.pipeline_status import post_run_finding
 
+from evaluator_cog._version import __version__
 from evaluator_cog.flows.conformance import (
     _REPO,
     EvaluationEvent,
@@ -51,35 +55,16 @@ from evaluator_cog.flows.conformance import (
     flow_name_for_mode,
     handler,
     run_introspection,
-    stamp_versions,
 )
+
+__all__ = ["UnprocessableMessage", "process_message"]
 
 log = logger_mod.get_logger()
 
-#: Must match api-kaianolevine-com's evaluation_dispatch. A mismatch is a
-#: message this consumer refuses rather than misreads.
-#:
-#: This queue is evaluator-cog's alone — mini-app-polis/infra names it
-#: from the cog, one queue per cog. A shared fleet queue was considered
-#: and cannot work: SQS has no selective receive, so a consumer takes
-#: whatever it is handed, and an unrecognised type would send another
-#: cog's job to *this* cog's dead-letter queue. The type check below is
-#: therefore a producer-bug detector, not a router.
-MESSAGE_VERSION = 1
-TYPE_REPOSITORY = "evaluation.repository"
-TYPE_INTROSPECTION = "evaluation.introspection"
 
-
-class UnprocessableMessage(RuntimeError):
-    """The message cannot be handled by this consumer, ever.
-
-    Distinct from a job that failed: retrying will not help, but the
-    message is still left for the dead-letter queue rather than dropped,
-    because something produced it and someone should see what.
-    """
-
-
-def _event_from(payload: dict[str, Any], *, ctx: RunContext) -> EvaluationEvent:
+def _event_from(
+    payload: EvaluationRepositoryPayload, *, ctx: RunContext
+) -> EvaluationEvent:
     """One repository, as the API described it.
 
     No registry lookup: the event carries what CI already knew, and the
@@ -92,15 +77,15 @@ def _event_from(payload: dict[str, Any], *, ctx: RunContext) -> EvaluationEvent:
     been a release ago. A fleet pass supplies its own id so every
     repository in the pass shares one.
     """
-    repo = str(payload.get("repo") or "").strip()
+    repo = payload.repo.strip()
     if not repo:
         raise UnprocessableMessage("repository message names no repo")
 
-    mode = str(payload.get("mode") or "deterministic")
+    mode = payload.mode
     if mode not in {"deterministic", "llm"}:
         raise UnprocessableMessage(f"unknown mode {mode!r}")
 
-    run_id = str(payload.get("run_id") or "")
+    run_id = payload.run_id or ""
     if not run_id:
         standards_version = _get_standards_version(ctx=ctx)
         run_id = (
@@ -115,23 +100,19 @@ def _event_from(payload: dict[str, Any], *, ctx: RunContext) -> EvaluationEvent:
     # A release-triggered evaluation names a repository and nothing else,
     # and synthesising its single service from the repo id is right: CI
     # knows what it built and no registry lookup can add to that.
-    services = payload.get("services")
-    if isinstance(services, list) and services:
-        if not all(isinstance(service, dict) for service in services):
-            raise UnprocessableMessage("services must be a list of objects")
-        resolved = tuple(services)
+    if payload.services:
+        resolved = tuple(payload.services)
     else:
-        repo_id = str(payload.get("repo_id") or repo)
-        resolved = ({"id": repo_id, "repo": repo},)
+        resolved = ({"id": payload.repo_id or repo, "repo": repo},)
 
     return EvaluationEvent(
-        org=str(payload.get("org") or "mini-app-polis"),
+        org=payload.org,
         repo=repo,
-        ref=str(payload.get("ref") or "main"),
+        ref=payload.ref,
         services=resolved,
         run_id=run_id,
         mode=mode,
-        standards_version=str(payload.get("standards_version") or ""),
+        standards_version=payload.standards_version or "",
     )
 
 
@@ -141,36 +122,17 @@ def process_message(body: str) -> None:
     Shared with the Lambda entrypoint, which differs only in where the body
     comes from and who deletes it afterwards.
     """
-    try:
-        message = json.loads(body)
-    except ValueError as exc:
-        raise UnprocessableMessage(f"body is not JSON: {exc}") from exc
-    if not isinstance(message, dict):
-        raise UnprocessableMessage("body is not an object")
+    message = parse_message(
+        body, EvaluationRepositoryMessage, EvaluationIntrospectionMessage
+    )
 
-    version = message.get("version")
-    if version != MESSAGE_VERSION:
-        raise UnprocessableMessage(
-            f"message version {version!r}, this consumer speaks {MESSAGE_VERSION}"
-        )
-
-    kind = message.get("type")
-    payload = message.get("payload")
-    if not isinstance(payload, dict):
-        raise UnprocessableMessage("message carries no payload object")
-
-    # Named before the context exists, because the report is created with
-    # it. An unrecognised mode is still refused below — this only decides
-    # what the run calls itself, and a bad value never gets that far.
-    if kind == TYPE_INTROSPECTION:
-        flow_name = "introspection"
-    else:
-        flow_name = flow_name_for_mode(str(payload.get("mode") or "deterministic"))
-
-    ctx = RunContext.for_run(flow_name)
-
-    if kind == TYPE_REPOSITORY:
-        event = _event_from(payload, ctx=ctx)
+    if isinstance(message, EvaluationRepositoryMessage):
+        # Named before the context exists, because the report is created
+        # with it. An unrecognised mode is still refused in _event_from —
+        # this only decides what the run calls itself, and a bad value never
+        # gets that far.
+        ctx = RunContext.for_run(flow_name_for_mode(message.payload.mode))
+        event = _event_from(message.payload, ctx=ctx)
         result = handler(event, log=log, ctx=ctx)
         log.info(
             "consumer: %s@%s evaluated=%s not_evaluated=%s",
@@ -187,26 +149,23 @@ def process_message(body: str) -> None:
         _report_run(event, result, ctx=ctx)
         return
 
-    if kind == TYPE_INTROSPECTION:
-        run_id = str(payload.get("run_id") or "")
-        if not run_id:
-            raise UnprocessableMessage("introspection message names no run_id")
-        run_introspection(
-            run_id=run_id,
-            # The fan-out pass to grade. Only XSTACK-008 reads it, and it
-            # is optional on purpose: the other three checks grade the
-            # registry, the catalog and the stored findings, none of which
-            # belong to a pass.
-            pass_run_id=str(payload.get("pass_run_id") or ""),
-            standards_version=str(payload.get("standards_version") or ""),
-            log=log,
-            ctx=ctx,
-        )
-        _assert_findings_were_delivered(ctx=ctx)
-        _report_introspection(ctx=ctx)
-        return
-
-    raise UnprocessableMessage(f"unknown message type {kind!r}")
+    payload = message.payload
+    if not payload.run_id:
+        raise UnprocessableMessage("introspection message names no run_id")
+    ctx = RunContext.for_run("introspection")
+    run_introspection(
+        run_id=payload.run_id,
+        # The fan-out pass to grade. Only XSTACK-008 reads it, and it is
+        # optional on purpose: the other three checks grade the registry,
+        # the catalog and the stored findings, none of which belong to a
+        # pass.
+        pass_run_id=payload.pass_run_id or "",
+        standards_version=payload.standards_version or "",
+        log=log,
+        ctx=ctx,
+    )
+    _assert_findings_were_delivered(ctx=ctx)
+    _report_introspection(ctx=ctx)
 
 
 def _report_run(
@@ -289,11 +248,12 @@ def _report_failure(what: str, exc: BaseException) -> None:
         post_run_finding(
             "conformance-check",
             "ERROR",
-            # Processor only: the job may have died resolving the catalog,
-            # and a version it did not resolve is not stamped as one.
-            stamp_versions(f"{what} failed: {type(exc).__name__}: {exc}"),
+            # No catalog version: the job may have died resolving it, and a
+            # version it did not resolve is not stamped as one.
+            f"{what} failed: {type(exc).__name__}: {exc}",
             repo=_REPO,
             source="queue_consumer",
+            version=__version__,
         )
     except Exception:  # noqa: BLE001 — the notification is not the job
         log.exception("consumer: could not report the failure")

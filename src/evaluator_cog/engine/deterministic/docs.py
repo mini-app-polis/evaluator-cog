@@ -214,6 +214,62 @@ def _python_env_reads(trees: dict[Path, ast.AST]) -> dict[str, Path]:
         wrappers.update(found)
 
 
+#: A function taking a parameter: ``function name(param`` or
+#: ``const name = (param … ) =>``.
+_JS_FUNCTION_RE = re.compile(
+    r"function\s+(\w+)\s*\(\s*(\w+)"
+    r"|(?:const|let)\s+(\w+)\s*=\s*\(\s*(\w+)[^)]*\)\s*(?::[^=]*)?=>"
+)
+#: Vite's ``define`` of an ``import.meta.env`` field: a build constant the
+#: config computes, not a variable the environment supplies.
+_VITE_DEFINE_RE = re.compile(r"[\"']import\.meta\.env\." + _ENV_NAME + r"[\"']\s*:")
+_LOAD_ENV_VAR_RE = re.compile(r"(?:const|let)\s+(\w+)\s*=\s*loadEnv\(")
+_LOAD_ENV_DIRECT_RE = re.compile(r"loadEnv\([^)]*\)\." + _ENV_NAME + r"\b")
+
+
+def _script_env_reads(scripts: dict[Path, str]) -> dict[str, Path]:
+    """Names read in TypeScript, JavaScript and Astro.
+
+    Direct reads of import.meta.env and process.env; reads through a
+    function of the repository's own that indexes the environment with its
+    parameter (``required("E2E_BASE_URL")`` around ``process.env[name]``);
+    and Vite's ``loadEnv`` results. A name a Vite config ``define``s is a
+    build constant, so it is not a read even where the app reads it.
+    """
+    reads: dict[str, Path] = {}
+    defined: set[str] = set()
+    wrappers: set[str] = set()
+    for text in scripts.values():
+        defined.update(_VITE_DEFINE_RE.findall(text))
+        for match in _JS_FUNCTION_RE.finditer(text):
+            name = match.group(1) or match.group(3)
+            param = match.group(2) or match.group(4)
+            end = text.find("\n}", match.end())
+            body = text[match.end() : end if end != -1 else match.end() + 600]
+            if re.search(r"env\[\s*" + re.escape(param) + r"\s*\]", body):
+                wrappers.add(name)
+    for path, text in scripts.items():
+        found: list[str] = []
+        for pattern in _JS_ENV_READ_RES:
+            found.extend(pattern.findall(text))
+        found.extend(_LOAD_ENV_DIRECT_RE.findall(text))
+        for var in _LOAD_ENV_VAR_RE.findall(text):
+            found.extend(
+                re.findall(r"\b" + re.escape(var) + r"\." + _ENV_NAME + r"\b", text)
+            )
+        for wrapper in wrappers:
+            found.extend(
+                re.findall(
+                    r"\b" + re.escape(wrapper) + r"\(\s*[\"'`]" + _ENV_NAME + r"[\"'`]",
+                    text,
+                )
+            )
+        for name in found:
+            if name not in _VITE_BUILTIN_ENV and name not in defined:
+                reads.setdefault(name, path)
+    return reads
+
+
 def _env_reads(root: Path) -> dict[str, Path]:
     """Every environment variable read under ``root``, with a file reading it.
 
@@ -225,6 +281,7 @@ def _env_reads(root: Path) -> dict[str, Path]:
     """
     reads: dict[str, Path] = {}
     trees: dict[Path, ast.AST] = {}
+    scripts: dict[Path, str] = {}
     for path in _env_scan_files(root):
         try:
             text = path.read_text(encoding="utf-8")
@@ -233,11 +290,10 @@ def _env_reads(root: Path) -> dict[str, Path]:
         if path.suffix == ".py":
             with suppress(SyntaxError, ValueError):
                 trees[path] = ast.parse(text)
-            continue
-        for pattern in _JS_ENV_READ_RES:
-            for name in pattern.findall(text):
-                if name not in _VITE_BUILTIN_ENV:
-                    reads.setdefault(name, path)
+        else:
+            scripts[path] = text
+    for name, path in _script_env_reads(scripts).items():
+        reads.setdefault(name, path)
     for name, path in _python_env_reads(trees).items():
         reads.setdefault(name, path)
     src = root / "src"

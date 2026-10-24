@@ -15,7 +15,7 @@ job.
 into a serial loop over the fleet. The API fans out instead, so a failure
 retries one repository rather than redelivering a pass that re-evaluates
 everything that already succeeded. The registry-to-events translation it
-did now lives in api-kaianolevine-com's ``services/fleet_registry.py``.
+did now lives in api-kaianolevine-com, behind ``POST /v1/evaluations/fleet``.
 
 Two modes, in both shapes:
 
@@ -127,29 +127,24 @@ _NOT_FOUND_RE = re.compile(
 _REPO = "evaluator-cog"
 
 
-def stamp_versions(text: str, standards_version: str = "") -> str:
-    """Append the running code's version, and the catalog's, to ``text``.
+def stamp_standards(text: str, standards_version: str = "") -> str:
+    """Append the catalog version the run graded against to ``text``.
 
-    ``(processor=3.40.1, standards=4.2.0)`` on a line of its own. The
-    library would stamp ``processor`` itself, but it reads the installed
-    distribution's metadata and the Lambda deploy strips every
-    ``*.dist-info`` from the zip — there the lookup fails and, by design,
-    nothing is stamped. ``_version.py`` is source, ships in the zip and is
-    built from the release tag, so it is the version that is running. The
-    library skips its own stamp when the text already carries one.
+    ``(standards=4.2.0)`` on a line of its own. The running code's version
+    is the library's to stamp: :class:`VersionedRunReport` and
+    ``post_run_finding`` pass ``version=__version__``, from
+    ``_version.py``, which ships in the Lambda zip and is built from the
+    release tag. The library appends it as ``(version=X.Y.Z)`` after any
+    counters, so the last line of a message is its metadata.
 
-    ``standards`` is omitted when not known — a job that died before the
-    catalog resolved — rather than guessed. Empty text is left alone: the
-    library skips an empty report, and a version alone is not a message.
-    Any counters the library appends land after the stamp, so the last
-    line of a message is its metadata.
+    Nothing is stamped when the version is not known — a job that died
+    before the catalog resolved — rather than guessing one. Empty text is
+    left alone: the library skips an empty report, and a version alone is
+    not a message.
     """
-    if not text or "(processor=" in text:
+    if not text or not standards_version or "(standards=" in text:
         return text
-    parts = [f"processor={__version__}"]
-    if standards_version:
-        parts.append(f"standards={standards_version}")
-    return f"{text}\n({', '.join(parts)})"
+    return f"{text}\n(standards={standards_version})"
 
 
 @dataclass
@@ -161,16 +156,17 @@ class VersionedRunReport(RunReport):
     via :func:`_record_standards_version`.
     """
 
+    version: str | None = __version__
     standards_version: str = ""
 
     def text(self) -> str:
-        """The library's message body, with the version stamp as its last line.
+        """The library's message body, with the catalog version as its last line.
 
         Stamped here rather than at send time so every path that renders the
         report — :meth:`send`, and the tests that read it — sees the same
-        text. See :func:`stamp_versions` for the format.
+        text. See :func:`stamp_standards` for the format.
         """
-        return stamp_versions(super().text(), self.standards_version)
+        return stamp_standards(super().text(), self.standards_version)
 
 
 def _record_standards_version(standards_version: str, *, ctx: RunContext) -> None:

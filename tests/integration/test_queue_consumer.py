@@ -18,6 +18,8 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from mini_app_polis.api.contract import EvaluationRepositoryMessage
+from mini_app_polis.api.contract.queue import QUEUE_MESSAGE_VERSION
 
 from evaluator_cog.adapters import queue as q
 from evaluator_cog.flows import conformance
@@ -62,9 +64,21 @@ def _no_notifications(monkeypatch):
     return sent
 
 
-def _body(kind: str = q.TYPE_REPOSITORY, version: int = q.MESSAGE_VERSION, **payload):
-    if kind == q.TYPE_REPOSITORY and not payload:
-        payload = {"repo": "watcher-cog", "ref": "v1.2.3", "mode": "deterministic"}
+TYPE_REPOSITORY = EvaluationRepositoryMessage.message_type()
+
+
+def _body(kind: str = TYPE_REPOSITORY, version: int = QUEUE_MESSAGE_VERSION, **payload):
+    """A message as the API sends it: a repository message always names its
+    ref, org and mode, so those are filled in when a test leaves them out."""
+    if kind == TYPE_REPOSITORY:
+        if not payload:
+            payload = {"repo": "watcher-cog", "ref": "v1.2.3"}
+        payload = {
+            "ref": "main",
+            "org": "mini-app-polis",
+            "mode": "deterministic",
+            **payload,
+        }
     return json.dumps({"type": kind, "version": version, "payload": payload})
 
 
@@ -132,7 +146,7 @@ def test_a_supplied_run_id_is_used_unchanged() -> None:
         ("not json at all", "body is not JSON"),
         (json.dumps([1, 2, 3]), "not an object"),
         (_body(version=99), "message version"),
-        (json.dumps({"type": q.TYPE_REPOSITORY, "version": 1}), "no payload"),
+        (json.dumps({"type": TYPE_REPOSITORY, "version": 1}), "no payload"),
         (_body(kind="deejay.transcribe"), "unknown message type"),
         (_body(repo="", mode="deterministic"), "names no repo"),
         (_body(repo="x", mode="guess"), "unknown mode"),
@@ -323,7 +337,7 @@ def test_a_pinned_catalog_version_is_used_instead_of_resolving_one() -> None:
 @pytest.mark.parametrize(
     ("payload", "why"),
     [
-        ({"services": ["not-an-object"]}, "services must be a list of objects"),
+        ({"services": ["not-an-object"]}, "not a valid evaluation.repository"),
     ],
 )
 def test_a_malformed_grouping_is_refused_not_guessed_at(payload, why) -> None:

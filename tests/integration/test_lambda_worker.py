@@ -16,9 +16,14 @@ import json
 from unittest.mock import patch
 
 import pytest
+from mini_app_polis.api.contract import EvaluationRepositoryMessage
+from mini_app_polis.api.contract.queue import QUEUE_MESSAGE_VERSION
+from mini_app_polis.lambda_worker import RunOutOfTime
 
 from evaluator_cog.adapters import lambda_worker as lw
-from evaluator_cog.adapters.queue import MESSAGE_VERSION, TYPE_REPOSITORY
+
+MESSAGE_VERSION = QUEUE_MESSAGE_VERSION
+TYPE_REPOSITORY = EvaluationRepositoryMessage.message_type()
 
 
 def _event(*bodies: str, ids: tuple[str, ...] = ()) -> dict:
@@ -188,9 +193,7 @@ def test_a_run_that_outlives_the_deadline_fails_the_ordinary_way(
     neither happens."""
     import time
 
-    from evaluator_cog import _deadline
-
-    monkeypatch.setattr(_deadline, "DEADLINE_MARGIN_SECONDS", 0)
+    monkeypatch.setattr(lw, "DEADLINE_MARGIN_SECONDS", 0)
     raised: list[BaseException] = []
 
     def _slow(_body: str) -> None:
@@ -208,7 +211,7 @@ def test_a_run_that_outlives_the_deadline_fails_the_ordinary_way(
 
     assert result == {"batchItemFailures": [{"itemIdentifier": "m-0"}]}
     assert len(raised) == 1
-    assert isinstance(raised[0], _deadline.RunOutOfTime)
+    assert isinstance(raised[0], RunOutOfTime)
     assert reported.called
 
 
@@ -237,17 +240,13 @@ def test_the_shared_run_deadline_is_set_a_request_before_the_stop() -> None:
     the last one they start still ends before the worker stops the run."""
     from mini_app_polis.deadline import remaining_seconds
 
-    from evaluator_cog import _deadline
-
     seen: list[float | None] = []
     with patch.object(
         lw, "process_message", lambda _b: seen.append(remaining_seconds())
     ):
         lw.lambda_handler(_event(_body()), _Context(remaining_ms=900_000))
 
-    expected = (
-        900 - _deadline.DEADLINE_MARGIN_SECONDS - (_deadline.REQUEST_HEADROOM_SECONDS)
-    )
+    expected = 900 - lw.DEADLINE_MARGIN_SECONDS - (lw.REQUEST_HEADROOM_SECONDS)
     assert seen == [pytest.approx(expected, abs=1)]
     # Scoped to the run: nothing after it inherits a spent deadline.
     assert remaining_seconds() is None
@@ -258,11 +257,8 @@ def test_the_shared_run_deadline_never_goes_negative() -> None:
     deadline in the past that reads as more time than none."""
     from mini_app_polis.deadline import remaining_seconds
 
-    from evaluator_cog import _deadline
-
     remaining_ms = int(
-        (_deadline.DEADLINE_MARGIN_SECONDS + _deadline.REQUEST_HEADROOM_SECONDS / 2)
-        * 1000
+        (lw.DEADLINE_MARGIN_SECONDS + lw.REQUEST_HEADROOM_SECONDS / 2) * 1000
     )
     seen: list[float | None] = []
     with patch.object(
@@ -290,10 +286,8 @@ def test_a_run_refused_by_the_shared_deadline_fails_like_one_stopped_at_it() -> 
     back for redelivery."""
     from mini_app_polis.deadline import RunDeadlineReached
 
-    from evaluator_cog import _deadline
-
     for exc in (
-        _deadline.RunOutOfTime("stopped"),
+        RunOutOfTime("stopped"),
         RunDeadlineReached("Run deadline reached while listing"),
     ):
         with (
@@ -379,6 +373,4 @@ def test_request_headroom_is_googleapiclients_request_timeout() -> None:
     here, where the full dependency set is installed, so it cannot drift."""
     from googleapiclient.http import DEFAULT_HTTP_TIMEOUT_SEC
 
-    from evaluator_cog import _deadline
-
-    assert _deadline.REQUEST_HEADROOM_SECONDS == DEFAULT_HTTP_TIMEOUT_SEC
+    assert lw.REQUEST_HEADROOM_SECONDS == DEFAULT_HTTP_TIMEOUT_SEC

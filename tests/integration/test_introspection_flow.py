@@ -23,6 +23,8 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from mini_app_polis.api.contract import EvaluationIntrospectionMessage
+from mini_app_polis.api.contract.queue import QUEUE_MESSAGE_VERSION
 
 import api_fakes
 from evaluator_cog.adapters import queue as q
@@ -32,8 +34,8 @@ from evaluator_cog.flows import conformance as c
 def _body(**payload) -> str:
     return json.dumps(
         {
-            "type": q.TYPE_INTROSPECTION,
-            "version": q.MESSAGE_VERSION,
+            "type": EvaluationIntrospectionMessage.message_type(),
+            "version": QUEUE_MESSAGE_VERSION,
             "payload": payload,
         }
     )
@@ -82,11 +84,19 @@ def test_a_pass_to_grade_is_forwarded() -> None:
     assert run.call_args.kwargs["pass_run_id"] == "deterministic-7.0.0-xyz"
 
 
-def test_an_introspection_message_without_a_run_id_is_refused() -> None:
+@pytest.mark.parametrize(
+    ("payload", "why"),
+    [
+        ({"pass_run_id": "deterministic-7.0.0-xyz"}, "payload.run_id"),
+        ({"run_id": "", "pass_run_id": "deterministic-7.0.0-xyz"}, "names no run_id"),
+    ],
+)
+def test_an_introspection_message_without_a_run_id_is_refused(payload, why) -> None:
     """Findings need a run to be filed under. Minting one here would put
-    them in a run the dispatcher never named and cannot query."""
-    with pytest.raises(q.UnprocessableMessage, match="names no run_id"):
-        q.process_message(_body(pass_run_id="deterministic-7.0.0-xyz"))
+    them in a run the dispatcher never named and cannot query. A missing
+    run_id is refused by the message model, an empty one by the consumer."""
+    with pytest.raises(q.UnprocessableMessage, match=why):
+        q.process_message(_body(**payload))
 
 
 def test_an_introspection_run_reports_its_outcome(_no_notifications) -> None:
