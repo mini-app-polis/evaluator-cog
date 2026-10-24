@@ -6,7 +6,6 @@
 evaluator-cog/
   src/
     evaluator_cog/
-      _deadline.py          # stops a run before the Lambda timeout kills it
       adapters/
         lambda_worker.py    # the entry point: lambda_handler(event, context) for SQS records
         queue.py            # process_message(): parses a message, dispatches on type

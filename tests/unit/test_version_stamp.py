@@ -1,9 +1,9 @@
 """Every Discord message says which evaluator ran, against which catalog.
 
-The library stamps a version only when the caller passes one, and the
-evaluator passes none: it stamps ``(processor=X.Y.Z, standards=...)`` itself,
-from its own ``__version__``, so nothing depends on installed package
-metadata, which the Lambda deploy strips.
+The library stamps ``(version=X.Y.Z)`` from the ``__version__`` the
+evaluator passes, from its own ``_version.py``, so nothing depends on
+installed package metadata, which the Lambda deploy strips. The catalog
+version is the evaluator's own: ``(standards=...)`` on a line of its own.
 """
 
 from unittest.mock import patch
@@ -34,20 +34,18 @@ def _description(message: dict) -> str:
     return message["embeds"][0]["description"]
 
 
-def test_stamp_carries_processor_and_standards() -> None:
-    assert conf.stamp_versions("done", "4.2.0") == (
-        f"done\n(processor={__version__}, standards=4.2.0)"
-    )
+def test_stamp_carries_the_standards_version() -> None:
+    assert conf.stamp_standards("done", "4.2.0") == "done\n(standards=4.2.0)"
 
 
 def test_stamp_omits_an_unknown_standards_version() -> None:
-    assert conf.stamp_versions("done") == f"done\n(processor={__version__})"
+    assert conf.stamp_standards("done") == "done"
 
 
 def test_stamp_leaves_empty_and_stamped_text_alone() -> None:
-    assert conf.stamp_versions("") == ""
-    assert conf.stamp_versions("x (processor=1.0.0)", "4.2.0") == (
-        "x (processor=1.0.0)"
+    assert conf.stamp_standards("", "4.2.0") == ""
+    assert conf.stamp_standards("x (standards=1.0.0)", "4.2.0") == (
+        "x (standards=1.0.0)"
     )
 
 
@@ -61,9 +59,10 @@ def test_run_report_carries_the_graded_catalog_version(sent) -> None:
 
     lines = _description(sent[0]).splitlines()
     assert lines[0].startswith("Run complete in ")
-    # Counters follow the stamp, so the last line is the metadata.
-    assert lines[-1] == f"(processor={__version__}, standards=4.2.0) posted=3"
-    assert _description(sent[0]).count("(processor=") == 1
+    # Counters and the version follow the catalog stamp, so the last line
+    # is the metadata.
+    assert lines[-1] == f"(standards=4.2.0) posted=3 (version={__version__})"
+    assert _description(sent[0]).count("(version=") == 1
 
 
 def test_handler_records_the_version_it_grades_against() -> None:
@@ -92,5 +91,5 @@ def test_a_failed_job_still_says_which_evaluator_failed(sent) -> None:
     q._report_failure("a queued evaluation", RuntimeError("boom"))
 
     assert _description(sent[0]) == (
-        f"a queued evaluation failed: RuntimeError: boom\n(processor={__version__})"
+        f"a queued evaluation failed: RuntimeError: boom (version={__version__})"
     )
