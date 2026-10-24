@@ -481,11 +481,15 @@ def check_pipe_017(repo_path: Path, repo_type: str = "") -> list[Finding]:
         for f in src.rglob("*.py")
         if not _is_checker_self_source(f)
     )
-    if not returns_failures:
+    if not returns_failures and not (
+        src.is_dir()
+        and _uses_shared_worker(production_python_text(repo_path), "process_records")
+    ):
         fail(
             "No source file under src/ returns batchItemFailures.",
             "Have the handler return {'batchItemFailures': [...]} naming the "
-            "records that raised, rather than raising itself.",
+            "records that raised, rather than raising itself — "
+            "mini_app_polis.lambda_worker.process_records builds it.",
         )
     return findings
 
@@ -535,12 +539,26 @@ def check_pipe_018(repo_path: Path, repo_type: str = "infrastructure") -> list[F
 _REMAINING_TIME = "get_remaining_time_in_millis"
 
 
+def _uses_shared_worker(text: str, name: str) -> bool:
+    """Whether ``text`` calls ``name`` from mini_app_polis.lambda_worker.
+
+    The shared module does what a cog's own worker code used to: its
+    ``deadline`` reads the remaining time, and its ``process_records``
+    builds the ``batchItemFailures`` response, so neither appears in a
+    cog that calls them.
+    """
+    return "mini_app_polis.lambda_worker" in text and bool(
+        re.search(rf"\b{re.escape(name)}\(", text)
+    )
+
+
 def check_pipe_020(repo_path: Path) -> list[Finding]:
     """PIPE-020: a run stops before the function timeout, and says so."""
     CHECK_ID = "PIPE-020"
     if not (repo_path / "src").is_dir():
         return []
-    if _REMAINING_TIME in production_python_text(repo_path):
+    text = production_python_text(repo_path)
+    if _REMAINING_TIME in text or _uses_shared_worker(text, "deadline"):
         return []
     return [
         _finding(
@@ -550,10 +568,10 @@ def check_pipe_020(repo_path: Path) -> list[Finding]:
             "No source under src/ reads the Lambda context's "
             f"{_REMAINING_TIME}(), so a run that outlives the function "
             "timeout is killed with no report.",
-            "Stop the run a margin before the deadline — transcription-cog's "
-            "_deadline.py raises 30 seconds early — so the flow reports what "
-            "it was doing and re-raises, instead of the invocation ending in "
-            "silence.",
+            "Run each record inside mini_app_polis.lambda_worker.deadline("
+            "context), which raises 30 seconds before the timeout by "
+            "default, so the flow reports what it was doing and re-raises, "
+            "instead of the invocation ending in silence.",
         )
     ]
 

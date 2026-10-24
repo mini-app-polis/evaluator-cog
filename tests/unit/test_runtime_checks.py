@@ -351,6 +351,17 @@ def test_pipe017_cog_half_flags_a_handler_that_never_returns_failures(
     assert "batchItemFailures" in findings[0]["finding"]
 
 
+def test_pipe017_cog_half_accepts_the_shared_record_loop(tmp_path: Path) -> None:
+    """process_records builds the response, so the cog never spells it."""
+    handler = (
+        "from mini_app_polis.lambda_worker import process_records\n\n\n"
+        "def lambda_handler(event, context):\n"
+        "    return process_records(event, print)\n"
+    )
+    repo = _lambda_cog(tmp_path, **{"src/demo_cog/worker.py": handler})
+    assert check_pipe_017(repo) == []
+
+
 def test_pipe017_infra_half_ignores_source(tmp_path: Path) -> None:
     """The infrastructure repository has no handler to read."""
     assert check_pipe_017(_infra_repo(tmp_path), repo_type=INFRA) == []
@@ -499,6 +510,19 @@ def test_pipe020_accepts_the_read_from_a_helper_module(tmp_path: Path) -> None:
             "    return {}\n",
             "src/demo_cog/_deadline.py": "def deadline(context):\n"
             "    return context.get_remaining_time_in_millis()\n",
+        },
+    )
+    assert check_pipe_020(repo) == []
+
+
+def test_pipe020_accepts_the_shared_deadline(tmp_path: Path) -> None:
+    """The shared module reads the remaining time, so the cog never does."""
+    repo = _lambda_cog(
+        tmp_path,
+        **{
+            "src/demo_cog/worker.py": "from mini_app_polis.lambda_worker import "
+            "deadline\n\n\ndef lambda_handler(event, context):\n"
+            "    with deadline(context):\n        return {}\n",
         },
     )
     assert check_pipe_020(repo) == []
