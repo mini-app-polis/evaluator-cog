@@ -1,3 +1,14 @@
+## [3.60.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.0...v3.60.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **conformance:** DOC-004 follows script env wrappers and Vite's loadEnv and define ([d0f7f43](https://github.com/mini-app-polis/evaluator-cog/commit/d0f7f43d595a5e32323eb05622e677a218255b5c))
+* **deps:** bump miniapppolis-common-utils to 6.22.1 ([8d14fde](https://github.com/mini-app-polis/evaluator-cog/commit/8d14fde75952627c3a1ce68df83ebca32e13541e))
+* **deps:** bump miniapppolis-common-utils to 6.22.2 ([316d754](https://github.com/mini-app-polis/evaluator-cog/commit/316d754bd7593c4b18ee1428644504c96eedc949))
+* **pipeline:** PIPE-017 and PIPE-020 accept the shared lambda_worker module ([4ecea18](https://github.com/mini-app-polis/evaluator-cog/commit/4ecea181b7e09099733a1e59f85d3e698fcbde17))
+* **worker:** use the shared Lambda worker module and queue message models ([7a5ac47](https://github.com/mini-app-polis/evaluator-cog/commit/7a5ac47b07e940ff92cff8b410f05eb4767e8b9c))
+
 # [3.60.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.59.12...v3.60.0) (2026-10-23)
 
 
