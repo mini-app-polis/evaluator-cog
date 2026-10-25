@@ -802,3 +802,27 @@ def test_doc006_skips_a_class_defined_inside_a_function(tmp_path: Path) -> None:
         "    return Local\n"
     )
     assert check_public_docstrings(tmp_path) == []
+
+
+def test_doc006_skips_the_methods_of_a_private_class(tmp_path: Path) -> None:
+    """A private class's methods are not public API, nested classes included.
+
+    ``_EnvReadVisitor.visit_Call`` and ``visit_Subscript``, the
+    ``ast.NodeVisitor`` hooks of a private class, were reported as public
+    functions missing documentation.
+    """
+    from evaluator_cog.engine.deterministic import check_public_docstrings
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_text(
+        "import ast\n"
+        "\n"
+        "class _Visitor(ast.NodeVisitor):\n"
+        "    def visit_Call(self, node):\n"
+        "        return node\n"
+        "\n"
+        "    class Inner:\n"
+        "        def method(self):\n"
+        "            return 1\n"
+    )
+    assert check_public_docstrings(tmp_path) == []
