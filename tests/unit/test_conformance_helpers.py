@@ -6,12 +6,17 @@ These helpers are independently testable without mocking a whole sweep
 
 from __future__ import annotations
 
+import re
+import uuid
+
 import httpx
 import pytest
 import respx
 
 from evaluator_cog.flows.conformance import (
     RunContext,
+    _build_conformance_run_id,
+    _build_deterministic_run_id,
     _fetch_yaml,
     _get_standards_version,
     _parse_check_exceptions,
@@ -212,3 +217,55 @@ def test_parse_check_exceptions_empty_input() -> None:
     """Empty list and None both return empty results."""
     assert _parse_check_exceptions([]) == ([], {})
     assert _parse_check_exceptions(None) == ([], {})
+
+
+# ---------------------------------------------------------------------------
+# Run ids — the format the API re-derives
+#
+# evaluator-cog owns this format. api-kaianolevine-com mints fleet-pass ids
+# in the same shape and pins these same literals, so a change to either
+# side's format fails a test rather than splitting one pass into many runs.
+# ---------------------------------------------------------------------------
+
+#: A fixed catalog version and suffix source, so the ids are literals.
+_RUN_ID_VERSION = "3.4.0"
+_RUN_ID_UUID = uuid.UUID("0123456789abcdef0123456789abcdef")
+
+_CONFORMANCE_RUN_ID_RE = re.compile(r"^conformance-(?P<version>.+)-[0-9a-f]{12}$")
+_DETERMINISTIC_RUN_ID_RE = re.compile(r"^deterministic-(?P<version>.+)-[0-9a-f]{12}$")
+
+
+def test_run_ids_match_the_pinned_literals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """For a fixed version and uuid the ids are exactly these strings."""
+    monkeypatch.setattr(uuid, "uuid4", lambda: _RUN_ID_UUID)
+    assert (
+        _build_conformance_run_id(_RUN_ID_VERSION) == "conformance-3.4.0-0123456789ab"
+    )
+    assert (
+        _build_deterministic_run_id(_RUN_ID_VERSION)
+        == "deterministic-3.4.0-0123456789ab"
+    )
+
+
+def test_run_ids_match_the_pinned_shape() -> None:
+    """Unpatched ids carry the version verbatim and a 12-hex suffix."""
+    conformance = _CONFORMANCE_RUN_ID_RE.fullmatch(
+        _build_conformance_run_id(_RUN_ID_VERSION)
+    )
+    deterministic = _DETERMINISTIC_RUN_ID_RE.fullmatch(
+        _build_deterministic_run_id(_RUN_ID_VERSION)
+    )
+    assert conformance is not None
+    assert conformance["version"] == _RUN_ID_VERSION
+    assert deterministic is not None
+    assert deterministic["version"] == _RUN_ID_VERSION
+
+
+def test_run_ids_are_unique_per_call() -> None:
+    """Two runs never share an id, even in the same second."""
+    assert _build_conformance_run_id(_RUN_ID_VERSION) != _build_conformance_run_id(
+        _RUN_ID_VERSION
+    )
+    assert _build_deterministic_run_id(_RUN_ID_VERSION) != _build_deterministic_run_id(
+        _RUN_ID_VERSION
+    )
