@@ -1,3 +1,10 @@
+## [3.60.8](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.7...v3.60.8) (2026-10-25)
+
+
+### Bug Fixes
+
+* **checks:** DOC-004 reads names held in module constants; AUTH-004 reads a record built before it is emitted ([2e24fff](https://github.com/mini-app-polis/evaluator-cog/commit/2e24ffff298f2b505cd04605a820e2b948f5dc7c))
+
 ## [3.60.7](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.6...v3.60.7) (2026-10-25)
 
 
