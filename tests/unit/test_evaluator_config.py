@@ -1,4 +1,4 @@
-"""Tests for evaluator.yaml loading and EvaluatorConfig (ADR-001 / ADR-002)."""
+"""Tests for evaluator.yaml loading and EvaluatorConfig (ecosystem-standards ADR-0001 / ADR-0002)."""
 
 from __future__ import annotations
 
@@ -267,7 +267,7 @@ def test_dispatch_default_when_nothing_matches() -> None:
 
 
 def test_dispatch_applies_to_absent_skip_scope() -> None:
-    """ADR-004 — rules without applies_to return SKIP_SCOPE from the
+    """ecosystem-standards ADR-0004 — rules without applies_to return SKIP_SCOPE from the
     standard dispatcher. PR 4 routes them via a separate path."""
     cfg = _cfg_with_catalog(repo_type="pipeline-cog")
     result = cfg.resolve_dispatch("EVAL-003")
@@ -391,7 +391,7 @@ def test_language_property_returns_typescript_for_non_python_types() -> None:
 
 def test_parse_evaluator_yaml_rejects_evaluator_service_type() -> None:
     """evaluator-service was removed from the type taxonomy in v4.0.0
-    (ADR-004). Any evaluator.yaml declaring it must be rejected."""
+    (ecosystem-standards ADR-0004). Any evaluator.yaml declaring it must be rejected."""
     with pytest.raises(ValueError, match="invalid type"):
         _parse_evaluator_yaml({"type": "evaluator-service"})
 

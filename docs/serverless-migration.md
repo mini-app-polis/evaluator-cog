@@ -544,7 +544,7 @@ properly.
 
 ### The checks that do not fan out
 
-EVAL-003, MONO-003 and EVAL-007 are scoped to no repository at all (ADR-004).
+EVAL-003, MONO-003 and EVAL-007 are scoped to no repository at all (ecosystem-standards ADR-0004).
 They grade the inventory, the stored findings and the catalog itself, so there
 is no per-repository message they belong to — and two of them read
 `pipeline_evaluations`, which the sweep guaranteed by running them after its
@@ -716,7 +716,7 @@ nothing Prefect offers has a subject. This is cleanup, not a decision.
   to write the exemption five times. Note evaluator-cog's own
   `engine/deterministic/` still *grades other repos* on these — those checks
   change meaning here rather than disappearing.
-  *Done after the second slice:* ecosystem-standards ADR-009 redefines
+  *Done after the second slice:* ecosystem-standards ADR-0009 redefines
   `pipeline-cog` as a Lambda behind its own queue. PIPE-001, PIPE-004,
   PIPE-006, PIPE-009, PIPE-012, CD-005, CD-015 and CD-016 are retired, their
   checks deleted here; PIPE-016–019 grade the new runtime from `infra/*.tf`,

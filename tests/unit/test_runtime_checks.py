@@ -1,7 +1,7 @@
-"""Deterministic checks for the queue-and-Lambda runtime (ADR-009, ADR-010).
+"""Deterministic checks for the queue-and-Lambda runtime (ecosystem-standards ADR-0009, ADR-0010).
 
 The runtime is split between two kinds of repository, each evaluated on its
-own (ADR-010). A pipeline cog carries its code: PIPE-016 (Prefect is gone),
+own (ecosystem-standards ADR-0010). A pipeline cog carries its code: PIPE-016 (Prefect is gone),
 PIPE-017's code half (the handler names failed records), PIPE-020, PIPE-007.
 mini-app-polis/infra — type ``infrastructure`` — carries every cog's
 Terraform: PIPE-017's infrastructure half, PIPE-018 (one concurrency ceiling
@@ -306,7 +306,7 @@ def test_compliant_infra_repo_passes_every_rule_scoped_to_it(tmp_path: Path) -> 
 
 
 def test_pipe016_does_not_look_for_infra_in_the_cog(tmp_path: Path) -> None:
-    """The runtime is declared in mini-app-polis/infra (ADR-010)."""
+    """The runtime is declared in mini-app-polis/infra (ecosystem-standards ADR-0010)."""
     assert check_pipe_016(_lambda_cog(tmp_path)) == []
     assert not (tmp_path / "infra").exists()
 

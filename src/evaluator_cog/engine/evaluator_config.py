@@ -1,6 +1,6 @@
 """evaluator_config.py
 
-Loads and validates a repo's evaluator.yaml file (ADR-001, ADR-002).
+Loads and validates a repo's evaluator.yaml file (ecosystem-standards ADR-0001, ADR-0002).
 
 The evaluator.yaml lives at the root of each repo and declares:
   - type: repo type (pipeline-cog, trigger-cog, api-service, etc.)

@@ -7,7 +7,7 @@ against a graph nobody released. The file-sourced version scheme (PY-017)
 keeps the version out of the lock, so a release never touches it.
 
 CD-016 (serve() wrapped in serve_with_retry) lived here until Prefect was
-retired (ecosystem-standards ADR-009); pipeline cogs have no startup
+retired (ecosystem-standards ADR-0009); pipeline cogs have no startup
 registration to protect.
 
 The check never raises. Every file read, parse and subprocess call is

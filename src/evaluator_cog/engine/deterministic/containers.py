@@ -796,8 +796,8 @@ def check_cd_024(
 ) -> list[Finding]:
     """CD-024: deployable services declare memory and CPU limits.
 
-    Pipeline cogs run on Lambda (ADR-009), and their limits are declared in
-    mini-app-polis/infra (ADR-010); ``_check_cd_024_infrastructure`` reads
+    Pipeline cogs run on Lambda (ecosystem-standards ADR-0009), and their limits are declared in
+    mini-app-polis/infra (ecosystem-standards ADR-0010); ``_check_cd_024_infrastructure`` reads
     them there. Everything else is read from its Railway descriptor, below.
 
     An unbounded service is a noisy neighbour: a leak or a runaway query
@@ -827,7 +827,7 @@ def check_cd_024(
     if repo_type == "infrastructure":
         return _check_cd_024_infrastructure(repo_path)
     if repo_type == "pipeline-cog":
-        # Declared in mini-app-polis/infra and checked there (ADR-010).
+        # Declared in mini-app-polis/infra and checked there (ecosystem-standards ADR-0010).
         return []
 
     CHECK_ID = "CD-024"

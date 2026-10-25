@@ -7,7 +7,7 @@ package registry the dependency is published to (PyPI, npm). A package
 counts as the fleet's own when the registry records its source repository
 under ``github.com/mini-app-polis/``.
 
-That keeps each evaluation independent (ADR-010) and puts the finding on
+That keeps each evaluation independent (ecosystem-standards ADR-0010) and puts the finding on
 the repository that has to fix it, where its own release re-evaluates it.
 The rule used to run from the fleet-wide lane, reading every repo's
 manifest and a shared-library list from the registry, and filed its

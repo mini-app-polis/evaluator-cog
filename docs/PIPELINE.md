@@ -56,7 +56,7 @@ evaluator-cog/
 | introspection (EVAL-003) | `data_quality` | An `evaluation.introspection` message, once per **fleet pass** | Quality of stored findings |
 
 The introspection checks (EVAL-003, EVAL-007, XSTACK-006, XSTACK-008) scope
-to no repository (ADR-004 in ecosystem-standards), so a per-repository message
+to no repository (ecosystem-standards ADR-0004), so a per-repository message
 is not a place they could run. `run_introspection()` runs them from their own
 message, which `POST /v1/evaluations/fleet` enqueues alongside the
 per-repository ones (or `POST /v1/evaluations/introspection` on its own).

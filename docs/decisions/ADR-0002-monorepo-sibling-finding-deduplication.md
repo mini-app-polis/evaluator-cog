@@ -1,4 +1,4 @@
-# 0002. Deduplicate findings across monorepo sibling apps
+# ADR-0002: Deduplicate findings across monorepo sibling apps
 
 Date: 2026-04-08
 

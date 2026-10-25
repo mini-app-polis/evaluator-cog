@@ -1,10 +1,10 @@
-# 0001. Parameterized single conformance flow instead of two deployments
+# ADR-0001: Parameterized single conformance flow instead of two deployments
 
 Date: 2026-04-05
 
 ## Status
 
-Superseded by [0004](./ADR-0004-evaluation-on-demand.md). The deployment
+Superseded by [ADR-0004](./ADR-0004-evaluation-on-demand.md). The deployment
 budget this decision was shaped by stopped applying when evaluator-cog
 stopped being a Prefect deployment; the two modes it describes survive as
 `mode='deterministic'` and `mode='llm'` on the evaluation event.
