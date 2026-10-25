@@ -555,7 +555,10 @@ def _public_definitions(
 
     Methods stay public: a class defined at module level exposes them.
     A class defined *inside* a function does not, so its methods are
-    skipped along with everything else in that scope.
+    skipped along with everything else in that scope. Nor does a private
+    class (``_EnvReadVisitor``): its methods are reachable only through a
+    name the module marks as its own, so ``visit_Call`` on an
+    ``ast.NodeVisitor`` subclass is not public API.
     """
     found: list[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef] = []
 
@@ -568,9 +571,9 @@ def _public_definitions(
             elif isinstance(child, ast.ClassDef):
                 if not inside_function:
                     found.append(child)
-                # A module-level class keeps its methods public; a class
-                # nested in a function carries that scope down with it.
-                visit(child, inside_function)
+                # A public module-level class keeps its methods public; a
+                # private class, or one nested in a function, hides them.
+                visit(child, inside_function or child.name.startswith("_"))
             else:
                 visit(child, inside_function)
 
