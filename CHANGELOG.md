@@ -1,3 +1,10 @@
+## [3.60.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.1...v3.60.2) (2026-10-25)
+
+
+### Bug Fixes
+
+* **docs:** treat the methods of a private class as non-public in DOC-006 ([305fb7f](https://github.com/mini-app-polis/evaluator-cog/commit/305fb7f31c76c51902b77e99baa9b607355b2d2f))
+
 ## [3.60.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.0...v3.60.1) (2026-10-24)
 
 
