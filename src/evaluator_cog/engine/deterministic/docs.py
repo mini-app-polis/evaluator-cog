@@ -143,17 +143,58 @@ def _call_name(func: ast.expr) -> str | None:
     return None
 
 
+def _module_env_constants(tree: ast.AST) -> dict[str, frozenset[str]]:
+    """Module-level names bound to an environment variable name, or to several.
+
+    ``FLAG_VAR = "DRY_RUN"`` binds one name; ``TOKEN_VARS = {"prd":
+    "TOKEN_PRD", "dev": "TOKEN_DEV"}`` binds every value of a dict whose
+    values are all such literals, for a read indexed into it
+    (``os.getenv(TOKEN_VARS[config])``). Anything else is left alone: a name
+    built at runtime is not collected.
+    """
+    found: dict[str, frozenset[str]] = {}
+    if not isinstance(tree, ast.Module):
+        return found
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target, value = stmt.targets[0], stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            target, value = stmt.target, stmt.value
+        else:
+            continue
+        if not isinstance(target, ast.Name):
+            continue
+        literals = value.values if isinstance(value, ast.Dict) else [value]
+        names = [
+            v.value
+            for v in literals
+            if isinstance(v, ast.Constant)
+            and isinstance(v.value, str)
+            and _ENV_NAME_RE.match(v.value)
+        ]
+        if names and len(names) == len(literals):
+            found[target.id] = frozenset(names)
+    return found
+
+
 class _EnvReadVisitor(ast.NodeVisitor):
     """One pass over a module: literal reads, and functions that wrap a read.
 
     A wrapper is a function that passes one of its own parameters to an
     environment read, or to another wrapper — ``_require(name)`` around
     ``os.getenv(name)``. A literal passed to a wrapper in that position is a
-    read, the same as a literal passed to ``os.getenv``.
+    read, the same as a literal passed to ``os.getenv``, and so is a
+    module-level constant naming one (``os.getenv(FLAG_VAR)``) or a lookup in
+    a module-level dict of them (``_require(TOKEN_VARS[config])``).
     """
 
-    def __init__(self, wrappers: dict[str, int]) -> None:
+    def __init__(
+        self,
+        wrappers: dict[str, int],
+        constants: dict[str, frozenset[str]] | None = None,
+    ) -> None:
         self.wrappers = wrappers
+        self.constants = constants or {}
         self.reads: set[str] = set()
         self.new_wrappers: dict[str, int] = {}
         self._stack: list[tuple[str, list[str]]] = []
@@ -171,14 +212,21 @@ class _EnvReadVisitor(ast.NodeVisitor):
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
             if _ENV_NAME_RE.match(arg.value):
                 self.reads.add(arg.value)
-        elif isinstance(arg, ast.Name) and self._stack:
+        elif isinstance(arg, ast.Name) and self._stack and arg.id in self._stack[-1][1]:
             name, params = self._stack[-1]
-            if arg.id in params:
-                index = params.index(arg.id)
-                # A method's call site omits self or cls.
-                if params[0] in ("self", "cls"):
-                    index -= 1
-                self.new_wrappers.setdefault(name, index)
+            index = params.index(arg.id)
+            # A method's call site omits self or cls.
+            if params[0] in ("self", "cls"):
+                index -= 1
+            self.new_wrappers.setdefault(name, index)
+        elif isinstance(arg, ast.Name) and arg.id in self.constants:
+            self.reads.update(self.constants[arg.id])
+        elif (
+            isinstance(arg, ast.Subscript)
+            and isinstance(arg.value, ast.Name)
+            and arg.value.id in self.constants
+        ):
+            self.reads.update(self.constants[arg.value.id])
 
     def visit_Call(self, node: ast.Call) -> None:
         if _is_env_reader(node.func) and node.args:
@@ -203,7 +251,7 @@ def _python_env_reads(trees: dict[Path, ast.AST]) -> dict[str, Path]:
         reads: dict[str, Path] = {}
         found: dict[str, int] = {}
         for path, tree in trees.items():
-            visitor = _EnvReadVisitor(wrappers)
+            visitor = _EnvReadVisitor(wrappers, _module_env_constants(tree))
             visitor.visit(tree)
             for name in sorted(visitor.reads):
                 reads.setdefault(name, path)

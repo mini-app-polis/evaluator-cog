@@ -1464,6 +1464,60 @@ def test_auth004_reads_fields_from_the_record_builder(tmp_path: Path) -> None:
     assert clause3 == [], f"fields in the builder were not read: {clause3}"
 
 
+def _auth004_clause3_for(tmp_path: Path, guard_body: str) -> list[dict]:
+    _write(
+        tmp_path,
+        "src/pkg/auth.py",
+        "from identity.policy import authorize\n"
+        "from identity.store import SqlAlchemyPrincipalStore, SqlAlchemyAuditSink\n"
+        "\n"
+        "def require_scope(scope):\n"
+        "    async def _dependency(request, authorization, session):\n"
+        "        decision = decide(principal, scope, roles)\n"
+        + guard_body
+        + "        if not decision.allowed:\n"
+        "            raise api_error(403, 'forbidden', 'no')\n"
+        "        return principal\n"
+        "    return _dependency\n",
+    )
+    _write(
+        tmp_path,
+        "src/pkg/routers/notes.py",
+        "from fastapi import APIRouter, Depends\n"
+        "router = APIRouter()\n"
+        "\n"
+        "@router.get('/notes')\n"
+        "def notes(p = Depends(require_scope('wcs.notes.read'))): ...\n",
+    )
+    return [f for f in check_auth_004(tmp_path) if "AUTH-004 (3)" in f["finding"]]
+
+
+def test_auth004_reads_a_record_built_before_it_is_emitted(tmp_path: Path) -> None:
+    """`event = new_audit_event(...)` then `emit_audit(event)` carries all five."""
+    clause3 = _auth004_clause3_for(
+        tmp_path,
+        "        event = new_audit_event(\n"
+        "            enforcement_point=ENFORCEMENT_POINT,\n"
+        "            scope=scope,\n"
+        "            allowed=decision.allowed,\n"
+        "            reason=decision.reason,\n"
+        "            principal=principal,\n"
+        "        )\n"
+        "        await sink.emit_audit(event)\n",
+    )
+    assert clause3 == [], f"fields in the named record were not read: {clause3}"
+
+
+def test_auth004_flags_a_named_record_missing_fields(tmp_path: Path) -> None:
+    clause3 = _auth004_clause3_for(
+        tmp_path,
+        "        event = new_audit_event(scope=scope)\n"
+        "        await sink.emit_audit(event)\n",
+    )
+    assert len(clause3) == 1
+    assert "principal" in clause3[0]["finding"]
+
+
 def test_auth004_still_flags_a_record_missing_fields(tmp_path: Path) -> None:
     """The true positive must survive: a builder short of the five."""
     _write(

@@ -538,6 +538,53 @@ def test_doc004_follows_the_repositorys_own_wrappers(tmp_path: Path) -> None:
     assert findings == []
 
 
+def test_doc004_resolves_module_constants_naming_a_variable(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": (
+                "# FLAG=\n# TOKEN_PRD_PATH=\n# TOKEN_DEV_PATH=\n# TYPED=\n"
+            ),
+            "src/app/worker.py": (
+                "import os\n"
+                "FLAG_VAR = 'FLAG'\n"
+                "TYPED_VAR: str = 'TYPED'\n"
+                "TOKEN_VARS = {'prd': 'TOKEN_PRD_PATH', 'dev': 'TOKEN_DEV_PATH'}\n"
+                "NOT_A_NAME = 'not a variable'\n"
+                "MIXED = {'a': 'MIXED_ONE', 'b': 2}\n"
+                "def _read(var):\n"
+                "    return os.environ.get(var)\n"
+                "def token(config):\n"
+                "    return _read(TOKEN_VARS[config])\n"
+                "on = os.environ.get(FLAG_VAR, '') == 'true'\n"
+                "typed = os.getenv(TYPED_VAR)\n"
+                "other = os.getenv(NOT_A_NAME)\n"
+                "mixed = os.getenv(MIXED['a'])\n"
+            ),
+        },
+    )
+    assert findings == []
+
+
+def test_doc004_a_parameter_shadowing_a_constant_is_still_a_wrapper(
+    tmp_path: Path,
+) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "PASSED=\n",
+            "src/app/main.py": (
+                "import os\n"
+                "name = 'SHADOWED'\n"
+                "def _require(name):\n"
+                "    return os.getenv(name)\n"
+                "value = _require('PASSED')\n"
+            ),
+        },
+    )
+    assert findings == []
+
+
 def test_doc004_follows_script_wrappers_and_vite_config(tmp_path: Path) -> None:
     findings = _doc004(
         tmp_path,

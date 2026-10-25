@@ -1273,12 +1273,35 @@ def _auth004_clause3(
     five. An ERROR asserting the audit trail is broken, on a service
     whose audit trail is correct, is worse than no check — it teaches a
     reader to discount the rule.
+
+    A record built first and emitted by name is read the same way:
+
+        event = new_audit_event(principal=..., scope=...)
+        emit_audit(event)
+
+    reads every assignment to ``event`` in the guard.
     """
     findings: list[Finding] = []
     for f, fn in guards:
+        assigned: dict[str, list[ast.expr]] = {}
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        assigned.setdefault(target.id, []).append(node.value)
+            elif (
+                isinstance(node, ast.AnnAssign)
+                and node.value is not None
+                and isinstance(node.target, ast.Name)
+            ):
+                assigned.setdefault(node.target.id, []).append(node.value)
         for call in _audit_calls(fn):
             provided: set[str] = set()
-            for node in ast.walk(call):
+            record: list[ast.AST] = [call]
+            for arg in (*call.args, *(kw.value for kw in call.keywords)):
+                if isinstance(arg, ast.Name):
+                    record.extend(assigned.get(arg.id, []))
+            for node in (n for part in record for n in ast.walk(part)):
                 if isinstance(node, ast.Call):
                     provided.update(kw.arg for kw in node.keywords if kw.arg)
                 elif isinstance(node, ast.Dict):
