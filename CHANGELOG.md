@@ -1,3 +1,11 @@
+## [3.60.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.2...v3.60.3) (2026-10-25)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 6.22.3 ([8056c7f](https://github.com/mini-app-polis/evaluator-cog/commit/8056c7f7294cee8dcaa07a38c9925546a7870fbb))
+* **docs:** DOC-005 reports ADR-NNNN filenames and cross-repo ADR citations name their repo ([057bd64](https://github.com/mini-app-polis/evaluator-cog/commit/057bd6477b773142f4dd2311e3b323b67cd62d5f))
+
 ## [3.60.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.1...v3.60.2) (2026-10-25)
 
 
