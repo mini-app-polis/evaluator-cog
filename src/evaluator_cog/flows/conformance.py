@@ -1154,7 +1154,14 @@ def _run_suffix() -> str:
 
 
 def _build_conformance_run_id(standards_version: str) -> str:
-    """Build a per-execution run_id for conformance findings."""
+    """Build a per-execution run_id for conformance findings.
+
+    ``conformance-<standards_version>-<12 hex>``. evaluator-cog owns this
+    format, and a unit test pins it: changing it here fails that test.
+    api-kaianolevine-com's evaluations router re-derives it to mint one
+    run id for a fleet pass, and pins the same examples in its tests, so
+    a change has to land in both.
+    """
     unique_suffix = _run_suffix()
     return f"conformance-{standards_version}-{unique_suffix}"
 
@@ -1214,7 +1221,14 @@ def _post_not_evaluated(
 
 
 def _build_deterministic_run_id(standards_version: str) -> str:
-    """Build a per-execution run_id for deterministic conformance findings."""
+    """Build a per-execution run_id for deterministic conformance findings.
+
+    ``deterministic-<standards_version>-<12 hex>``. evaluator-cog owns this
+    format, and a unit test pins it: changing it here fails that test.
+    api-kaianolevine-com's evaluations router re-derives it to mint one
+    run id for a fleet pass, and pins the same examples in its tests, so
+    a change has to land in both.
+    """
     unique_suffix = _run_suffix()
     return f"deterministic-{standards_version}-{unique_suffix}"
 
