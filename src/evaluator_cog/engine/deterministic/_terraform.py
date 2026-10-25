@@ -5,7 +5,7 @@ repository (mini-app-polis/infra) is a Terraform root: its ``.tf`` files
 are at the repository root, with modules under ``modules/``. It declares
 every pipeline cog's runtime — the queue, its dead-letter queue, the
 function and the mapping between them — through one ``module`` block per
-cog (ADR-010). Any other repository that carries Terraform does so in
+cog (ecosystem-standards ADR-0010). Any other repository that carries Terraform does so in
 ``infra/``.
 
 This is not an HCL parser, and deliberately so. The checks ask a handful

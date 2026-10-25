@@ -534,7 +534,7 @@ def check_adrs_present(repo_path: Path) -> list[Finding]:
                 "DOC-005",
                 "WARN",
                 "documentation_coverage",
-                "docs/decisions/ exists but no ADR-NNN-*.md files were found.",
+                "docs/decisions/ exists but no ADR-NNNN-*.md files were found.",
                 "Author numbered ADR markdown files for significant decisions.",
             )
         )

@@ -450,7 +450,7 @@ def test_fetch_full_rule_catalog_captures_applies_to_and_modifies() -> None:
                 dimension="cross_repo_coherence",
             ),
             # Not a repo-source scan: the compiler collapses both an absent
-            # and an explicitly empty applies_to to None (ADR-004).
+            # and an explicitly empty applies_to to None (ecosystem-standards ADR-0004).
             _rule("EVAL-003", applies_to=None, dimension="standards_currency"),
             _rule("EVAL-005", applies_to=["all"], check_mode="llm"),
         ]

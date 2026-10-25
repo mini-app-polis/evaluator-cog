@@ -1,4 +1,4 @@
-# 0003. Per-repo evaluator.yaml for exemptions, deferrals, and type scoping
+# ADR-0003: Per-repo evaluator.yaml for exemptions, deferrals, and type scoping
 
 Date: 2026-04-10
 
@@ -10,7 +10,7 @@ Accepted
 dated. This repo's `evaluator.yaml` no longer carries the PIPE-006, PIPE-002
 or CD-012 deferrals it cites, and `ecosystem.yaml` no longer records monorepo
 membership — the ecosystem has no monorepo (see
-[0002](./ADR-0002-monorepo-sibling-finding-deduplication.md)). The body below
+[ADR-0002](./ADR-0002-monorepo-sibling-finding-deduplication.md)). The body below
 is left as written.
 
 ## Context

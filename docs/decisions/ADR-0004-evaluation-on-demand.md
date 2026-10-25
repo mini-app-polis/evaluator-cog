@@ -1,10 +1,10 @@
-# 0004. Evaluation on demand, behind an HTTP handler
+# ADR-0004: Evaluation on demand, behind an HTTP handler
 
 Date: 2026-09-13
 
 ## Status
 
-Accepted. Supersedes [0001](./ADR-0001-parameterized-single-conformance-flow.md).
+Accepted. Supersedes [ADR-0001](./ADR-0001-parameterized-single-conformance-flow.md).
 
 **Superseded in part (2026-09).** The decision stands: `handler(event)` is the
 unit of work, evaluation is triggered by releases rather than a schedule, and
@@ -53,8 +53,8 @@ of it rather than logic around it.
   repository's own `evaluator.yaml` supplies its type and exemptions. No
   registry read on this path.
 - `POST /sweep` evaluates the whole registry, then runs the checks that
-  scope to no repository at all (EVAL-003, MONO-003, EVAL-007 — ADR-004 in
-  ecosystem-standards). It has no schedule. The two releases that
+  scope to no repository at all (EVAL-003, MONO-003, EVAL-007 —
+  ecosystem-standards ADR-0004). It has no schedule. The two releases that
   invalidate every repository's last result at once — a new standards
   catalog and a new evaluator — are what call it.
 - Rules arrive as a compiled catalog from

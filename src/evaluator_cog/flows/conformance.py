@@ -464,7 +464,7 @@ def _fetch_full_rule_catalog(*, ctx: RunContext) -> dict[str, dict]:
     """Every checkable rule's dispatch metadata, keyed by rule id.
 
     ``applies_to`` is None when the rule is not a repo-source scan
-    (ADR-004); the compiler collapses an explicit empty list to None for
+    (ecosystem-standards ADR-0004); the compiler collapses an explicit empty list to None for
     the same reason. ``check_mode`` arrives resolved rather than being
     parsed out of ``check_notes`` on every run.
     """
@@ -1378,7 +1378,7 @@ def _run_standalone_deterministic(
     )
 
 
-#: How many checks carry ``applies_to: None`` (ADR-004): EVAL-003,
+#: How many checks carry ``applies_to: None`` (ecosystem-standards ADR-0004): EVAL-003,
 #: XSTACK-006, XSTACK-008 and EVAL-007. Declared so a run can say "three
 #: of four ran" rather than reporting a partial pass as a whole one.
 #: Adding a check to the lane means changing this too.
@@ -1809,7 +1809,7 @@ def run_introspection(
     """Run the checks that are scoped to no repository at all.
 
     EVAL-003, XSTACK-006, XSTACK-008 and EVAL-007
-    carry ``applies_to: None`` (ADR-004). They grade the inventory, the
+    carry ``applies_to: None`` (ecosystem-standards ADR-0004). They grade the inventory, the
     stored findings and the catalog itself, so there is no per-repository
     invocation any of them belongs to — which is why they lived at the tail
     of the sweep, the one place in the old design that ran once per pass.

@@ -1136,7 +1136,7 @@ def check_cd_010_infrastructure(repo_path: Path) -> list[Finding]:
       stays empty: this is the outage the first alarm cannot see.
 
     Both are declared once, in mini-app-polis/infra's cog module
-    (ADR-010), so they are checked there and not in each cog. The
+    (ecosystem-standards ADR-0010), so they are checked there and not in each cog. The
     stalled alarm's threshold is not checked — only that it exists and
     notifies someone.
     """
@@ -1212,7 +1212,7 @@ def check_three_layer_observability(
 
     # Layer 1 for a queue-driven pipeline cog is an alarm on its dead-letter
     # queue, declared in mini-app-polis/infra and checked there
-    # (check_cd_010_infrastructure, ADR-010). The cog carries layers 2 and 3.
+    # (check_cd_010_infrastructure, ecosystem-standards ADR-0010). The cog carries layers 2 and 3.
 
     # Layer 1: Healthchecks — the always-on trigger worker.
     if cog_subtype == "trigger":

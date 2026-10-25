@@ -51,7 +51,7 @@ def test_doc005_flags_empty_decisions_dir(tmp_path: Path) -> None:
 
 def test_doc005_passes_when_adr_present(tmp_path: Path) -> None:
     _write(tmp_path, "src/big.py", _nontrivial_src_py())
-    _write(tmp_path, "docs/decisions/ADR-001-init.md", "# ADR\n")
+    _write(tmp_path, "docs/decisions/ADR-0001-init.md", "# ADR\n")
     assert check_adrs_present(tmp_path) == []
 
 
@@ -1028,7 +1028,7 @@ def test_cd010_layer1_is_not_the_pipeline_cogs_to_answer(
     tmp_path: Path,
 ) -> None:
     """CD-010 Layer 1 for a pipeline cog is its DLQ alarm, declared and checked
-    in mini-app-polis/infra (ADR-010) — not a Healthchecks ping in the cog."""
+    in mini-app-polis/infra (ecosystem-standards ADR-0010) — not a Healthchecks ping in the cog."""
     from evaluator_cog.engine.deterministic import check_three_layer_observability
 
     (tmp_path / ".env.example").write_text("SENTRY_DSN=\n", encoding="utf-8")

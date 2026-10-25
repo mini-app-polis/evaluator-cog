@@ -348,7 +348,7 @@ def check_no_retired_trigger_patterns(repo_path: Path) -> list[Finding]:
     return findings
 
 
-# --- Runtime: queue and Lambda (PIPE-016..019, ADR-009) ---------------------
+# --- Runtime: queue and Lambda (PIPE-016..019, ecosystem-standards ADR-0009) ---------------------
 
 
 def _declared_dependency_text(repo_path: Path) -> str:
@@ -375,7 +375,7 @@ def check_pipe_016(repo_path: Path) -> list[Finding]:
     """PIPE-016: the cog has left Prefect.
 
     The other half of the rule — the cog runs on Lambda behind its own
-    queue — is declared in mini-app-polis/infra, not in the cog (ADR-010),
+    queue — is declared in mini-app-polis/infra, not in the cog (ecosystem-standards ADR-0010),
     and each evaluation reads only its own repository. A cog with no module
     block there has no function to deploy to, so its deploy job fails; that
     failure is the check for the declaration.
@@ -389,7 +389,7 @@ def check_pipe_016(repo_path: Path) -> list[Finding]:
             "structural_conformance",
             "prefect is still a declared dependency.",
             "Remove prefect: pipeline cogs run on Lambda behind a queue "
-            "(ADR-009). A cog that still declares it has not finished moving.",
+            "(ecosystem-standards ADR-0009). A cog that still declares it has not finished moving.",
         )
     ]
 
@@ -418,7 +418,7 @@ def _visibility_outlasts_timeout(visibility: str | None, timeout: str | None) ->
 def check_pipe_017(repo_path: Path, repo_type: str = "") -> list[Finding]:
     """PIPE-017: a failed job is handed back per record, retried, and dead-lettered.
 
-    Two halves, in the two repositories that own them (ADR-010). The
+    Two halves, in the two repositories that own them (ecosystem-standards ADR-0010). The
     infrastructure half — ReportBatchItemFailures on the mapping, a redrive
     policy to a dead-letter queue, a visibility timeout that outlasts the
     function — is declared once, in mini-app-polis/infra's cog module. The
@@ -501,7 +501,7 @@ def _is_set(value: str | None) -> bool:
 def check_pipe_018(repo_path: Path, repo_type: str = "infrastructure") -> list[Finding]:
     """PIPE-018: each cog's concurrency ceiling is stated once.
 
-    Read from the module calls in mini-app-polis/infra (ADR-010), where each
+    Read from the module calls in mini-app-polis/infra (ecosystem-standards ADR-0010), where each
     cog's settings are decided: every call to the cog-worker module sets
     exactly one of ``reserved_concurrency`` (a positive reservation — the
     only way to get 1) or ``max_concurrency`` (the mapping's ceiling, at

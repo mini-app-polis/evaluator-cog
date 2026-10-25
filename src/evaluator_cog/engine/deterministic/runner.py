@@ -601,7 +601,7 @@ def run_all_checks(
             _run(check_react_hook_form_zod, "FE-005")
 
     # Runtime rules — pipeline cogs are Lambda functions behind their own
-    # queue, trigger cogs start work through the API (ADR-009). These
+    # queue, trigger cogs start work through the API (ecosystem-standards ADR-0009). These
     # replace the retired rules that described Prefect on Railway.
     if is_pipeline_cog:
         _run(check_no_retired_trigger_patterns, "PIPE-008")
@@ -611,7 +611,7 @@ def run_all_checks(
         _run(check_pipe_017, "PIPE-017")
         _run(check_pipe_020, "PIPE-020")
     # The pipeline cogs' runtime is declared in mini-app-polis/infra
-    # (ADR-010): PIPE-017's infrastructure half and PIPE-018 are checked
+    # (ecosystem-standards ADR-0010): PIPE-017's infrastructure half and PIPE-018 are checked
     # there, once, rather than in each cog.
     if is_infrastructure:
         _run(lambda p: check_pipe_017(p, repo_type="infrastructure"), "PIPE-017")

@@ -1976,7 +1976,7 @@ def test_check_eval_003_accepts_tagged_finding_without_rule_id_in_text() -> None
     Regression guard for the 2026-04 triage: EVAL-003 was previously
     regex-matching the finding text for a rule-ID pattern, which fired
     on correctly-tagged findings like
-    "docs/decisions/ exists but no ADR-NNN-*.md files were found."
+    "docs/decisions/ exists but no ADR-NNNN-*.md files were found."
     (rule_id="DOC-005"). The check now looks at the rule_id field
     directly, so these pass.
     """
@@ -1985,7 +1985,7 @@ def test_check_eval_003_accepts_tagged_finding_without_rule_id_in_text() -> None
             {
                 "id": 100,
                 "violation_id": "DOC-005",
-                "finding": "docs/decisions/ exists but no ADR-NNN-*.md files were found.",
+                "finding": "docs/decisions/ exists but no ADR-NNNN-*.md files were found.",
                 "severity": "WARN",
                 "suggestion": "Create a first ADR or remove the empty docs/decisions directory.",
                 "standards_version": "4.1.0",

@@ -1,5 +1,5 @@
 # evaluator-cog / evaluator.yaml
-# Per-repo evaluation configuration — ecosystem-standards ADR-001, ADR-002
+# Per-repo evaluation configuration — ecosystem-standards ADR-0001, ADR-0002
 
 type: pipeline-cog
 
@@ -14,7 +14,7 @@ traits:
 # the fleet-scoped checks when the standards catalog or the evaluator itself
 # releases. The event source mapping invokes the function.
 #
-# That is what pipeline-cog means now (ecosystem-standards ADR-009), so the
+# That is what pipeline-cog means now (ecosystem-standards ADR-0009), so the
 # Prefect-era exemptions this file used to carry are gone with the rules
 # they exempted from.
 
