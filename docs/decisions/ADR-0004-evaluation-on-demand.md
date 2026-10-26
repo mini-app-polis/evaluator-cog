@@ -15,8 +15,8 @@ and a Lambda worker: api-kaianolevine-com enqueues one repository via
 `POST /v1/evaluations/fleet`, and the checks scoped to no repository run as
 their own `run_introspection()` job rather than at the tail of a sweep. The
 `threading.Lock` and module state under Consequences became a per-run
-`RunContext`. See [aws-foundation.md](../aws-foundation.md) and
-[serverless-migration.md](../serverless-migration.md); no separate ADR records
+`RunContext`. See infra's [aws-foundation.md](https://github.com/mini-app-polis/infra/blob/main/docs/aws-foundation.md) and
+ecosystem-standards' [serverless-migration.md](https://github.com/mini-app-polis/ecosystem-standards/blob/main/docs/serverless-migration.md); no separate ADR records
 the queue decision. The body below is left as written.
 
 ## Context
