@@ -23,7 +23,7 @@ Finding = dict[str, Any]
 #
 # When the last consumer is off git refs, drop the legacy entries and resolve
 # the survivor from ecosystem.yaml's `package:` field instead of listing it
-# here. See common-python-utils/docs/pypi-package-publishing.md §7.
+# here. See ecosystem-standards' playbooks/pypi-package-publishing.md §7.
 PYTHON_SHARED_LIBRARY_NAMES = ("miniapppolis-common-utils", "common-python-utils")
 IDENTITY_LIBRARY_NAMES = ("miniapppolis-identity", "identity")
 

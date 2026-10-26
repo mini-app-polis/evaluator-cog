@@ -29,7 +29,7 @@ one message per repository plus one for the fleet-scoped checks — those two
 releases are what invalidate every repository's last result at once.
 
 The process holds no memory between messages and idles at nothing. See
-[the migration plan](docs/serverless-migration.md) for how it got here and
+[the migration record](https://github.com/mini-app-polis/ecosystem-standards/blob/main/docs/serverless-migration.md) for how it got here and
 [ADR-0004](docs/decisions/ADR-0004-evaluation-on-demand.md) for why it stopped
 being scheduled.
 
