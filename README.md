@@ -191,7 +191,7 @@ via `POST /v1/evaluations` on api-kaianolevine-com. Each finding includes
 
 Prerequisites: Python 3.11+, uv, and the
 [Doppler CLI](https://docs.doppler.com/docs/install-cli). Secrets come from
-Doppler's shared `dev` config — nothing reads a `.env` file, and local runs
+this repo's own Doppler `dev` config — nothing reads a `.env` file, and local runs
 never use `prd`.
 
 ```bash

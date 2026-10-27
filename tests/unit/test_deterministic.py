@@ -926,7 +926,7 @@ def test_check_no_hardcoded_secrets_passes_clean_repo() -> None:
     assert check_no_hardcoded_secrets(repo) == []
 
 
-_DOPPLER_YAML = "setup:\n  - project: mini-app-polis-ecosystem\n    config: dev\n"
+_DOPPLER_YAML = "setup:\n  - project: my-repo\n    config: dev\n"
 _PYPROJECT = "[project]\nname = 'x'\ndependencies = ['httpx>=0.27']\n"
 
 
@@ -951,16 +951,31 @@ def test_cd011_flags_a_missing_doppler_yaml() -> None:
     assert _cd011(check_no_hardcoded_secrets(repo)) == ["doppler.yaml is missing."]
 
 
-def test_cd011_flags_a_doppler_yaml_naming_another_project() -> None:
+def test_cd011_flags_a_doppler_yaml_pinning_the_vault() -> None:
     repo = _make_repo(
         {
             ".env.example": "TOKEN=\n",
             "pyproject.toml": _PYPROJECT,
-            "doppler.yaml": "setup:\n  - project: something-else\n    config: dev\n",
+            "doppler.yaml": "setup:\n  - project: mini-app-polis-ecosystem\n"
+            "    config: dev\n",
         }
     )
     assert _cd011(check_no_hardcoded_secrets(repo)) == [
-        "doppler.yaml does not name the mini-app-polis-ecosystem project."
+        "doppler.yaml pins mini-app-polis-ecosystem, where values are edited; "
+        "pin the repo's own project, which references them."
+    ]
+
+
+def test_cd011_flags_a_doppler_yaml_naming_no_project() -> None:
+    repo = _make_repo(
+        {
+            ".env.example": "TOKEN=\n",
+            "pyproject.toml": _PYPROJECT,
+            "doppler.yaml": "setup:\n  - config: dev\n",
+        }
+    )
+    assert _cd011(check_no_hardcoded_secrets(repo)) == [
+        "doppler.yaml names no project."
     ]
 
 
@@ -974,8 +989,8 @@ def test_cd011_skips_repos_without_secrets_or_without_python() -> None:
 @pytest.mark.parametrize(
     "doppler_yaml",
     [
-        'setup:\n  - project: "mini-app-polis-ecosystem"  # pinned\n    config: dev\n',
-        "setup:\n  project: mini-app-polis-ecosystem\n  config: dev\n",
+        'setup:\n  - project: "my-repo"  # pinned\n    config: dev\n',
+        "setup:\n  project: my-repo\n  config: dev\n",
     ],
 )
 def test_cd011_accepts_quoted_commented_and_single_mapping_doppler_yaml(
@@ -996,8 +1011,7 @@ def test_cd011_flags_a_doppler_yaml_pinned_to_prd() -> None:
         {
             ".env.example": "TOKEN=\n",
             "pyproject.toml": _PYPROJECT,
-            "doppler.yaml": "setup:\n  - project: mini-app-polis-ecosystem\n"
-            "    config: prd\n",
+            "doppler.yaml": "setup:\n  - project: my-repo\n    config: prd\n",
         }
     )
     assert _cd011(check_no_hardcoded_secrets(repo)) == [
