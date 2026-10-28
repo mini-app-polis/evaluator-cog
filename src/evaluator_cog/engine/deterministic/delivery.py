@@ -655,8 +655,9 @@ def check_structured_logging(repo_path: Path) -> list[Finding]:
     return findings
 
 
-#: The Doppler project every Python repo pins local development to.
-_DOPPLER_PROJECT = "mini-app-polis-ecosystem"
+#: The project every value is edited in. A repo reads it only through its
+#: own project's references, so it is never what a repo pins.
+_VAULT_PROJECT = "mini-app-polis-ecosystem"
 _DOPPLER_CONFIG = "dev"
 
 
@@ -736,7 +737,12 @@ def _reads_dotenv(tree: ast.AST) -> bool:
 
 def _doppler_pin(doppler_yaml: Path) -> str | None:
     """What is wrong with ``doppler.yaml``, or None when it pins the repo to
-    the ecosystem project's dev config."""
+    a project of its own and that project's dev config.
+
+    The project's name is not checked against the repository's: a check
+    sees the files, not where they came from. Pinning the vault is what
+    goes wrong in practice, and that is flagged.
+    """
     import yaml
 
     if not doppler_yaml.is_file():
@@ -749,12 +755,15 @@ def _doppler_pin(doppler_yaml: Path) -> str | None:
     # Doppler accepts one mapping or a list of them (one per path).
     candidates = setup if isinstance(setup, list) else [setup]
     entries: list[dict] = [e for e in candidates if isinstance(e, dict)]
-    if not any(e.get("project") == _DOPPLER_PROJECT for e in entries):
-        return f"doppler.yaml does not name the {_DOPPLER_PROJECT} project."
-    if not any(
-        e.get("project") == _DOPPLER_PROJECT and e.get("config") == _DOPPLER_CONFIG
-        for e in entries
-    ):
+    projects = [e.get("project") for e in entries]
+    if not any(isinstance(p, str) and p.strip() for p in projects):
+        return "doppler.yaml names no project."
+    if _VAULT_PROJECT in projects:
+        return (
+            f"doppler.yaml pins {_VAULT_PROJECT}, where values are edited; "
+            "pin the repo's own project, which references them."
+        )
+    if not any(e.get("config") == _DOPPLER_CONFIG for e in entries):
         return (
             f"doppler.yaml does not pin the {_DOPPLER_CONFIG} config; "
             "local runs never use prd."
@@ -772,10 +781,10 @@ def _doppler_local_dev_findings(repo_path: Path) -> list[Finding]:
     """CD-011's local-development half, for Python repos with secrets.
 
     A repo that declares ``.env.example`` (it has secrets) and
-    ``pyproject.toml`` (it is Python) must pin itself to the ecosystem's
-    Doppler project and its dev config in ``doppler.yaml``, so ``doppler
-    setup`` asks nothing and ``doppler run`` injects the shared ``dev``
-    config; and nothing in it may read a ``.env`` file, which is how secrets
+    ``pyproject.toml`` (it is Python) must pin itself to its own Doppler
+    project and that project's dev config in ``doppler.yaml``, so ``doppler
+    setup`` asks nothing and ``doppler run`` injects the names the repo
+    reads; and nothing in it may read a ``.env`` file, which is how secrets
     end up on disk with no sign of where a value came from.
 
     A file it cannot read is skipped rather than raised: one unreadable file
@@ -796,9 +805,9 @@ def _doppler_local_dev_findings(repo_path: Path) -> list[Finding]:
                 "WARN",
                 "cd_readiness",
                 problem,
-                f"Add doppler.yaml pinning the repo to {_DOPPLER_PROJECT} / "
-                f"{_DOPPLER_CONFIG} (setup: - project: … config: dev) so "
-                "doppler run needs no setup questions.",
+                "Add doppler.yaml pinning the repo to its own Doppler project's "
+                f"{_DOPPLER_CONFIG} config (setup: - project: <repo> config: dev) "
+                "so doppler run needs no setup questions.",
             )
         )
 

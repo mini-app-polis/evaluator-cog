@@ -1,6 +1,7 @@
-# Pins this repo to the shared Doppler config for local development.
+# Pins this repo to its own Doppler project for local development: the
+# names its code reads, as production has them, and no others.
 # `doppler setup` reads it; `doppler run -- …` then injects the dev secrets.
 # Local runs use dev only — prd is synced to SSM for the Lambda, never run.
 setup:
-  - project: mini-app-polis-ecosystem
+  - project: evaluator-cog
     config: dev
