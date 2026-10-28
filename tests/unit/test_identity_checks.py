@@ -1555,6 +1555,162 @@ def test_auth004_still_flags_a_record_missing_fields(tmp_path: Path) -> None:
     assert "reason" in clause3[0]["finding"]
 
 
+def _auth004_delegating_repo(tmp_path: Path, auth_source: str) -> Path:
+    _write(tmp_path, "src/pkg/auth.py", auth_source)
+    _write(
+        tmp_path,
+        "src/pkg/routers/notes.py",
+        "from fastapi import APIRouter, Depends\n"
+        "from pkg.auth import require_scope\n"
+        "router = APIRouter()\n"
+        "\n"
+        "@router.get('/notes')\n"
+        "def notes(p = Depends(require_scope('wcs.notes.read'))): ...\n",
+    )
+    return tmp_path
+
+
+def test_auth004_accepts_a_guard_that_delegates_to_an_audited_helper(
+    tmp_path: Path,
+) -> None:
+    """The api-deejaytools shape: every decision is audited, one call down.
+
+    ``require_scope`` returns a dependency that calls a request helper,
+    which calls a decide-and-audit helper that makes the decision (through
+    ``authorize`` imported as ``decide``) and emits unconditionally. Reading
+    only ``require_scope``'s own body reported "emits no audit record"
+    against a service that audits every decision.
+    """
+    repo = _auth004_delegating_repo(
+        tmp_path,
+        "from identity.policy import authorize as decide\n"
+        "from identity.store import SqlAlchemyAuditSink, new_audit_event\n"
+        "\n"
+        "\n"
+        "def require_scope(scope):\n"
+        "    async def _dependency(request, authorization, session):\n"
+        "        return await _authorize_request(request, session, scope)\n"
+        "\n"
+        "    return _dependency\n"
+        "\n"
+        "\n"
+        "async def _decide_and_audit(session, request, *, principal, scope):\n"
+        "    decision = decide(principal, scope, roles)\n"
+        "    await SqlAlchemyAuditSink(session).emit_audit(\n"
+        "        new_audit_event(\n"
+        "            enforcement_point=ENFORCEMENT_POINT,\n"
+        "            scope=scope,\n"
+        "            allowed=decision.allowed,\n"
+        "            reason=decision.reason,\n"
+        "            principal=principal,\n"
+        "        )\n"
+        "    )\n"
+        "    return decision.allowed\n"
+        "\n"
+        "\n"
+        "async def _authorize_request(request, session, scope):\n"
+        "    principal = await resolve(request)\n"
+        "    allowed = await _decide_and_audit(\n"
+        "        session, request, principal=principal, scope=scope\n"
+        "    )\n"
+        "    if not allowed:\n"
+        "        raise forbidden()\n"
+        "    return principal\n",
+    )
+    findings = check_auth_004(repo)
+    assert _clause(findings, "AUTH-004", 2) == []
+    assert _clause(findings, "AUTH-004", 3) == []
+
+
+def test_auth004_still_flags_a_guard_delegating_to_an_unaudited_helper(
+    tmp_path: Path,
+) -> None:
+    repo = _auth004_delegating_repo(
+        tmp_path,
+        "from identity.policy import authorize\n"
+        "\n"
+        "\n"
+        "def require_scope(scope):\n"
+        "    async def _dependency(request):\n"
+        "        return _decide(request.state.principal, scope)\n"
+        "\n"
+        "    return _dependency\n"
+        "\n"
+        "\n"
+        "def _decide(principal, scope):\n"
+        "    return authorize(principal, scope, roles).allowed\n",
+    )
+    clause2 = _clause(check_auth_004(repo), "AUTH-004", 2)
+    text = _texts(clause2)
+    assert "require_scope() makes the authorization decision" in text
+    assert "_decide() makes the authorization decision" in text
+    assert len(clause2) == 2
+    assert "emits no audit record" in text
+
+
+def test_auth004_terminates_on_a_delegation_cycle(tmp_path: Path) -> None:
+    repo = _auth004_delegating_repo(
+        tmp_path,
+        "def require_scope(scope):\n"
+        "    def _dependency(request):\n"
+        "        return _first(request, scope)\n"
+        "\n"
+        "    return _dependency\n"
+        "\n"
+        "\n"
+        "def _first(request, scope):\n"
+        "    return _second(request, scope)\n"
+        "\n"
+        "\n"
+        "def _second(request, scope):\n"
+        "    return _first(request, scope) or require_scope(scope)\n",
+    )
+    clause2 = _clause(check_auth_004(repo), "AUTH-004", 2)
+    assert len(clause2) == 1
+    assert "require_scope() makes the authorization decision" in _texts(clause2)
+
+
+def test_auth004_delegation_does_not_excuse_a_direct_one_branch_emit(
+    tmp_path: Path,
+) -> None:
+    """A function that calls authorize itself keeps the both-branches rule."""
+    repo = _auth004_delegating_repo(
+        tmp_path,
+        "from identity.policy import authorize\n"
+        "from identity.store import emit_audit\n"
+        "\n"
+        "\n"
+        "def require_scope(principal, scope):\n"
+        "    _audited(principal, scope)\n"
+        "    if authorize(principal=principal, scope=scope):\n"
+        "        emit_audit(\n"
+        '            enforcement_point="pkg.auth",\n'
+        "            principal=principal,\n"
+        "            scope=scope,\n"
+        '            outcome="allow",\n'
+        '            reason="granted",\n'
+        "        )\n"
+        "        return True\n"
+        "    raise forbidden()\n"
+        "\n"
+        "\n"
+        "def _audited(principal, scope):\n"
+        "    decision = authorize(principal=principal, scope=scope)\n"
+        "    emit_audit(\n"
+        '        enforcement_point="pkg.auth",\n'
+        "        principal=principal,\n"
+        "        scope=scope,\n"
+        "        outcome=decision.outcome,\n"
+        "        reason=decision.reason,\n"
+        "    )\n",
+    )
+    clause2 = _clause(check_auth_004(repo), "AUTH-004", 2)
+    assert len(clause2) == 1
+    assert "require_scope() emits the audit record on only one branch" in _texts(
+        clause2
+    )
+
+
 def test_cd019_does_not_flag_a_docstring_recording_the_retirement(
     tmp_path: Path,
 ) -> None:

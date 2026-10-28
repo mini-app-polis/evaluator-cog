@@ -214,6 +214,9 @@ _AUDIT_FUNCTIONS = frozenset(
     {"emit_audit", "record_audit", "write_audit", "audit_log", "log_audit", "audit"}
 )
 _AUDIT_METHODS = frozenset({"emit", "record", "write", "log"})
+# AUTH-004 (2): how many calls deep a guard is followed into its own
+# module when it hands the decision to a helper.
+_DELEGATION_DEPTH = 5
 _AUDIT_REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     "enforcement point": frozenset(
         {"enforcement_point", "enforcement", "point", "enforcement_pt"}
@@ -1068,15 +1071,78 @@ def _audit_calls(fn: ast.AST) -> list[ast.Call]:
     return out
 
 
+def _decision_names(tree: ast.AST) -> frozenset[str]:
+    """The names this module calls the shared decision function by.
+
+    ``authorize`` itself, plus any name it is imported under:
+    ``from identity.policy import authorize as decide`` makes
+    ``decide(...)`` the decision.
+    """
+    names = {"authorize"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "authorize" and alias.asname:
+                    names.add(alias.asname)
+    return frozenset(names)
+
+
+def _calls_decision(fn: ast.AST, decision_names: frozenset[str]) -> bool:
+    return any(
+        isinstance(n, ast.Call) and _call_name(n) in decision_names
+        for n in ast.walk(fn)
+    )
+
+
+def _delegates_to_audited_decision(fn: ast.AST, tree: ast.Module) -> bool:
+    """True if ``fn`` hands the decision to an audited helper in its module.
+
+    Follows calls by bare name to functions defined at the top level of
+    the same module — from ``fn``'s body, including functions nested in
+    it — and on through those functions' own calls, up to
+    ``_DELEGATION_DEPTH`` calls deep. Each function is visited once, so
+    a delegation cycle terminates. The delegation counts only when it
+    reaches a single function that both makes the decision and emits
+    an audit record; that function is a guard in its own right and is
+    held to clauses (2) and (3) on its own.
+    """
+    module_functions = {
+        n.name: n
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    decision_names = _decision_names(tree)
+    seen = {id(fn)}
+    frontier: list[ast.AST] = [fn]
+    for _ in range(_DELEGATION_DEPTH):
+        reached: list[ast.AST] = []
+        for caller in frontier:
+            for node in ast.walk(caller):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                    continue
+                callee = module_functions.get(node.func.id)
+                if callee is None or id(callee) in seen:
+                    continue
+                seen.add(id(callee))
+                if _calls_decision(callee, decision_names) and _audit_calls(callee):
+                    return True
+                reached.append(callee)
+        if not reached:
+            break
+        frontier = reached
+    return False
+
+
 def _guard_functions(
     files: list[_PyFile],
 ) -> list[tuple[_PyFile, ast.FunctionDef | ast.AsyncFunctionDef]]:
     """Functions that make the authorization decision for a request.
 
     A guard is a function that calls ``authorize`` — the shared decision
-    function — or one named as a scope guard. That is the enforcement
-    point AUTH-004 (2) and (3) are about; audit obligations attach
-    there, not to every function in the service.
+    function, under its own name or the name it is imported as — or one
+    named as a scope guard. That is the enforcement point AUTH-004 (2)
+    and (3) are about; audit obligations attach there, not to every
+    function in the service.
     """
     out: list[tuple[_PyFile, ast.FunctionDef | ast.AsyncFunctionDef]] = []
     guard_names = {
@@ -1087,11 +1153,9 @@ def _guard_functions(
         "guard",
     }
     for f in files:
+        decision_names = _decision_names(f.tree)
         for fn in _functions(f.tree):
-            calls_authorize = any(
-                isinstance(n, ast.Call) and _call_name(n) == "authorize"
-                for n in ast.walk(fn)
-            )
+            calls_authorize = _calls_decision(fn, decision_names)
             if calls_authorize or fn.name in guard_names:
                 out.append((f, fn))
     return out
@@ -1200,10 +1264,23 @@ def _auth004_clause2(
     that emits must emit in both its body and its ``else`` — an emit in
     only one branch is exactly the "audited only when allowed" (or only
     when denied) shape the clause names.
+
+    A guard with no emit of its own passes when it does not call
+    ``authorize`` itself but hands the decision to a function in the
+    same module that makes it and emits (``require_scope`` returning a
+    dependency that calls a decide-and-audit helper). The decision is
+    audited there, and that helper is a guard checked by this clause on
+    its own. A guard that delegates to nothing audited is still reported.
     """
     findings: list[Finding] = []
     for f, fn in guards:
         emits = _audit_calls(fn)
+        if (
+            not emits
+            and not _calls_decision(fn, _decision_names(f.tree))
+            and _delegates_to_audited_decision(fn, f.tree)
+        ):
+            continue
         if not emits:
             findings.append(
                 _finding(
@@ -1457,9 +1534,11 @@ def check_auth_004(repo_path: Path) -> list[Finding]:
     the dispatcher's business rather than this check's.
 
     Clauses (2) and (3) attach to the guard — the function that calls
-    ``authorize`` — because that is where the audit obligation lives.
-    A service with no such function produces no findings from them; its
-    missing import is already clause (1)'s finding.
+    ``authorize``, or one named as a scope guard — because that is where
+    the audit obligation lives. A named guard that hands the decision to
+    an audited helper in its own module satisfies clause (2) through
+    that helper. A service with no guard produces no findings from them;
+    its missing import is already clause (1)'s finding.
     """
     CHECK_ID = "AUTH-004"
     findings: list[Finding] = []
