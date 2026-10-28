@@ -1,3 +1,10 @@
+## [3.60.14](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.13...v3.60.14) (2026-10-28)
+
+
+### Bug Fixes
+
+* **llm:** default the conformance model to claude-sonnet-5-5 ([71b41f5](https://github.com/mini-app-polis/evaluator-cog/commit/71b41f5751aaf3bbc4e817b27f7d3849b7544986))
+
 ## [3.60.13](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.12...v3.60.13) (2026-10-28)
 
 
