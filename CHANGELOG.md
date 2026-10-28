@@ -1,3 +1,11 @@
+## [3.60.12](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.11...v3.60.12) (2026-10-28)
+
+
+### Bug Fixes
+
+* **auth-004:** accept a guard that delegates its decision to an audited helper in the same module ([9b1c7fd](https://github.com/mini-app-polis/evaluator-cog/commit/9b1c7fd49579701bf2785b78e135b2e3807d78a9))
+* **deps:** bump miniapppolis-common-utils to 6.32.0 ([1bb612e](https://github.com/mini-app-polis/evaluator-cog/commit/1bb612e6c5f31d6811fae5b4f1f36c063371191f))
+
 ## [3.60.11](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.10...v3.60.11) (2026-10-28)
 
 
