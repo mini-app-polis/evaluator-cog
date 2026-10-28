@@ -921,7 +921,7 @@ def run_conformance_check(
                 if evaluator_config is not None
                 else None
             )
-            model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
+            model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
             def _ask(only_rule_ids: list[str] | None) -> list[dict[str, Any]]:
                 prompt = build_conformance_prompt(

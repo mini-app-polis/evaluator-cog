@@ -1,17 +1,27 @@
-# A fleet sweep in LLM mode, on demand only.
+# A fleet sweep in LLM mode: weekly, and on demand.
 #
 # Releases sweep deterministically (ecosystem-standards ci.yml): no token
 # cost, and nothing waits on it. The LLM checks — rules whose check_notes
-# start with `LLM CHECK.` — cost tokens per repository, so they run when
-# asked for, from the Actions tab, and never as a side effect of a release.
+# start with `LLM CHECK.` — cost tokens per repository, so they never run
+# as a side effect of a release. They run once a week on a schedule, and
+# whenever asked for from the Actions tab.
 # It lives here because it is the evaluator's engine and token spend being
 # exercised, not a response to a catalog change.
 #
 # Full fleet only. A single repository in LLM mode is a debugging need,
 # and the API serves it directly.
+#
+# The schedule is Sunday 04:00 America/Chicago. GitHub cron is UTC only,
+# so both UTC hours that can be 04:00 Central are scheduled, and the gate
+# lets through only the one that matches Chicago's current offset. The
+# gate compares the cron that fired, not the clock, so a run GitHub starts
+# late is still the right one.
 name: LLM sweep
 
 on:
+  schedule:
+    - cron: "0 9 * * 0"   # 04:00 CDT (UTC-5)
+    - cron: "0 10 * * 0"  # 04:00 CST (UTC-6)
   workflow_dispatch:
 
 # A second press while one is queued would pay for the same sweep twice.
@@ -23,7 +33,35 @@ permissions:
   contents: read
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          FIRED: ${{ github.event.schedule }}
+        run: |
+          if [ "$EVENT" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(TZ=America/Chicago date +%z)" = "-0500" ]; then
+            want="0 9 * * 0"
+          else
+            want="0 10 * * 0"
+          fi
+          if [ "$FIRED" = "$want" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: '$FIRED' is not 04:00 America/Chicago today."
+          fi
+
   evaluate:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     uses: mini-app-polis/.github/.github/workflows/evaluate.yml@v3
     with:
       scope: fleet
