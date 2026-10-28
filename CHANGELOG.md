@@ -1,3 +1,11 @@
+## [3.60.11](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.10...v3.60.11) (2026-10-28)
+
+
+### Bug Fixes
+
+* **cd-011:** flag a doppler.yaml that pins the vault instead of the repo's own project ([01a2727](https://github.com/mini-app-polis/evaluator-cog/commit/01a2727f07ed56158fb16dd0b554916c45956a59))
+* **deps:** bump miniapppolis-common-utils to 6.31.0 ([5e17ae8](https://github.com/mini-app-polis/evaluator-cog/commit/5e17ae83f53930d1405455d486e1c1a76a93250e))
+
 ## [3.60.10](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.9...v3.60.10) (2026-10-26)
 
 
