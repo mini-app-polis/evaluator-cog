@@ -1,14 +1,11 @@
 """API client helpers for posting evaluation findings.
 
 Deduplication is the API's job and only the API's job (PIPE-002). This
-module used to guess as well, comparing each finding against the single
-most recent stored row for the repo — best-effort by construction, since
-it could not see a row two positions back or a redelivery that arrived
-after something else had been written. Two guards where one is unsound is
-worse than either alone: that one once compared deejay-cog's CD-021
-against watcher-cog's identical CD-021 and dropped a true finding.
+module does not guess: a client-side guard can only compare a finding
+against the rows it happens to see, and two guards where one is unsound
+is worse than either alone.
 
-What remains is reading the answer. A suppressed write returns 200 with
+What this module does is read the answer. A suppressed write returns 200 with
 ``deduplicated: true``, and counting that as a delivered finding is how a
 run comes to report findings as posted that were never stored.
 
@@ -35,12 +32,10 @@ log = logger_mod.get_logger()
 class PostResult:
     """What actually happened when findings were handed to the API.
 
-    ``post_findings`` used to compute this, log one line of it, and throw
-    it away. On 2026-09-03 that cost two full conformance runs: the
-    evaluator computed ~162 findings across 13 repos, every POST failed
-    before leaving the process, and the flow still finished Completed —
-    because a swallowed failure is indistinguishable from success to
-    every caller.
+    ``post_findings`` returns it rather than logging it, because a
+    swallowed failure is indistinguishable from success to every caller:
+    a run whose every POST failed before leaving the process would still
+    finish Completed.
 
     Returning the outcome is what lets the flow tell the difference. The
     load-bearing property is :attr:`total_failure`: attempted work that
@@ -96,7 +91,7 @@ def post_findings(
     """Post a list of findings to api-kaianolevine-com.
 
     Never raises — a caller mid-run should not lose the findings it has
-    already computed because one POST failed. But it no longer stays
+    already computed because one POST failed. But it does not stay
     silent either: the returned :class:`PostResult` says how many were
     offered, accepted, deduplicated and rejected, and the caller is
     expected to act on ``total_failure``.

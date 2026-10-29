@@ -136,7 +136,7 @@ def check_canonical_ci_job_names(repo_path: Path) -> list[Finding]:
 
 #: The fleet's shared test stage. It runs pytest with ``--cov=src`` unless a
 #: caller overrides ``pytest-args``, so delegating to it measures coverage
-#: without ci.yml ever containing the string this check used to look for.
+#: without ci.yml ever containing ``--cov`` itself.
 _SHARED_TEST_WORKFLOW = "workflows/python-test.yml"
 
 

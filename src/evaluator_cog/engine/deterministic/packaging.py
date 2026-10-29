@@ -186,10 +186,10 @@ def _check_lock_omits_project_version(
     ``uv.lock``. A lock whose root entry *does* carry a version goes a
     version behind the moment a release succeeds.
 
-    ``.releaserc.json`` is deliberately not read. This clause used to
-    require the release to relock and commit ``uv.lock`` — the exact
-    mechanism PY-017 removed — which failed every conforming repository.
-    PY-017 owns the release config; this reads the lock.
+    ``.releaserc.json`` is deliberately not read: requiring the release to
+    relock and commit ``uv.lock`` would fail every repository that
+    conforms to PY-017. PY-017 owns the release config; this reads the
+    lock.
     """
     project = data.get("project") if isinstance(data, dict) else None
     if not isinstance(project, dict):

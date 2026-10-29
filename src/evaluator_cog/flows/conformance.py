@@ -11,11 +11,11 @@ carry ``applies_to: None`` and grade the inventory, the stored findings
 and the catalog itself. No repository owns them, so they get their own
 job.
 
-``run_fleet_sweep()`` used to be here — one message the evaluator expanded
-into a serial loop over the fleet. The API fans out instead, so a failure
-retries one repository rather than redelivering a pass that re-evaluates
-everything that already succeeded. The registry-to-events translation it
-did now lives in api-kaianolevine-com, behind ``POST /v1/evaluations/fleet``.
+There is no fleet sweep here. The API fans a fleet pass out into one
+message per repository, so a failure retries one repository rather than
+redelivering a pass that re-evaluates everything that already succeeded.
+The registry-to-events translation lives in api-kaianolevine-com, behind
+``POST /v1/evaluations/fleet``.
 
 Two modes, in both shapes:
 
@@ -106,11 +106,10 @@ _DEFAULT_ORG = "mini-app-polis"
 #:
 #: XSTACK-008 must never collapse "I could not tell" into "it is not
 #: there": a 403, 429, 5xx or timeout means the run could not determine
-#: whether the repository exists, and only a 404 says it does not. That
-#: distinction used to live solely in ``RunContext.unresolved_downloads``,
-#: in the memory of the process that did the download — which was fine
-#: for a sweep that ran the checks at the end of its own loop, and is not
-#: fine now. Under fan-out each repository is a separate job with its own
+#: whether the repository exists, and only a 404 says it does not.
+#: ``RunContext.unresolved_downloads`` holds that distinction only in the
+#: memory of the process that did the download, which is not enough:
+#: under fan-out each repository is a separate job with its own
 #: context, so no single one sees the fleet, and the introspection pass
 #: that runs the check sees none of them.
 #:
@@ -224,13 +223,9 @@ def _record_standards_version(standards_version: str, *, ctx: RunContext) -> Non
 class RunContext:
     """Everything one run accumulates, scoped to that run.
 
-    Was four module globals and a lock. The globals meant two evaluations
-    in one process corrupted each other's accounting — and not only under
-    genuine concurrency. ``/invoke`` reset them from the request thread
-    while a previously accepted evaluation was still running under that
-    lock, so a second release arriving mid-evaluation wiped the first
-    one's tally and report before either got near a write. The lock
-    serialised the work and not the state it was protecting.
+    Not module state: module globals would let two evaluations in one
+    process corrupt each other's accounting, and a lock around them would
+    serialise the work and not the state it was protecting.
 
     One of these per job. The caller constructs it, because only the
     caller knows what a job is: one repository for a release, the whole
@@ -1068,9 +1063,9 @@ def run_conformance_check(
 
     if post and not findings_to_post and llm_not_assessed is not None:
         # Nothing to post is not a pass when half the assessment never
-        # happened. This row used to be the SUCCESS below: a 404 from the
-        # model, or a reply that could not be read, reported the repo as
-        # having passed every LLM check.
+        # happened. The SUCCESS row below would report a 404 from the
+        # model, or a reply that could not be read, as the repo having
+        # passed every LLM check.
         findings_to_post = [
             {
                 "rule_id": "STATUS",
@@ -1225,12 +1220,9 @@ def _post_not_evaluated(
 
     Every service that is evaluated posts a row — its findings, or a
     STATUS/SUCCESS row saying it passed. A service that could not be
-    downloaded, or whose checks raised, used to post nothing and only
-    log, which meant it vanished from the report entirely: the totals
-    said twelve rows and eight successes, and nothing anywhere said
-    that three declared services had not been looked at. A silent
-    absence reads as a clean bill of health, which is the one thing it
-    is not.
+    downloaded, or whose checks raised, posts this row too; logging
+    alone would leave it absent from the report, and a silent absence
+    reads as a clean bill of health, which is the one thing it is not.
 
     Posted under the same synthetic STATUS id the success row uses, so
     it needs no catalog rule of its own — it is the same statement
@@ -1498,8 +1490,8 @@ def _run_applies_to_absent_checks(
     # every repo and it can never run on the per-repo path. That is
     # correct: its read sources are the GitHub org listing and the
     # ecosystem.yaml registry, not any one repo's source tree, and the fix
-    # is always a registry entry. XSTACK-007 used to run here too; it is a
-    # question about one repository's pins, and runs per repository now.
+    # is always a registry entry. XSTACK-007 does not run here: it is a
+    # question about one repository's pins, and runs per repository.
     #
     # The registry passed in is the one fetched for this run, not a
     # cached copy — XSTACK-006 requires reading it at the version under
@@ -1758,9 +1750,9 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                         findings_by_service[service_id] = computed
             except Exception as exc:
                 # Anything around the checks rather than inside them —
-                # loading evaluator.yaml, parsing check_exceptions. This
-                # used to log and post nothing, which is the same
-                # invisible absence by a different route.
+                # loading evaluator.yaml, parsing check_exceptions. These
+                # post a not-evaluated row too; logging alone would be the
+                # same invisible absence by a different route.
                 log.error(
                     "%s: unhandled error processing %s — skipping: %s",
                     event.mode,

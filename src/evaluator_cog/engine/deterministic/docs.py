@@ -964,6 +964,57 @@ _HISTORY_PHRASES = re.compile(
     rf"|{_MONTH} \d{{1,2}}(?:, \d{{4}})?|\d{{1,2}} {_MONTH} \d{{4}}|{_MONTH} \d{{4}}))\b",
     re.IGNORECASE,
 )
+#: Present-tense uses of those phrases, which describe the code as it is.
+#: Each is the text right before the phrase (anchored at its end) or right
+#: after it (anchored at its start); comment markers between words count
+#: as spaces, so a docstring or block comment wrapped across lines reads
+#: the same.
+_GAP = r"[\s#*/]+"
+_PRESENT_BEFORE: dict[str, re.Pattern[str]] = {
+    # "is used to sign", "it's used to".
+    "used to": re.compile(
+        rf"(?:\b(?:is|are|was|were|be|been|being)|\w['’]s){_GAP}$", re.IGNORECASE
+    ),
+    # "a task that no longer passes", "a page that no longer exists".
+    "no longer": re.compile(
+        rf"\b(?:that|which|who|whose|if|when|once|until|while){_GAP}$",
+        re.IGNORECASE,
+    ),
+    # "is not moved from".
+    "moved from": re.compile(rf"\b(?:not|is|are|be|been|being){_GAP}$", re.IGNORECASE),
+    # "the previously recorded value": after a determiner, the participle
+    # that follows is an adjective. With no determiner before it, the
+    # phrase reads as history and stays a finding.
+    "previously": re.compile(
+        r"\b(?:a|an|the|any|each|every|no|some|all|both|this|these|those"
+        rf"|its|their|his|her|our|your|my){_GAP}$",
+        re.IGNORECASE,
+    ),
+}
+_PRESENT_AFTER: dict[str, re.Pattern[str]] = {
+    # The participle the determiner above introduces: -ed or -en.
+    "previously": re.compile(
+        rf"{_GAP}(?!(?:when|then|even|often)\b)[a-z]{{2,}}(?:ed|en)\b",
+        re.IGNORECASE,
+    ),
+    # "no longer than 72 characters": a length, not a change.
+    "no longer": re.compile(r"\s+than\b", re.IGNORECASE),
+}
+
+
+def _is_present_tense(comment: str, match: re.Match[str]) -> bool:
+    """True when a DOC-017 phrase is used in the present tense, not as history."""
+    phrase = match.group(0).lower()
+    before = _PRESENT_BEFORE.get(phrase)
+    after = _PRESENT_AFTER.get(phrase)
+    is_before = before is not None and before.search(comment, 0, match.start())
+    is_after = after is not None and after.match(comment, match.end())
+    if phrase == "previously":
+        # Both: a determiner before it and a participle after it.
+        return bool(is_before and is_after)
+    return bool(is_before or is_after)
+
+
 _JS_COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
 _HASH_COMMENT = re.compile(r"(?m)(?:^|\s)#[^\n]*")
 
@@ -1019,6 +1070,7 @@ def check_doc_017(repo_path: Path) -> list[Finding]:
             (start + comment.count("\n", 0, m.start()), m.group(0))
             for start, comment in comments
             for m in _HISTORY_PHRASES.finditer(comment)
+            if not _is_present_tense(comment, m)
         )
         if not hits:
             continue

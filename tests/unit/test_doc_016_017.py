@@ -145,3 +145,51 @@ def test_a_string_literal_or_a_document_is_not_a_finding(tmp_path: Path) -> None
         },
     )
     assert check_doc_017(repo) == []
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        "the key is used to sign the body",
+        "the token it's used to verify",
+        "a task that no longer passes",
+        "a page that no longer exists",
+        "so it is not moved from under it",
+        "the previously recorded value",
+        "a subject no longer than 72 characters",
+    ],
+)
+def test_a_present_tense_use_of_a_phrase_is_not_a_finding(
+    tmp_path: Path, comment: str
+) -> None:
+    repo = _repo(tmp_path, {"src/pkg/mod.py": f"x = 1  # {comment.upper()}\n"})
+    assert check_doc_017(repo) == []
+
+
+def test_a_present_tense_use_wrapped_in_a_docstring_is_not_a_finding(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(
+        tmp_path,
+        {"src/pkg/mod.py": 'def f():\n    """The key is\n    used to sign."""\n'},
+    )
+    assert check_doc_017(repo) == []
+
+
+@pytest.mark.parametrize(
+    ("comment", "phrase"),
+    [
+        ("this module used to poll the queue", "used to"),
+        ("the fleet no longer runs on Prefect", "no longer"),
+        ("the check moved from the fleet lane", "moved from"),
+        ("the branch previously lacked a guard", "previously"),
+        ("it was previously reported", "previously"),
+        ("a task no longer ready", "no longer"),
+    ],
+)
+def test_the_history_form_of_each_phrase_is_still_a_finding(
+    tmp_path: Path, comment: str, phrase: str
+) -> None:
+    repo = _repo(tmp_path, {"src/pkg/mod.py": f"x = 1  # {comment}\n"})
+    (finding,) = check_doc_017(repo)
+    assert f'line 1: "{phrase}"' in finding["finding"]

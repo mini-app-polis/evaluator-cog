@@ -1,9 +1,8 @@
 """Deterministic rule checks for the conformance flow.
 
-This package replaces the former single-file deterministic.py. The
-public surface is preserved: every name that used to be importable
-as `from evaluator_cog.engine.deterministic import X` is re-exported
-from here unchanged.
+Every public check is importable as
+`from evaluator_cog.engine.deterministic import X`: the modules of this
+package are re-exported from here.
 """
 
 from __future__ import annotations

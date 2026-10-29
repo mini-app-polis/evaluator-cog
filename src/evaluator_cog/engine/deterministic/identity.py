@@ -41,9 +41,9 @@ Why the checks are shaped the way they are
 route enumeration is delegated to ``_routes.enumerate_routes``, whose
 module docstring explains the constraint in full: four routes in
 api-kaianolevine-com's ``wcs_wiki.py`` are registered by a module-level
-factory and have no literal path anywhere in the file, which is how
-they went unguarded originally. There is deliberately not one path
-regex in this module.
+factory and have no literal path anywhere in the file, so a path scan
+cannot see them. There is deliberately not one path regex in this
+module.
 
 **Unresolvable is a finding, not a pass.** A registration whose guard
 cannot be read statically — a bare ``Depends(current_user)``, a
@@ -195,7 +195,7 @@ _CREDENTIAL_TYPE_VALUES = frozenset(
     {"machine", "human", "user", "service", "m2m", "session", "apikey", "api_key"}
 )
 
-# Exceptions that mean "denied". Used to tell a decision branch from a
+# Exceptions that mean "denied". They tell a decision branch from a
 # provisioning-time read of the same column, which AUTH-003 (4) allows.
 _DENIAL_EXCEPTIONS = (
     "httpexception",
@@ -725,7 +725,7 @@ def _request_identity_reads(
          authorization call, or returned from a function whose name
          says it provides the principal.
 
-    A ``owner_id: str = Query(None)`` used to filter rows matches
+    A ``owner_id: str = Query(None)`` that filters rows matches
     neither and is not reported.
     """
     out: list[tuple[int, str, str]] = []
@@ -1753,9 +1753,10 @@ _RETIREMENT_MARKERS = (
     "deleted",
     "superseded",
 )
-# Deliberately absent: "used to" and "deprecated". Both are ambiguous —
-# "X used to do Y" reads as a retirement record but is also how a stale
-# note describes a helper it still expects you to reach for, and
+# Deliberately absent: "deprecated" and the habitual past ("used" then
+# "to"). Both are ambiguous — "X did Y" in the habitual past reads as a
+# retirement record but is also how a stale note describes a helper it
+# still expects you to reach for, and
 # "deprecated" implies the thing still exists. Neither is strong enough
 # evidence to suppress a finding.
 
@@ -2573,12 +2574,11 @@ def _enclosing_functions(tree: ast.AST) -> dict[ast.Call, ast.AST]:
 def _compares_a_bearer_credential(node: ast.Call, enclosing: ast.AST | None) -> bool:
     """Whether a ``compare_digest`` call is comparing a Bearer credential.
 
-    This clause used to fire on the function name alone, which made it the
-    only one of the three in this check with no notion of what it was
-    looking at — a JWKS fetch has to look like an HTTP call to a JWKS URL,
-    and a decode has to name an asymmetric algorithm. Matching every
-    ``compare_digest`` reported two comparisons that CD-019 does not
-    govern: a Prefect webhook shared secret arriving in ``X-Prefect-Token``
+    The function name alone is not enough, as it is not for the other two
+    clauses of this check — a JWKS fetch has to look like an HTTP call to
+    a JWKS URL, and a decode has to name an asymmetric algorithm. Matching
+    every ``compare_digest`` would report two comparisons that CD-019 does
+    not govern: a Prefect webhook shared secret arriving in ``X-Prefect-Token``
     and a GitHub signature over the raw request body. Neither is a Clerk
     session JWT or a named machine key, which is what CD-019's own
     description says a credential is, and the check's suggestion — call
@@ -2620,9 +2620,9 @@ def _cd029_clause1(
 
     The shared library has two halves. `identity` is Python; a
     TypeScript service consumes `common-typescript-utils` instead. A
-    repo with no Python sources was previously reported for importing
-    nothing from `identity` — advice it could not act on, against a
-    service that was already delegating correctly.
+    repo with no Python sources is not reported for importing nothing
+    from `identity` — advice it could not act on, against a service
+    that is already delegating correctly.
     """
     findings: list[Finding] = []
     modules, _names = _imported_modules(files)

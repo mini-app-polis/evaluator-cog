@@ -589,9 +589,9 @@ def check_mypy_in_ci(repo_path: Path) -> list[Finding]:
     """TEST-012: every Python repo in scope typechecks in CI, against a config.
 
     Scoped by repo type (the runner filters on applies_to), not by whether
-    the repo opted in. Gated on [tool.mypy], as this used to be, a repo that
-    configured nothing was invisible — it could not tell "deliberately
-    untyped" from "never set up". The first is a TEST-012 exemption in
+    the repo opted in. Gated on [tool.mypy], a repo that configured
+    nothing would be invisible — it could not tell "deliberately untyped"
+    from "never set up". The first is a TEST-012 exemption in
     evaluator.yaml and the second a deferral with an `until:`, both of which
     the runner applies before this is called.
 

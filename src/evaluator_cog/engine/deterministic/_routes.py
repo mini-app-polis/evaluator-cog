@@ -6,9 +6,8 @@ path strings.**
 This is not a stylistic preference. In api-kaianolevine-com's
 ``wcs_wiki.py`` four routes are registered by a module-level factory:
 the decorator is applied inside a function whose path argument is a
-variable, so the route has no literal path anywhere in the file. That
-is precisely how those four went unguarded originally. A path-regex
-scan would miss them a second time, and the rule exists to catch
+variable, so the route has no literal path anywhere in the file. A
+path-regex scan misses them, and the rule exists to catch
 exactly the routes a path scan cannot see.
 
 So the unit of enumeration here is the *registration* — a

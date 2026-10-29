@@ -9,10 +9,8 @@ under ``github.com/mini-app-polis/``.
 
 That keeps each evaluation independent (ecosystem-standards ADR-0010) and puts the finding on
 the repository that has to fix it, where its own release re-evaluates it.
-The rule used to run from the fleet-wide lane, reading every repo's
-manifest and a shared-library list from the registry, and filed its
-findings under ecosystem-standards — so a repo that bumped its pin passed
-its own evaluation and still showed the warning until the next fleet run.
+A repo that bumps its pin clears the finding with its own release, not
+at the next fleet run.
 
 What is judged is the version the repo actually runs. Where ``uv.lock``
 resolves a dependency, the locked version is the one compared: the fleet's
