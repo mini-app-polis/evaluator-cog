@@ -212,3 +212,28 @@ def test_an_answer_outside_the_contract_is_a_failure_not_a_post(
         assert result.posted == 0, f"{response!r} was read as a stored row"
         assert result.failed == 1
         assert result.errors
+
+
+def test_post_findings_counts_what_it_offered_by_severity(monkeypatch) -> None:
+    """The tally behind each repository's message line; SUCCESS is not a finding."""
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")
+    api = api_fakes.api(post=lambda path, payload: api_fakes.store(path, payload))
+
+    with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
+        m.from_env.return_value = api
+        result = post_findings(
+            findings=[
+                {"dimension": "x", "severity": "WARNING", "finding": "a"},
+                {"dimension": "x", "severity": "WARN", "finding": "b"},
+                {"dimension": "x", "severity": "info", "finding": "c"},
+                {"dimension": "x", "severity": "SUCCESS", "finding": "passed all"},
+                {"dimension": "x", "severity": "WARN", "finding": "  "},
+            ],
+            run_id="run-sev",
+            repo="test-repo",
+            flow_name=None,
+            source="conformance_llm",
+            standards_version="3.0.1",
+        )
+
+    assert result.by_severity == {"WARN": 2, "INFO": 1}

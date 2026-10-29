@@ -35,7 +35,10 @@ def _description(message: dict) -> str:
 
 
 def test_stamp_carries_the_standards_version() -> None:
-    assert conf.stamp_standards("done", "4.2.0") == "done\n(standards=4.2.0)"
+    assert conf.stamp_standards("done", "4.2.0") == "done (standards=4.2.0)"
+    assert conf.stamp_standards("done\n\nCounts\n  3 posted", "4.2.0") == (
+        "done (standards=4.2.0)\n\nCounts\n  3 posted"
+    )
 
 
 def test_stamp_omits_an_unknown_standards_version() -> None:
@@ -59,9 +62,9 @@ def test_run_report_carries_the_graded_catalog_version(sent) -> None:
 
     lines = _description(sent[0]).splitlines()
     assert lines[0].startswith("Run complete in ")
-    # Counters and the version follow the catalog stamp, so the last line
-    # is the metadata.
-    assert lines[-1] == f"(standards=4.2.0) posted=3 (version={__version__})"
+    # The headline carries the metadata: the catalog, then the build.
+    assert lines[0].endswith(f"(standards=4.2.0) (version={__version__})")
+    assert lines[-2:] == ["Counts", "  3 posted"]
     assert _description(sent[0]).count("(version=") == 1
 
 

@@ -48,6 +48,7 @@ from evaluator_cog.flows.conformance import (
     EvaluationEvent,
     EvaluationResult,
     RunContext,
+    VersionedRunReport,
     _assert_findings_were_delivered,
     _build_conformance_run_id,
     _build_deterministic_run_id,
@@ -189,7 +190,12 @@ def _report_run(
     if ctx.report is None:
         return
 
-    ctx.report.ok(len(result.evaluated))
+    # The first line says what the check found in this repository; the
+    # sections below it say only what went wrong with the run.
+    if isinstance(ctx.report, VersionedRunReport):
+        kind = "LLM check" if event.mode == "llm" else "deterministic check"
+        ctx.report.check = f"{event.repo}@{event.ref} — {kind}"
+        ctx.report.found = dict(ctx.tally.by_severity)
     for service_id in result.not_evaluated:
         ctx.report.issue("not_evaluated", service_id)
     # Delivery failure is an issue like any other, matching the sweep: a
@@ -197,21 +203,17 @@ def _report_run(
     # run that skipped a service is.
     if ctx.tally.failed:
         ctx.report.issue("delivery_failed", f"{ctx.tally.failed} finding(s)")
-    ctx.report.count("flow", event.mode)
-    # Not "repo": RunReport.send splats its counters into post_run_finding
-    # as keyword arguments, and that function already has a repo parameter
-    # of its own. The collision is a TypeError at send time, on a path a
-    # green test suite would otherwise never walk.
-    ctx.report.count("target", f"{event.repo}@{event.ref}")
-    ctx.report.count("offered", ctx.tally.attempted)
-    ctx.report.count("posted", ctx.tally.posted)
     # Counted, not named. Both sources of a suppressed finding are
     # ordinary — a redelivered message re-offering a run's whole set, or
     # one repository failing a rule the same way twice, which CD-026 makes
     # routine — so this is a number, not a flag. The rule ids are in the
     # consumer's log if a run is ever worth chasing; putting them here
     # would bury the line that matters under the deduplication working.
-    ctx.report.count("duplicate", ctx.tally.duplicates)
+    ctx.report.count(
+        "duplicate",
+        ctx.tally.duplicates,
+        label="findings already stored for this run",
+    )
     # Notable whatever the tally, which is where this parts company with
     # the sweep. A release triggered this run and someone is waiting to
     # hear it happened, so a clean evaluation must still say so. Silence

@@ -325,7 +325,7 @@ def test_missing_api_key_counts_without_escalating() -> None:
 
     assert ctx.report is not None
     assert ctx.report.severity == "SUCCESS"
-    assert "llm_skipped_no_api_key=3" in ctx.report.text()
+    assert "Skipped\n  3 llm_skipped_no_api_key" in ctx.report.text()
 
 
 def test_helpers_are_noops_on_a_context_with_no_report() -> None:

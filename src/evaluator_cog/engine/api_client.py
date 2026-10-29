@@ -19,6 +19,7 @@ comes back as the API's ``PipelineEvaluationWriteResult``.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 
 from mini_app_polis import logger as logger_mod
@@ -57,6 +58,9 @@ class PostResult:
     #: you nothing about which rule stopped being reported, or why.
     duplicate_details: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    #: Findings offered, by severity (ERROR, WARN, INFO), leaving out the
+    #: SUCCESS a clean repository records: what the checks found.
+    by_severity: Counter[str] = field(default_factory=Counter)
 
     @property
     def total_failure(self) -> bool:
@@ -76,6 +80,7 @@ class PostResult:
         self.duplicate_details.extend(other.duplicate_details)
         self.failed += other.failed
         self.errors.extend(other.errors)
+        self.by_severity.update(other.by_severity)
 
 
 def post_findings(
@@ -146,6 +151,8 @@ def post_findings(
             "violation_id": violation_id,
         }
         result.attempted += 1
+        if sev != "SUCCESS":
+            result.by_severity[sev] += 1
         try:
             # Validated here, so a finding the API would refuse fails before
             # it is sent and is counted the same way as a refusal.

@@ -74,6 +74,8 @@ from evaluator_cog.engine.deterministic.dependencies import check_xstack_007
 from evaluator_cog.engine.deterministic.docs import (
     check_adrs_present,
     check_changelog,
+    check_doc_016,
+    check_doc_017,
     check_env_example,
     check_fastapi_route_docs,
     check_public_docstrings,
@@ -213,6 +215,8 @@ __all__ = [
     "check_auth_header_parity",
     "check_breaking_change_footer",
     "check_changelog",
+    "check_doc_016",
+    "check_doc_017",
     "check_ci",
     "check_clerk_auth_dep",
     "check_cloudflare_pages_deploy",

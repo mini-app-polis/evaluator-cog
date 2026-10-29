@@ -56,7 +56,7 @@ from typing import Any
 import httpx
 import yaml
 from mini_app_polis import logger as logger_mod
-from mini_app_polis.pipeline_status import RunReport
+from mini_app_polis.pipeline_status import RunReport, format_duration
 
 from evaluator_cog._version import __version__
 from evaluator_cog.engine.api_client import PostResult, post_findings
@@ -128,14 +128,14 @@ _REPO = "evaluator-cog"
 
 
 def stamp_standards(text: str, standards_version: str = "") -> str:
-    """Append the catalog version the run graded against to ``text``.
+    """Add the catalog version the run graded against to ``text``'s headline.
 
-    ``(standards=4.2.0)`` on a line of its own. The running code's version
-    is the library's to stamp: :class:`VersionedRunReport` and
+    ``(standards=4.2.0)`` at the end of the first line. The running code's
+    version is the library's to stamp: :class:`VersionedRunReport` and
     ``post_run_finding`` pass ``version=__version__``, from
     ``_version.py``, which ships in the Lambda zip and is built from the
-    release tag. The library appends it as ``(version=X.Y.Z)`` after any
-    counters, so the last line of a message is its metadata.
+    release tag. The library adds it to the same line as
+    ``(version=X.Y.Z)``, so the headline carries both.
 
     Nothing is stamped when the version is not known — a job that died
     before the catalog resolved — rather than guessing one. Empty text is
@@ -144,7 +144,8 @@ def stamp_standards(text: str, standards_version: str = "") -> str:
     """
     if not text or not standards_version or "(standards=" in text:
         return text
-    return f"{text}\n(standards={standards_version})"
+    headline, sep, rest = text.partition("\n")
+    return f"{headline} (standards={standards_version}){sep}{rest}"
 
 
 @dataclass
@@ -158,15 +159,59 @@ class VersionedRunReport(RunReport):
 
     version: str | None = __version__
     standards_version: str = ""
+    #: A repository's evaluation, as its first line says it:
+    #: ``infra@main — LLM check``. Set, it leads the message in place of the
+    #: library's headline (:meth:`headline`); see :func:`repo_check_line`.
+    check: str | None = None
+    #: What the check found, by severity, for :attr:`check`'s line.
+    found: dict[str, int] = field(default_factory=dict)
+
+    def headline(self) -> str:
+        """The repository's line when this reports one; the library's otherwise."""
+        if self.check is None:
+            return super().headline()
+        return repo_check_line(
+            self.check,
+            self.found,
+            standards_version=self.standards_version,
+            took=format_duration(self.duration),
+        )
 
     def text(self) -> str:
-        """The library's message body, with the catalog version as its last line.
+        """The library's message body, with the catalog version on its headline.
 
         Stamped here rather than at send time so every path that renders the
         report — :meth:`send`, and the tests that read it — sees the same
-        text. See :func:`stamp_standards` for the format.
+        text. See :func:`stamp_standards` for the format. A repository's line
+        names the catalog itself, so it is not stamped again.
         """
+        if self.check is not None:
+            return super().text()
         return stamp_standards(super().text(), self.standards_version)
+
+
+#: The order a repository's line lists severities in.
+SEVERITY_ORDER: tuple[str, ...] = ("CRITICAL", "ERROR", "WARN", "INFO")
+
+
+def repo_check_line(
+    check: str,
+    found: dict[str, int],
+    *,
+    standards_version: str = "",
+    took: str = "",
+) -> str:
+    """``infra@main — LLM check: 2 WARN, 1 INFO (standards 7.27.4, 13s)``.
+
+    ``clean`` when the check found nothing. The parenthesis names the
+    catalog graded against, when it is known, and how long the run took.
+    """
+    counts = [f"{found[s]} {s}" for s in SEVERITY_ORDER if found.get(s)]
+    line = f"{check}: {', '.join(counts) if counts else 'clean'}"
+    extra = [
+        p for p in (standards_version and f"standards {standards_version}", took) if p
+    ]
+    return f"{line} ({', '.join(extra)})" if extra else line
 
 
 def _record_standards_version(standards_version: str, *, ctx: RunContext) -> None:

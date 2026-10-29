@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 from contextlib import suppress
 from pathlib import Path
 
@@ -857,4 +859,179 @@ def check_unauthenticated_routes_documented(repo_path: Path) -> list[Finding]:
                         "description or docstring.",
                     )
                 )
+    return findings
+
+
+# ── DOC-016 / DOC-017: code that stays in its own repo and its own time ─────
+
+#: The source files DOC-016 and DOC-017 read, by suffix. Code and tests only:
+#: README, docs/ and CHANGELOG.md are documents, which may describe history
+#: and how the repo fits with others.
+_CODE_SUFFIXES = frozenset(
+    {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".astro", ".sh"}
+)
+#: The folders they are read from.
+_CODE_DIRS = ("src", "tests")
+#: Dependencies, build output and caches inside those folders.
+_CODE_SKIP_DIRS = _ENV_SCAN_SKIP_DIRS - {"tests", "test", "__tests__"}
+
+
+def _code_files(repo_path: Path) -> list[Path]:
+    """Source and test files under src/ and tests/, skipping dependencies."""
+    files: list[Path] = []
+    for top in _CODE_DIRS:
+        root = repo_path / top
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.suffix not in _CODE_SUFFIXES:
+                continue
+            # Below its top folder: tests/ is read here, unlike DOC-004.
+            parts = set(path.relative_to(root).parts[:-1])
+            if parts & _CODE_SKIP_DIRS:
+                continue
+            files.append(path)
+    return files
+
+
+#: DOC-016's deny patterns: another repo's internals, or a private tracker.
+_TRACKER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("a task-board id", re.compile(r"\bMINI-\d+\b")),
+    ("a task-board link", re.compile(r"app\.asana\.com/0/\d")),
+)
+#: A Terraform file name. Only infra owns Terraform.
+_TF_FILE = re.compile(r"(?<![\w./-])[\w-]+\.tf(?![\w.(])")
+#: A migration by number or file name. Only the API repos own migrations.
+_MIGRATION = (
+    re.compile(r"\bmigrations? \d{3}\b", re.IGNORECASE),
+    re.compile(r"(?<![\w])\d{3}_[a-z0-9_]+\.sql\b"),
+)
+#: The repo types that own what the patterns above name.
+_TERRAFORM_OWNERS = frozenset({"infrastructure"})
+_MIGRATION_OWNERS = frozenset({"api-service"})
+
+
+def _line_of(text: str, offset: int) -> int:
+    return text.count("\n", 0, offset) + 1
+
+
+def check_doc_016(repo_path: Path, *, repo_type: str = "") -> list[Finding]:
+    """DOC-016: code and tests name another repo's public contract, never its internals."""
+    CHECK_ID = "DOC-016"
+
+    patterns: list[tuple[str, re.Pattern[str]]] = list(_TRACKER_PATTERNS)
+    if repo_type not in _TERRAFORM_OWNERS:
+        patterns.append(("a Terraform file", _TF_FILE))
+    if repo_type not in _MIGRATION_OWNERS:
+        patterns.extend(("a migration", p) for p in _MIGRATION)
+
+    findings: list[Finding] = []
+    for path in _code_files(repo_path):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        hits = sorted(
+            (_line_of(text, m.start()), m.group(0), what)
+            for what, pattern in patterns
+            for m in pattern.finditer(text)
+        )
+        if not hits:
+            continue
+        rel = path.relative_to(repo_path)
+        listed = "; ".join(f"line {n}: {match} ({what})" for n, match, what in hits)
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "documentation_coverage",
+                f"{rel} names what another repo or a private tracker keeps to "
+                f"itself: {listed}.",
+                "Name the other repo, or link its public contract (an API "
+                "route, its OpenAPI document), instead of its files, "
+                "migrations or board tasks.",
+            )
+        )
+    return findings
+
+
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
+#: DOC-017's phrases: a comment telling the code's history.
+_HISTORY_PHRASES = re.compile(
+    r"\b(?:previously|used to|no longer|was changed|was renamed|moved from"
+    r"|originally"
+    r"|as of (?:\d{4}-\d{2}(?:-\d{2})?|\d{1,2}/\d{1,2}/\d{2,4}"
+    rf"|{_MONTH} \d{{1,2}}(?:, \d{{4}})?|\d{{1,2}} {_MONTH} \d{{4}}|{_MONTH} \d{{4}}))\b",
+    re.IGNORECASE,
+)
+_JS_COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+_HASH_COMMENT = re.compile(r"(?m)(?:^|\s)#[^\n]*")
+
+
+def _python_comments(text: str) -> list[tuple[int, str]]:
+    """Each comment and docstring in Python source, with its first line."""
+    out: list[tuple[int, str]] = []
+    with suppress(tokenize.TokenError, IndentationError, SyntaxError):
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.COMMENT:
+                out.append((tok.start[0], tok.string))
+    with suppress(SyntaxError, ValueError):
+        tree = ast.parse(text)
+        for node in ast.walk(tree):
+            if not isinstance(
+                node,
+                (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                continue
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                out.append((body[0].lineno, body[0].value.value))
+    return out
+
+
+def _other_comments(path: Path, text: str) -> list[tuple[int, str]]:
+    """Comments in TypeScript, JavaScript, Astro and shell source."""
+    pattern = _HASH_COMMENT if path.suffix == ".sh" else _JS_COMMENT
+    return [(_line_of(text, m.start()), m.group(0)) for m in pattern.finditer(text)]
+
+
+def check_doc_017(repo_path: Path) -> list[Finding]:
+    """DOC-017: code comments describe the code as it is, not its history."""
+    CHECK_ID = "DOC-017"
+
+    findings: list[Finding] = []
+    for path in _code_files(repo_path):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        comments = (
+            _python_comments(text)
+            if path.suffix == ".py"
+            else _other_comments(path, text)
+        )
+        hits = sorted(
+            (start + comment.count("\n", 0, m.start()), m.group(0))
+            for start, comment in comments
+            for m in _HISTORY_PHRASES.finditer(comment)
+        )
+        if not hits:
+            continue
+        rel = path.relative_to(repo_path)
+        listed = "; ".join(f'line {n}: "{phrase}"' for n, phrase in hits)
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "documentation_coverage",
+                f"{rel} has comments telling the code's history: {listed}.",
+                "Say what the code does now; put what changed, and when, in an "
+                "ADR or the CHANGELOG.",
+            )
+        )
     return findings

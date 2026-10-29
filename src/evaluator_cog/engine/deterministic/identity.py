@@ -1202,8 +1202,10 @@ def _auth004_clause1(check_id: str, files: list[_PyFile]) -> list[Finding]:
             )
         )
 
-    # A service that imports the types but reimplements the decision.
+    # A service that imports the types but reimplements the decision. A call
+    # to the decision under the name the module imports it as counts.
     for f in files:
+        decision_names = _decision_names(f.tree)
         for fn in _functions(f.tree):
             walks_grants = False
             for node in ast.walk(fn):
@@ -1230,7 +1232,7 @@ def _auth004_clause1(check_id: str, files: list[_PyFile]) -> list[Finding]:
             ) or _denies_access(fn.body)
             if not returns_verdict:
                 continue
-            if _call_name_used(fn, "authorize"):
+            if _calls_decision(fn, decision_names):
                 continue
             findings.append(
                 _finding(
@@ -1248,10 +1250,6 @@ def _auth004_clause1(check_id: str, files: list[_PyFile]) -> list[Finding]:
                 )
             )
     return findings
-
-
-def _call_name_used(fn: ast.AST, name: str) -> bool:
-    return any(isinstance(n, ast.Call) and _call_name(n) == name for n in ast.walk(fn))
 
 
 def _auth004_clause2(
