@@ -73,6 +73,8 @@ from evaluator_cog.engine.deterministic.dependencies import check_xstack_007
 from evaluator_cog.engine.deterministic.docs import (
     check_adrs_present,
     check_changelog,
+    check_doc_016,
+    check_doc_017,
     check_env_example,
     check_fastapi_route_docs,
     check_public_docstrings,
@@ -445,6 +447,10 @@ def run_all_checks(
     _run(check_conventional_commits, "VER-001")
     _run(check_breaking_change_footer, "VER-002")
     _run(check_split_package_identity, "DOC-009")
+    # DOC-016 / DOC-017 — code that names only what is its own, and says
+    # what it does now. Every repo type; each reads src/ and tests/ only.
+    _run(lambda p: check_doc_016(p, repo_type=_repo_type_for_checks), "DOC-016")
+    _run(check_doc_017, "DOC-017")
 
     if not is_library:
         _run(check_env_example, "DOC-004")
