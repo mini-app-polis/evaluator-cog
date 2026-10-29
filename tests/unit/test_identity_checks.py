@@ -476,6 +476,50 @@ def test_auth004_flags_a_locally_reimplemented_decision(tmp_path: Path) -> None:
     assert "reimplements the authorization decision locally" in text
 
 
+_ALIASED_GUARD = (
+    "from identity.policy import authorize as decide\n"
+    "from identity.store import emit_audit\n"
+    "\n"
+    "\n"
+)
+
+
+def test_auth004_clause1_accepts_the_decision_under_an_import_alias(
+    tmp_path: Path,
+) -> None:
+    repo = _auth004_repo(
+        tmp_path,
+        guard=_ALIASED_GUARD
+        + (
+            "def can(principal, scope):\n"
+            "    for grant in principal.grants:\n"
+            "        if grant.scope == scope:\n"
+            "            return decide(principal=principal, scope=scope)\n"
+            "    return False\n"
+        ),
+    )
+    text = _texts(_clause(check_auth_004(repo), "AUTH-004", 1))
+    assert "reimplements the authorization decision locally" not in text
+
+
+def test_auth004_clause1_still_flags_a_decision_that_calls_nothing(
+    tmp_path: Path,
+) -> None:
+    repo = _auth004_repo(
+        tmp_path,
+        guard=_ALIASED_GUARD
+        + (
+            "def can(principal, scope):\n"
+            "    for grant in principal.grants:\n"
+            "        if grant.scope == scope:\n"
+            "            return True\n"
+            "    return False\n"
+        ),
+    )
+    text = _texts(_clause(check_auth_004(repo), "AUTH-004", 1))
+    assert "can() reimplements the authorization decision locally" in text
+
+
 def test_auth004_flags_audit_emitted_on_only_one_branch(tmp_path: Path) -> None:
     repo = _auth004_repo(
         tmp_path,
