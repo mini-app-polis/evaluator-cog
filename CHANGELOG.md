@@ -1,3 +1,21 @@
+# [3.61.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.14...v3.61.0) (2026-10-29)
+
+
+### Bug Fixes
+
+* **auth-004:** clause 1 recognises an import alias of authorize ([d906186](https://github.com/mini-app-polis/evaluator-cog/commit/d906186b7c323bd3a219f49638e80a4567835448))
+* **deps:** bump miniapppolis-common-utils to 6.34.0 ([32b9b6a](https://github.com/mini-app-polis/evaluator-cog/commit/32b9b6a486be7aec89029fdb3d8b4961e2f52579))
+* **deps:** bump miniapppolis-common-utils to 6.35.0 ([72a554f](https://github.com/mini-app-polis/evaluator-cog/commit/72a554f45d806821bb20b43885a9bd584d5c1048))
+* **deps:** bump miniapppolis-common-utils to 6.36.0 ([c2f97d8](https://github.com/mini-app-polis/evaluator-cog/commit/c2f97d8950ce655943071866dc7ea2d831340f77))
+* **deps:** bump miniapppolis-common-utils to 7.1.0 ([96a01b0](https://github.com/mini-app-polis/evaluator-cog/commit/96a01b04a063e6be02d4af7485af12caa5fc090a))
+* **deps:** move to common-python-utils 7.x, with the standards version on the run report's headline ([49b4f33](https://github.com/mini-app-polis/evaluator-cog/commit/49b4f33f0d3f2ca72dd19bf0a82451325ef11e38))
+
+
+### Features
+
+* **docs:** deterministic checks for DOC-016 self-containment and DOC-017 no history in comments ([936d101](https://github.com/mini-app-polis/evaluator-cog/commit/936d1018e782ce760a0ee1a08489ef58ba2992d8))
+* **report:** each repo's conformance message leads with what the check found ([9b1c08e](https://github.com/mini-app-polis/evaluator-cog/commit/9b1c08edbbf20458d05d38a365c802769e48f912))
+
 ## [3.60.14](https://github.com/mini-app-polis/evaluator-cog/compare/v3.60.13...v3.60.14) (2026-10-28)
 
 
