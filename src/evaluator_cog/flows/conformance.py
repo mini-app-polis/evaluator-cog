@@ -128,14 +128,14 @@ _REPO = "evaluator-cog"
 
 
 def stamp_standards(text: str, standards_version: str = "") -> str:
-    """Append the catalog version the run graded against to ``text``.
+    """Add the catalog version the run graded against to ``text``'s headline.
 
-    ``(standards=4.2.0)`` on a line of its own. The running code's version
-    is the library's to stamp: :class:`VersionedRunReport` and
+    ``(standards=4.2.0)`` at the end of the first line. The running code's
+    version is the library's to stamp: :class:`VersionedRunReport` and
     ``post_run_finding`` pass ``version=__version__``, from
     ``_version.py``, which ships in the Lambda zip and is built from the
-    release tag. The library appends it as ``(version=X.Y.Z)`` after any
-    counters, so the last line of a message is its metadata.
+    release tag. The library adds it to the same line as
+    ``(version=X.Y.Z)``, so the headline carries both.
 
     Nothing is stamped when the version is not known — a job that died
     before the catalog resolved — rather than guessing one. Empty text is
@@ -144,7 +144,8 @@ def stamp_standards(text: str, standards_version: str = "") -> str:
     """
     if not text or not standards_version or "(standards=" in text:
         return text
-    return f"{text}\n(standards={standards_version})"
+    headline, sep, rest = text.partition("\n")
+    return f"{headline} (standards={standards_version}){sep}{rest}"
 
 
 @dataclass
@@ -160,7 +161,7 @@ class VersionedRunReport(RunReport):
     standards_version: str = ""
 
     def text(self) -> str:
-        """The library's message body, with the catalog version as its last line.
+        """The library's message body, with the catalog version on its headline.
 
         Stamped here rather than at send time so every path that renders the
         report — :meth:`send`, and the tests that read it — sees the same
