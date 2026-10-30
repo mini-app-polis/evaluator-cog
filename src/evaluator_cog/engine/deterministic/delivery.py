@@ -428,15 +428,55 @@ def check_terraform_versions_pinned(
     return findings
 
 
-# VER-006's concern is that a bare `npx semantic-release` runs without the
-# plugins the config names. `npx -p semantic-release@N -p @semantic-release/x`
-# installs the named packages for that one call, which satisfies it without
-# putting them in the lockfile. Matched on whitespace-collapsed content so a
-# folded (`>-`) multi-line run block reads as one command.
+# VER-006: semantic-release and its plugins come from the fleet's shared
+# lockfile, through the shared release workflow or the semantic-release
+# action in mini-app-polis/.github. Either reference passes.
+_SHARED_RELEASE_WORKFLOW = re.compile(
+    r"mini-app-polis/\.github/\.github/workflows/release\.ya?ml@"
+)
+_SHARED_RELEASE_ACTION = re.compile(
+    r"mini-app-polis/\.github/\.github/actions/semantic-release@"
+)
+# An inline install of the release tooling, which VER-006 rules out:
+# `npm install`/`npm i` naming semantic-release or a plugin, on one logical
+# line (backslash continuations joined) ...
+_NPM_INSTALL_RELEASE_TOOLING = re.compile(
+    r"\bnpm\s+(?:install|i)\b.*?(?:@semantic-release/|\bsemantic-release\b)"
+)
+# ... or `npx -p`/`--package` naming semantic-release, matched on
+# whitespace-collapsed content so a folded (`>-`) block reads as one command.
 _NPX_PACKAGE_SEMANTIC_RELEASE = re.compile(
     r"\bnpx\b(?:\s+(?:--yes|-y))?(?:\s+(?:-p|--package)[\s=]\S+)*"
     r"\s+(?:-p|--package)[\s=]semantic-release(?:@\S+)?\b"
 )
+_RELEASERC_FILES = (
+    ".releaserc.json",
+    ".releaserc.cjs",
+    ".releaserc.yaml",
+    ".releaserc.yml",
+    ".releaserc",
+)
+
+
+def _inline_release_install(content: str) -> bool:
+    """Whether ci.yml installs semantic-release or a plugin inline."""
+    logical = content.replace("\\\n", " ")
+    if any(_NPM_INSTALL_RELEASE_TOOLING.search(line) for line in logical.splitlines()):
+        return True
+    return bool(_NPX_PACKAGE_SEMANTIC_RELEASE.search(" ".join(content.split())))
+
+
+def _releaserc_lists_npm_plugin(repo_path: Path) -> str | None:
+    """The .releaserc file that lists @semantic-release/npm, if any."""
+    for name in _RELEASERC_FILES:
+        path = repo_path / name
+        if path.is_file():
+            try:
+                if "@semantic-release/npm" in path.read_text():
+                    return name
+            except OSError:
+                continue
+    return None
 
 
 def check_ci(
@@ -469,19 +509,30 @@ def check_ci(
         return findings
 
     content = ci.read_text()
+    # The shared release workflow runs semantic-release itself, after a
+    # checkout with fetch-depth: 0, so a caller satisfies VER-003 and VER-005
+    # without either appearing in its own ci.yml.
+    calls_shared_workflow = bool(_SHARED_RELEASE_WORKFLOW.search(content))
+    uses_shared_tooling = calls_shared_workflow or bool(
+        _SHARED_RELEASE_ACTION.search(content)
+    )
 
-    if "VER-003" not in _exc and "semantic-release" not in content:
+    if "VER-003" not in _exc and not (
+        "semantic-release" in content or calls_shared_workflow
+    ):
         findings.append(
             _finding(
                 "VER-003",
                 "ERROR",
                 "cd_readiness",
                 "semantic-release not found in ci.yml.",
-                "Add a release job running npx semantic-release.",
+                "Add a release job that calls mini-app-polis/.github's shared release workflow.",
             )
         )
 
-    if "VER-005" not in _exc and "fetch-depth: 0" not in content:
+    if "VER-005" not in _exc and not (
+        "fetch-depth: 0" in content or calls_shared_workflow
+    ):
         findings.append(
             _finding(
                 "VER-005",
@@ -492,23 +543,43 @@ def check_ci(
             )
         )
 
-    if "VER-006" not in _exc and (
-        "npm install --no-save" not in content
-        and "pnpm exec semantic-release" not in content
-        and "pnpm run semantic-release" not in content
-        and "pnpm add" not in content
-        and not _NPX_PACKAGE_SEMANTIC_RELEASE.search(" ".join(content.split()))
-    ):
-        findings.append(
-            _finding(
-                "VER-006",
-                "ERROR",
-                "cd_readiness",
-                "npm install --no-save step absent from release job.",
-                "Add explicit npm install --no-save before npx semantic-release, "
-                "or use pnpm exec semantic-release with plugins in devDependencies.",
+    if "VER-006" not in _exc:
+        if _inline_release_install(content):
+            findings.append(
+                _finding(
+                    "VER-006",
+                    "ERROR",
+                    "cd_readiness",
+                    "ci.yml installs semantic-release or a plugin inline "
+                    "(npm install, or npx -p), so each release runs whatever is newest on npm.",
+                    "Remove the inline install and run semantic-release through "
+                    "mini-app-polis/.github's shared release workflow or its semantic-release action.",
+                )
             )
-        )
+        elif not uses_shared_tooling:
+            findings.append(
+                _finding(
+                    "VER-006",
+                    "ERROR",
+                    "cd_readiness",
+                    "The release job does not use the fleet's shared release tooling.",
+                    "Call mini-app-polis/.github/.github/workflows/release.yml@v3 as the release job, "
+                    "or use mini-app-polis/.github/.github/actions/semantic-release@v3 as a step.",
+                )
+            )
+        releaserc = _releaserc_lists_npm_plugin(repo_path)
+        if releaserc:
+            findings.append(
+                _finding(
+                    "VER-006",
+                    "ERROR",
+                    "cd_readiness",
+                    f"{releaserc} lists @semantic-release/npm, which the shared release tooling replaces with a stub.",
+                    "Write the version to package.json with @semantic-release/exec, prepareCmd "
+                    "`npm version ${nextRelease.version} --no-git-tag-version --allow-same-version`, "
+                    "listed before @semantic-release/git.",
+                )
+            )
 
     return findings
 

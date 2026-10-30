@@ -364,90 +364,134 @@ def test_check_ci_respects_exceptions_for_subrules() -> None:
     assert "VER-006" in rule_ids
 
 
-def test_check_ci_accepts_pnpm_exec_semantic_release(tmp_path: Path) -> None:
-    """VER-006 should not fire when pnpm exec semantic-release is present."""
+# ── VER-003 / VER-005 / VER-006: the shared release tooling ─────────────────
+
+_SHARED_WORKFLOW_CI = """\
+jobs:
+  release:
+    needs: [test, security]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    uses: mini-app-polis/.github/.github/workflows/release.yml@v3
+"""
+
+_SHARED_ACTION_CI = """\
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - name: Release
+        uses: mini-app-polis/.github/.github/actions/semantic-release@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Ask the fleet to take this release
+        run: gh api repos/mini-app-polis/.github/dispatches -f event_type=commons-released
+"""
+
+
+def _ci(tmp_path: Path, content: str, releaserc: str | None = None) -> list[str]:
     ci = tmp_path / ".github" / "workflows"
     ci.mkdir(parents=True)
-    (ci / "ci.yml").write_text(
-        "semantic-release\nfetch-depth: 0\npnpm exec semantic-release\n"
-    )
-    findings = check_ci(tmp_path)
-    rule_ids = [f["rule_id"] for f in findings]
+    (ci / "ci.yml").write_text(content)
+    if releaserc is not None:
+        (tmp_path / ".releaserc.json").write_text(releaserc)
+    return [f["rule_id"] for f in check_ci(tmp_path)]
+
+
+def test_check_ci_passes_the_shared_release_workflow(tmp_path: Path) -> None:
+    """A caller of release.yml has no checkout or semantic-release text of its own."""
+    rule_ids = _ci(tmp_path, _SHARED_WORKFLOW_CI)
+    assert "VER-003" not in rule_ids
+    assert "VER-005" not in rule_ids
     assert "VER-006" not in rule_ids
 
 
-# ── VER-006 / pnpm add pattern ────────────────────────────────────────────────
+def test_check_ci_passes_the_shared_action_in_a_job_of_its_own(tmp_path: Path) -> None:
+    """common-python-utils' shape: its own job, steps around the shared action."""
+    rule_ids = _ci(tmp_path, _SHARED_ACTION_CI)
+    assert "VER-006" not in rule_ids
+    assert "VER-005" not in rule_ids
 
 
-def test_check_ci_accepts_pnpm_add_before_semantic_release(tmp_path: Path) -> None:
-    """VER-006 must not fire when pnpm add --save-dev installs plugins before release."""
-    ci = tmp_path / ".github" / "workflows"
-    ci.mkdir(parents=True)
-    (ci / "ci.yml").write_text(
-        "semantic-release\n"
+def test_check_ci_flags_npm_install_no_save(tmp_path: Path) -> None:
+    rule_ids = _ci(
+        tmp_path,
         "fetch-depth: 0\n"
-        "pnpm add --save-dev @semantic-release/changelog @semantic-release/git\n"
+        "        run: |\n"
+        "          npm install --no-save \\\n"
+        "            semantic-release \\\n"
+        "            @semantic-release/git\n"
+        "      - run: npx semantic-release\n",
     )
-    findings = check_ci(tmp_path)
-    rule_ids = [f["rule_id"] for f in findings]
-    assert "VER-006" not in rule_ids
+    assert "VER-006" in rule_ids
 
 
-# ── VER-006 / npx -p pattern ──────────────────────────────────────────────────
+def test_check_ci_flags_inline_install_beside_the_shared_action(tmp_path: Path) -> None:
+    """The action does not excuse an inline install elsewhere in ci.yml."""
+    rule_ids = _ci(
+        tmp_path,
+        _SHARED_ACTION_CI + "      - run: npm i -g @semantic-release/exec\n",
+    )
+    assert "VER-006" in rule_ids
 
 
-def test_check_ci_accepts_npx_package_flags_in_folded_block(tmp_path: Path) -> None:
-    """VER-006 must not fire when npx -p installs semantic-release and its plugins."""
-    ci = tmp_path / ".github" / "workflows"
-    ci.mkdir(parents=True)
-    (ci / "ci.yml").write_text(
+def test_check_ci_flags_npx_package_flags(tmp_path: Path) -> None:
+    """npx -p pins at most a major and leaves transitive dependencies floating."""
+    rule_ids = _ci(
+        tmp_path,
         "fetch-depth: 0\n"
         "      - name: Release\n"
         "        run: >-\n"
         "          npx --yes\n"
         "          -p semantic-release@25\n"
-        "          -p @semantic-release/changelog@7\n"
         "          -p @semantic-release/git@11\n"
-        "          semantic-release\n"
+        "          semantic-release\n",
     )
-    findings = check_ci(tmp_path)
-    rule_ids = [f["rule_id"] for f in findings]
-    assert "VER-006" not in rule_ids
-
-
-def test_check_ci_accepts_npx_package_flag_after_plugins(tmp_path: Path) -> None:
-    """Order of -p flags does not matter."""
-    ci = tmp_path / ".github" / "workflows"
-    ci.mkdir(parents=True)
-    (ci / "ci.yml").write_text(
-        "fetch-depth: 0\n"
-        "run: npx -p @semantic-release/git --package=semantic-release semantic-release\n"
-    )
-    findings = check_ci(tmp_path)
-    rule_ids = [f["rule_id"] for f in findings]
-    assert "VER-006" not in rule_ids
+    assert "VER-006" in rule_ids
 
 
 def test_check_ci_flags_bare_npx_semantic_release(tmp_path: Path) -> None:
-    """A bare npx semantic-release still has no plugins and still fires."""
-    ci = tmp_path / ".github" / "workflows"
-    ci.mkdir(parents=True)
-    (ci / "ci.yml").write_text("fetch-depth: 0\nrun: npx --yes semantic-release\n")
-    findings = check_ci(tmp_path)
-    rule_ids = [f["rule_id"] for f in findings]
+    rule_ids = _ci(tmp_path, "fetch-depth: 0\nrun: npx --yes semantic-release\n")
     assert "VER-006" in rule_ids
 
 
-def test_check_ci_flags_npx_with_only_plugin_packages(tmp_path: Path) -> None:
-    """-p for plugins alone does not install semantic-release itself."""
-    ci = tmp_path / ".github" / "workflows"
-    ci.mkdir(parents=True)
-    (ci / "ci.yml").write_text(
-        "fetch-depth: 0\nrun: npx -p @semantic-release/git semantic-release\n"
+def test_check_ci_does_not_count_an_unrelated_npm_install(tmp_path: Path) -> None:
+    """Other npm installs (the pinned @railway/cli, say) are not release tooling."""
+    rule_ids = _ci(
+        tmp_path,
+        _SHARED_WORKFLOW_CI + "      - run: npm install -g @railway/cli@4.1.0\n",
     )
-    findings = check_ci(tmp_path)
-    rule_ids = [f["rule_id"] for f in findings]
+    assert "VER-006" not in rule_ids
+
+
+def test_check_ci_flags_releaserc_listing_the_npm_plugin(tmp_path: Path) -> None:
+    """The shared tooling replaces npm with a stub, so @semantic-release/npm fails at release."""
+    rule_ids = _ci(
+        tmp_path,
+        _SHARED_WORKFLOW_CI,
+        releaserc='{"plugins": [["@semantic-release/npm", {"npmPublish": false}]]}',
+    )
     assert "VER-006" in rule_ids
+
+
+def test_check_ci_passes_releaserc_bumping_package_json_with_exec(
+    tmp_path: Path,
+) -> None:
+    rule_ids = _ci(
+        tmp_path,
+        _SHARED_WORKFLOW_CI,
+        releaserc=(
+            '{"plugins": [["@semantic-release/exec", {"prepareCmd": '
+            '"npm version ${nextRelease.version} --no-git-tag-version --allow-same-version"}], '
+            '"@semantic-release/git"]}'
+        ),
+    )
+    assert "VER-006" not in rule_ids
 
 
 def test_check_env_example_fires_when_absent_everywhere(tmp_path: Path) -> None:
