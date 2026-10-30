@@ -1427,14 +1427,29 @@ _EVALUATE_WORKFLOWS = (
 )
 
 
+#: The fleet's shared release tooling (VER-006): the release workflow a
+#: release job calls, and the action a release step uses. Either runs
+#: semantic-release, so a job that calls or uses one is the release.
+_SHARED_RELEASE_WORKFLOWS = (
+    "mini-app-polis/.github/.github/workflows/release.yml@*",
+    "./.github/workflows/release.yml",
+)
+_SHARED_RELEASE_ACTIONS = (
+    "mini-app-polis/.github/.github/actions/semantic-release@*",
+    "$/.github/actions/semantic-release",
+    "./.github/actions/semantic-release",
+)
+
+
 def check_cd_031(repo_path: Path) -> list[Finding]:
     """CD-031: every release requests its own conformance evaluation.
 
     (1) A push-triggered workflow has a job calling the shared evaluate.yml.
     (2) That job's ``needs:`` reaches, directly or transitively, the job
-    that ships the change — one that runs semantic-release, or, for a
-    Terraform root with no releases, one that runs ``terraform apply`` — so
-    it evaluates what shipped, not the tree before it.
+    that ships the change — one that runs semantic-release (itself, or
+    through the shared release workflow or action), or, for a Terraform
+    root with no releases, one that runs ``terraform apply`` — so it
+    evaluates what shipped, not the tree before it.
     """
     from evaluator_cog.engine.deterministic._workflows import load_workflows
 
@@ -1478,8 +1493,15 @@ def check_cd_031(repo_path: Path) -> list[Finding]:
         job = by_id.get(job_id)
         if job is None:
             return False
+        if job.uses and any(
+            fnmatch.fnmatch(job.uses.strip(), pattern)
+            for pattern in _SHARED_RELEASE_WORKFLOWS
+        ):
+            return True
         if any(
-            step.run_invokes("semantic-release") or step.run_invokes("terraform apply")
+            step.run_invokes("semantic-release")
+            or step.run_invokes("terraform apply")
+            or any(step.uses_matches(p) for p in _SHARED_RELEASE_ACTIONS)
             for step in job.steps
         ):
             return True
