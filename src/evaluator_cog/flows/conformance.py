@@ -1435,6 +1435,9 @@ def _run_standalone_deterministic(
 #: Adding a check to the lane means changing this too.
 _APPLIES_TO_ABSENT_CHECKS = 4
 
+#: The ones of those that post with ``source='standards_drift'``.
+_DRIFT_CHECKS = 3
+
 
 def _run_applies_to_absent_checks(
     *,
@@ -1453,6 +1456,10 @@ def _run_applies_to_absent_checks(
     checks all blew up", which are the same silence from outside.
     """
     completed = 0
+    #: Drift checks (XSTACK-006, XSTACK-008, EVAL-007) that ran to the end,
+    #: and whether any of them had something to say.
+    drift_completed = 0
+    drift_found = False
     from evaluator_cog.engine.deterministic import (
         check_eval_003,
         check_eval_007,
@@ -1501,6 +1508,7 @@ def _run_applies_to_absent_checks(
         try:
             _findings = _check(ecosystem=ecosystem)
             if _findings:
+                drift_found = True
                 _post_tracked(
                     _rule_id,
                     ctx=ctx,
@@ -1512,6 +1520,7 @@ def _run_applies_to_absent_checks(
                     standards_version=standards_version,
                 )
             completed += 1
+            drift_completed += 1
         except Exception as exc:
             log.warning("%s: check failed: %s", _rule_id, exc)
 
@@ -1524,6 +1533,7 @@ def _run_applies_to_absent_checks(
     try:
         xstack_008_findings = check_xstack_008(unresolved=ctx.unresolved_downloads)
         if xstack_008_findings:
+            drift_found = True
             _post_tracked(
                 "XSTACK-008",
                 ctx=ctx,
@@ -1535,6 +1545,7 @@ def _run_applies_to_absent_checks(
                 standards_version=standards_version,
             )
         completed += 1
+        drift_completed += 1
     except Exception as exc:
         log.warning("XSTACK-008: check failed: %s", exc)
 
@@ -1546,6 +1557,7 @@ def _run_applies_to_absent_checks(
             evaluator_standards_version=evaluator_standards_version,
         )
         if eval_007_findings:
+            drift_found = True
             _post_tracked(
                 "EVAL-007",
                 ctx=ctx,
@@ -1557,8 +1569,36 @@ def _run_applies_to_absent_checks(
                 standards_version=standards_version,
             )
         completed += 1
+        drift_completed += 1
     except Exception as exc:
         log.warning("EVAL-007: check failed: %s", exc)
+
+    # A pass where all three came back empty posts nothing above, so the
+    # previous pass's drift findings would stay the latest. A SUCCESS row
+    # makes this pass the latest one. Only when every check ran: a check
+    # that raised has not found the drift gone.
+    if drift_completed == _DRIFT_CHECKS and not drift_found:
+        _post_tracked(
+            "standards_drift",
+            ctx=ctx,
+            findings=[
+                {
+                    "rule_id": "STATUS",
+                    "dimension": "structural_conformance",
+                    "severity": "SUCCESS",
+                    "finding": (
+                        "EVAL-007, XSTACK-006 and XSTACK-008 found no drift "
+                        f"for standards v{standards_version}."
+                    ),
+                    "suggestion": "",
+                }
+            ],
+            run_id=run_id,
+            repo="ecosystem-standards",
+            flow_name="standards-drift",
+            source="standards_drift",
+            standards_version=standards_version,
+        )
 
     return completed
 
