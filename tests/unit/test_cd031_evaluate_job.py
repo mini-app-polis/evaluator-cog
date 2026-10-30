@@ -118,3 +118,67 @@ def test_flags_a_terraform_root_evaluating_after_only_the_plan(
     findings = check_cd_031(repo)
     assert len(findings) == 1
     assert "terraform apply" in findings[0]["finding"]
+
+
+def test_passes_an_evaluate_job_after_the_shared_release_workflow(
+    tmp_path: Path,
+) -> None:
+    """A release job that calls the shared release.yml is the release (VER-006)."""
+    release = """
+  release:
+    needs: [test, security]
+    uses: mini-app-polis/.github/.github/workflows/release.yml@v3
+"""
+    repo = _ci(tmp_path, release + _EVALUATE.format(needs="release"))
+    assert check_cd_031(repo) == []
+
+
+def test_passes_an_evaluate_job_after_a_deploy_after_the_shared_release_workflow(
+    tmp_path: Path,
+) -> None:
+    release = """
+  release:
+    uses: mini-app-polis/.github/.github/workflows/release.yml@v3
+  deploy:
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./deploy.sh
+"""
+    repo = _ci(tmp_path, release + _EVALUATE.format(needs="deploy"))
+    assert check_cd_031(repo) == []
+
+
+def test_passes_an_evaluate_job_after_a_job_using_the_shared_release_action(
+    tmp_path: Path,
+) -> None:
+    """A release job of its own that uses the semantic-release action as a step."""
+    release = """
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mini-app-polis/.github/.github/actions/semantic-release@v3
+"""
+    repo = _ci(tmp_path, release + _EVALUATE.format(needs="release"))
+    assert check_cd_031(repo) == []
+
+
+def test_passes_the_github_repos_own_local_release_workflow(tmp_path: Path) -> None:
+    release = """
+  release:
+    uses: ./.github/workflows/release.yml
+"""
+    repo = _ci(tmp_path, release + _EVALUATE.format(needs="release"))
+    assert check_cd_031(repo) == []
+
+
+def test_still_flags_an_evaluate_job_after_an_unrelated_reusable_workflow(
+    tmp_path: Path,
+) -> None:
+    other = """
+  release:
+    uses: mini-app-polis/.github/.github/workflows/python-test.yml@v3
+"""
+    findings = check_cd_031(_ci(tmp_path, other + _EVALUATE.format(needs="release")))
+    assert [f["rule_id"] for f in findings] == ["CD-031"]
