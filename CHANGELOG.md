@@ -1,3 +1,10 @@
+## [3.61.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.61.1...v3.61.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **docs:** DOC-017 skips present-tense wording, and evaluator-cog's comments describe the code as it is ([360d8b2](https://github.com/mini-app-polis/evaluator-cog/commit/360d8b2540e9ff80e149bc6bfd0f20059bf7f3de))
+
 ## [3.61.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.61.0...v3.61.1) (2026-10-29)
 
 
