@@ -1,3 +1,11 @@
+## [3.62.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.62.1...v3.62.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 7.3.0 ([6b21e34](https://github.com/mini-app-polis/evaluator-cog/commit/6b21e34178f7e07ae0a0305c23da4cd808d1c5f1))
+* **introspection:** post a clean standards_drift row so a clean pass supersedes the previous drift ([a514f26](https://github.com/mini-app-polis/evaluator-cog/commit/a514f26b16dcad20e8226fe0b8af20d5dc8830cb))
+
 ## [3.62.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.62.0...v3.62.1) (2026-10-30)
 
 
