@@ -1,3 +1,11 @@
+## [3.62.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.62.0...v3.62.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **delivery:** CD-031 counts the shared release workflow and action as the release ([33a2335](https://github.com/mini-app-polis/evaluator-cog/commit/33a23354d450875d3fa2387c3227fb4faacc0708))
+* **deps:** bump miniapppolis-common-utils to 7.2.0 ([f053e4c](https://github.com/mini-app-polis/evaluator-cog/commit/f053e4c858cea5631224fa35b9da99d3265a8c68))
+
 # [3.62.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.61.2...v3.62.0) (2026-10-30)
 
 
