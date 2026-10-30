@@ -1,3 +1,10 @@
+# [3.62.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.61.2...v3.62.0) (2026-10-30)
+
+
+### Features
+
+* **delivery:** VER-006 passes the shared release tooling and flags inline installs ([4bbcfbb](https://github.com/mini-app-polis/evaluator-cog/commit/4bbcfbb8086add2da575d1b123cd174b605df79b))
+
 ## [3.61.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.61.1...v3.61.2) (2026-10-30)
 
 
