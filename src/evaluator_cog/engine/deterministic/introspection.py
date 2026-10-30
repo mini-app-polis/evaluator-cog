@@ -11,12 +11,9 @@ from evaluator_cog.engine.deterministic._shared import (
 )
 from evaluator_cog.engine.routing import classify_check_mode
 
-# /v1/evaluations caps `limit` at 500 (Query(ge=1, le=500)). Both checks in
-# this module used to ask for 1000 and 2000 and got a 422 on every run, which
-# they reported as "could not fetch pipeline_evaluations ... Investigate
-# api-kaianolevine-com connectivity." The API was reachable the whole time;
-# the request was out of range. Page instead of asking for more than the
-# endpoint will give.
+# /v1/evaluations caps `limit` at 500 (Query(ge=1, le=500)), and a larger
+# `limit` gets a 422, which reads as a connectivity failure though the API
+# is reachable. Page instead of asking for more than the endpoint will give.
 _PAGE_SIZE = 500
 _MAX_PAGES = 20  # 10k rows. A run needing more than this has a different problem.
 
@@ -47,8 +44,7 @@ def check_eval_003() -> list[Finding]:
     internal sources. Only current findings are graded: /v1/evaluations
     returns just the rows of the latest run per (repo, source), so a run
     that has been superseded is never read. (There is no date filter — the
-    endpoint has no date parameter, and the `lookback_days` argument this
-    function used to take was silently dropped by FastAPI.) The historical source
+    endpoint has no date parameter.) The historical source
     name 'conformance_check' is also included so findings stored before
     the conformance_llm / conformance_deterministic / data_quality split
     are still covered by the quality check.

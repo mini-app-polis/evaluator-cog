@@ -246,7 +246,7 @@ def check_test_database_guard(repo_path: Path) -> list[Finding]:
     correct suite deletes real data. (3) No database URL under tests/
     names a remote host.
 
-    In-memory SQLite no longer satisfies (1): the engine is TEST-015's, and
+    In-memory SQLite does not satisfy (1): the engine is TEST-015's, and
     this rule is only the guard. A repo whose src/ never mentions
     SQLAlchemy has no database and passes.
     """
@@ -388,7 +388,7 @@ def check_mock_assertions(repo_path: Path) -> list[Finding]:
         r"\.call_args_list\b",
         r"\.called\b",
         # The whole call sequence, in order — the strictest verification a
-        # mock offers, and the one this check used to miss.
+        # mock offers.
         r"\.method_calls\b",
         r"\.mock_calls\b",
         r"\.await_count\b",
@@ -659,11 +659,9 @@ def check_respx_for_http_mocking(repo_path: Path) -> list[Finding]:
 def check_pytest_config(repo_path: Path) -> list[Finding]:
     """TEST-005: pytest configuration present in pyproject.toml.
 
-    The wider test-structure checks that previously lived here (TEST-003
-    failure-path detection) were retired in favor of LLM routing per
-    the ecosystem-standards v3.8.0 classification. TEST-005 remains a
-    deterministic structural check and is preserved here with a proper
-    CHECK_ID.
+    TEST-003 failure-path detection is routed to the LLM per the
+    ecosystem-standards classification; TEST-005 is a deterministic
+    structural check.
     """
     CHECK_ID = "TEST-005"
     findings: list[Finding] = []

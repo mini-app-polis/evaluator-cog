@@ -3,19 +3,15 @@
 Pins STANDARDS_VERSION and ENVIRONMENT so tests do not depend on the
 launching shell or reach the network for standards metadata.
 
-There is no catalog-cache fixture here any more. The catalog lives on
-the run's :class:`RunContext` rather than in module state, so a test
-that builds its own context cannot inherit another test's catalog and
-there is nothing between tests to clear.
+There is no catalog-cache fixture. The catalog lives on the run's
+:class:`RunContext` rather than in module state, so a test that builds
+its own context cannot inherit another test's catalog and there is
+nothing between tests to clear.
 
-There is no Prefect fixture here any more. This file used to open an
-ephemeral Prefect backend for the whole session, disable task retries and
-silence three Prefect loggers — all of it guarding against flows and tasks
-that no longer exist. ``evaluator_cog`` imports nothing from ``prefect``
-(ADR-0004), and ``mini_app_polis`` reaches for it lazily and falls back to
-the stdlib logger when it is absent, so the harness was isolating the
-suite from orchestration the suite cannot perform. Every session paid for
-starting a server and a SQLite database to prove it.
+There is no Prefect fixture either. ``evaluator_cog`` imports nothing
+from ``prefect`` (ADR-0004), and ``mini_app_polis`` reaches for it lazily
+and falls back to the stdlib logger when it is absent, so there is no
+orchestration for the suite to isolate itself from.
 """
 
 from __future__ import annotations

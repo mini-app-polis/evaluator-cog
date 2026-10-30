@@ -731,15 +731,15 @@ def test_sec006_flags_unparseable_index_yaml(tmp_path: Path) -> None:
 
 
 def test_sec006_passes_against_the_real_catalog_shape(tmp_path: Path) -> None:
-    """The regression test for the contradiction this rule used to carry.
+    """The catalog's two severity blocks do not contradict this rule.
 
     Both blocks are present and correct, exactly as index.yaml declares
     them: `severities:` grades conformance findings and has no HIGH,
     while `vulnerability_severities:` carries the CVSS ratings the
     deadlines name. SEC-006 must validate against the second and ignore
-    the first. Before the split it validated against `severities:`, so
-    clause (3) rejected the HIGH deadline clause (2) requires and the
-    rule could never go green.
+    the first. Validated against `severities:`, clause (3) would reject
+    the HIGH deadline clause (2) requires and the rule could never go
+    green.
     """
     _write(
         tmp_path,
@@ -758,8 +758,7 @@ def test_sec006_does_not_validate_against_the_finding_severities(
 ) -> None:
     """A deadline naming a conformance severity is wrong, not right.
 
-    `WARN: 90` is what the catalog originally carried — a finding
-    severity in a block of CVSS ratings. It must be flagged even though
+    `WARN: 90` is a finding severity in a block of CVSS ratings. It must be flagged even though
     WARN is a perfectly valid entry in `severities:`, because the two
     vocabularies are separate and a scanner never reports WARN.
     """

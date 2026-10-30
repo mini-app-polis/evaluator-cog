@@ -57,12 +57,12 @@ def _rel(path: Path, repo_path: Path) -> str:
 
     ``relative_to`` raises when ``path`` is not below ``repo_path``.
 
-    The fallback used to be the absolute path, which begins with the
-    run's temporary download directory. That is not merely ugly: the
-    directory is different on every run, so a finding carrying one can
-    never be recognised as a repeat of itself. It defeats duplicate
-    suppression on the way in and would write a fresh row on every run
-    behind a server-side idempotency guard. The last two components say
+    The fallback is not the absolute path, which begins with the run's
+    temporary download directory. That directory is different on every
+    run, so a finding carrying one could never be recognised as a repeat
+    of itself: it would defeat duplicate suppression on the way in and
+    write a fresh row on every run behind a server-side idempotency
+    guard. The last two components say
     everything a reader needs and say the same thing every time.
     """
     try:
@@ -341,9 +341,8 @@ def check_cd_017(repo_path: Path) -> list[Finding]:
 
     The descriptor is any of ``railway.json``, ``railway.toml`` or
     Infrastructure as Code in ``.railway/``. Railway stops reading the
-    first two on 2026-12-01, and a repository that migrated used to fail
-    here as having no restart policy at all; which file the policy lives
-    in was never the rule's question. A repository holding both is part
+    first two on 2026-12-01; which file the policy lives in is not the
+    rule's question. A repository holding both is part
     way through that migration, and ``.railway/`` is what it is moving
     to, so that is what is read.
     """

@@ -335,9 +335,9 @@ def _parse_findings_from_claude(text: str) -> tuple[list[dict[str, Any]], bool]:
     (reserved for a future partial-parse flag).
 
     Raises LLMResponseError when the text is not a findings payload — not
-    JSON, or JSON of the wrong shape. It used to return an empty list,
-    which the flow posts as "passed all LLM checks": an unreadable answer
-    reported as a clean one.
+    JSON, or JSON of the wrong shape. An empty list would be posted by the
+    flow as "passed all LLM checks": an unreadable answer reported as a
+    clean one.
     """
     raw = text.strip()
     m = _JSON_FENCE.search(raw)

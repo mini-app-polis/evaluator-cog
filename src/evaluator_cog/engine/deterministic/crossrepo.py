@@ -23,8 +23,8 @@ is correct, because neither rule has a per-repo question to ask:
     where the listing says — a question about the registry, answered from
     the run's own download results.
 
-XSTACK-007 (shared-library pins) used to live here. It is a question about
-one repository's dependencies, so it moved to the per-repo checks in
+XSTACK-007 (shared-library pins) is not here. It is a question about one
+repository's dependencies, so it is a per-repo check in
 ``dependencies.py``, where the repository that has to fix it owns the
 finding and its own release re-evaluates it.
 

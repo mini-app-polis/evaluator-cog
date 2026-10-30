@@ -1,18 +1,15 @@
 """What one queue message means, and what happens when it cannot be done.
 
-The evaluator's front door, minus the door. This module used to open with
-a long-polling loop that received messages, ran them and deleted them; the
-worker runs on Lambda now, so the platform receives and deletes and what
-is left here is the part that was always the point — reading a message,
-doing its work, and being clear about failure.
+The evaluator's front door, minus the door. The worker runs on Lambda, so
+the platform receives and deletes messages; this module reads a message,
+does its work, and is clear about failure.
 
 ``adapters.lambda_worker`` is the entrypoint that calls into this.
 
-**Nothing is deleted until the work is done.** The rule survives the move
-and inverts: this code no longer deletes anything, so "do not delete"
-became "report the message back" and lives in the entrypoint. Every
-failure path here still ends by raising rather than swallowing, which is
-what lets that happen. A job that raises, a delivery that landed nowhere,
+**Nothing is deleted until the work is done.** This code deletes
+nothing: the entrypoint reports a failed message back. Every failure path
+here ends by raising rather than swallowing, which is what lets that
+happen. A job that raises, a delivery that landed nowhere,
 a worker killed mid-evaluation — all of them leave the message on the
 queue, and SQS redelivers once the visibility timeout expires.
 

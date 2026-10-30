@@ -53,7 +53,7 @@ class DispositionResult:
     - `modifier_rule_id`: for RUN_MODIFIED only, the rule whose
       `modifies:` list includes this rule.
     - `deferral_expired_on`: set when this rule carried a deferral whose
-      `until:` date has passed. The deferral no longer applies — the
+      `until:` date has passed. The deferral does not apply — the
       disposition is whatever the remaining precedence steps resolve to
       — but the date is carried so the finding can say that a deadline
       was missed rather than silently appearing at full severity.

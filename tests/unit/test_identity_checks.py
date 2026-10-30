@@ -11,8 +11,8 @@ changed. Three tests carry more weight than the rest:
     than quietly passing on a route that scan cannot see.
   - the two ``CLERK_SECRET_KEY`` tests pin the narrow reading of
     CD-019 (2) from both sides: a frontend handing the secret to Clerk's
-    server SDK is legitimate and must stay unflagged, while the same
-    secret used to obtain or verify a credential presented to an
+    server SDK is legitimate and must stay unflagged, while using the
+    same secret to obtain or verify a credential presented to an
     ecosystem API is the violation.
   - ``test_cd019_does_not_flag_test_that_mocks_the_auth_layer`` pins the
     exemption, and its companion pins that a stale docstring is not
@@ -175,7 +175,7 @@ def test_auth003_flags_bare_depends_as_unresolvable_rather_than_passing(
     downgrade a route that might be neither, so the enumerator marks it
     unresolvable and clause (1) reports it.
 
-    This originally used ``current_user``, which is a different case: a
+    It does not use ``current_user``, which is a different case: a
     name of that shape *resolves the caller* rather than asserting a
     requirement, and cannot be a scope guard because AUTH-003 defines
     one as a dependency that takes a scope string. The distinction is
@@ -1938,11 +1938,10 @@ def test_cd029_clause1_still_flags_local_typescript_verification(
 # CD-030 (2) — compare_digest is scoped to the Bearer path
 # ---------------------------------------------------------------------------
 #
-# The clause used to fire on the function name alone, which made it the only
-# local-primitive check with no notion of what it was looking at. It
-# reported two comparisons CD-019 does not govern — a Prefect webhook secret
-# and a GitHub body signature — and prescribed a fix (call identity.clerk or
-# identity.apikey) that has no meaning for either.
+# The function name alone is not enough to fire the clause. Matching on it
+# would report two comparisons CD-019 does not govern — a Prefect webhook
+# secret and a GitHub body signature — and prescribe a fix (call
+# identity.clerk or identity.apikey) that has no meaning for either.
 
 
 def _api_repo(tmp_path: Path, rel: str, body: str) -> Path:
@@ -2002,8 +2001,8 @@ def test_cd030_2_ignores_a_body_signature(tmp_path: Path) -> None:
 def test_cd030_2_ignores_an_oauth_state_read_from_a_cookie(tmp_path: Path) -> None:
     """A state nonce bound to the browser is not a presented credential.
 
-    The handler around it talks about tokens (it renews one), which used to
-    be enough to put the comparison on the Bearer path.
+    The handler around it talks about tokens (it renews one), which is
+    not enough to put the comparison on the Bearer path.
     """
     repo = _api_repo(
         tmp_path,

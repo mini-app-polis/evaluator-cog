@@ -200,7 +200,7 @@ def production_python_text(repo_path: Path) -> str:
     return "\n".join(parts)
 
 
-#: Seconds to wait on the `git ls-files` used to decide whether a file is
+#: Seconds to wait on the `git ls-files` that decides whether a file is
 #: committed. Generous for a metadata read, and bounded so a wedged git
 #: cannot stall the run — the check degrades to "git cannot say" instead.
 _GIT_QUERY_TIMEOUT_SECONDS = 30

@@ -137,8 +137,8 @@ def test_cd020_does_not_read_releaserc(
 ) -> None:
     """The regression: a PY-017 release config never relocks, and must pass.
 
-    Clause (1) used to require `uv lock` in prepareCmd and uv.lock in the
-    git assets, which PY-017 forbids — so every conforming repo failed.
+    Clause (1) must not require `uv lock` in prepareCmd or uv.lock in the
+    git assets, which PY-017 forbids — or every conforming repo fails.
     """
     _disable_uv(monkeypatch)
     _uv_managed_repo(tmp_path)

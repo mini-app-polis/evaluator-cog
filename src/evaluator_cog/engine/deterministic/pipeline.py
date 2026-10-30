@@ -542,7 +542,7 @@ _REMAINING_TIME = "get_remaining_time_in_millis"
 def _uses_shared_worker(text: str, name: str) -> bool:
     """Whether ``text`` calls ``name`` from mini_app_polis.lambda_worker.
 
-    The shared module does what a cog's own worker code used to: its
+    The shared module does this work for the cog: its
     ``deadline`` reads the remaining time, and its ``process_records``
     builds the ``batchItemFailures`` response, so neither appears in a
     cog that calls them.

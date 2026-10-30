@@ -177,9 +177,9 @@ def test_an_unrecognised_message_type_is_refused_not_guessed_at() -> None:
 def test_a_run_that_delivered_nothing_raises_so_it_is_retried() -> None:
     """The property the HTTP adapter could not have.
 
-    A run that computed findings and delivered none of them used to be
-    logged and lost. Raising here means the message is never deleted, so
-    the work comes back.
+    A run that computed findings and delivered none of them raises
+    rather than logging, so the message is never deleted and the work
+    comes back.
     """
     from evaluator_cog.flows.conformance import FindingDeliveryError
 

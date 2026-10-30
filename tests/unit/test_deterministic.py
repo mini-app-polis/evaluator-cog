@@ -292,9 +292,9 @@ def test_py011_documented_split_still_flags_an_import_package_mismatch() -> None
 def test_check_common_python_utils_dep_accepts_the_pypi_distribution() -> None:
     """PY-006 passes on the published name, not just the legacy git-ref name.
 
-    The distribution was renamed to miniapppolis-common-utils in September
-    2026. A check that matched only the old string would have fired ERROR on
-    every repo the moment it migrated.
+    The distribution is published as miniapppolis-common-utils. A check
+    that matched only the git-ref name would fire ERROR on every repo that
+    depends on the published one.
     """
     repo = _make_repo(
         {
@@ -1345,7 +1345,7 @@ def test_check_shared_library_python_accepts_the_pypi_distribution() -> None:
 
 
 def test_check_shared_library_ts_hand_rolled_ok_when_dep_declared() -> None:
-    """Narrowed XSTACK-001: hand-rolled helpers no longer fire — only missing deps."""
+    """XSTACK-001: hand-rolled helpers do not fire — only missing deps."""
     repo = _make_repo(
         {
             "package.json": '{"name":"x","dependencies":{"common-typescript-utils":"1.0.0"}}\n',
@@ -1544,7 +1544,7 @@ def test_check_pnpm_lockfile_passes_with_pnpm_lock(tmp_path: Path) -> None:
     assert check_pnpm_lockfile(tmp_path) == []
 
 
-# ── Previously untested functions ─────────────────────────────────────────────
+# ── Other check functions ─────────────────────────────────────────────────────
 
 
 def test_check_no_print_statements_flags_print(tmp_path: Path) -> None:
@@ -1615,9 +1615,8 @@ def test_check_pytest_config_no_pyproject_is_silent(tmp_path: Path) -> None:
 def test_check_no_retired_trigger_patterns_flags_repository_dispatch(
     tmp_path: Path,
 ) -> None:
-    # Under the narrowed PIPE-008 spec (post-2026-04 audit), a bare URL
-    # string no longer trips the check — it must be an active HTTP call
-    # to the retired dispatches endpoint.
+    # Under PIPE-008, a bare URL string does not trip the check — it must
+    # be an active HTTP call to the retired dispatches endpoint.
     (tmp_path / "src" / "pkg").mkdir(parents=True)
     (tmp_path / "src" / "pkg" / "trigger.py").write_text(
         "import httpx\n"
@@ -1674,7 +1673,7 @@ def test_run_all_checks_xstack003_does_not_fire_for_frontend_site(
     assert "XSTACK-003" not in rule_ids
 
 
-# ── Previously untested functions ─────────────────────────────────────────────
+# ── Other check functions ─────────────────────────────────────────────────────
 
 
 def test_check_readme_running_locally_flags_missing_uv_sync(tmp_path: Path) -> None:
@@ -2034,12 +2033,11 @@ def test_check_eval_003_accepts_tagged_finding_without_rule_id_in_text() -> None
     """A finding with rule_id set on the row does NOT flag EVAL-003,
     even if the finding text does not repeat the rule ID inline.
 
-    Regression guard for the 2026-04 triage: EVAL-003 was previously
-    regex-matching the finding text for a rule-ID pattern, which fired
-    on correctly-tagged findings like
+    Regression guard: matching the finding text for a rule-ID pattern
+    would fire on correctly-tagged findings like
     "docs/decisions/ exists but no ADR-NNNN-*.md files were found."
-    (rule_id="DOC-005"). The check now looks at the rule_id field
-    directly, so these pass.
+    (rule_id="DOC-005"). The check looks at the rule_id field directly,
+    so these pass.
     """
     fake_response = {
         "data": [
@@ -2744,7 +2742,7 @@ def test_cd_026_accepts_a_deploy_job(tmp_path) -> None:
     """`deploy` is the stage between release and evaluate for a Lambda cog.
 
     evaluator-cog and deejay-cog both carry it, calling the shared
-    lambda-deploy.yml, and this check used to flag both on every release.
+    lambda-deploy.yml, and this check must not flag either.
     """
     with_deploy = _GATED + (
         "  deploy:\n"

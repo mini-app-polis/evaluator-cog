@@ -334,9 +334,9 @@ def test_pipe005_skips_literal_only_files_delete_pattern(tmp_path: Path) -> None
 def test_pipe_005_ignores_trashed_inside_string_literal(tmp_path: Path) -> None:
     """PIPE-005: 'trashed' inside a string literal must not trigger the check.
 
-    Regression: the `trashed` branch previously lacked the
-    _is_inside_string_literal guard that the `delete(` branch already had,
-    so the checker self-flagged when scanning its own source.
+    Regression: the `trashed` branch needs the same
+    _is_inside_string_literal guard as the `delete(` branch, or the
+    checker self-flags when scanning its own source.
     """
     _write(
         tmp_path,
@@ -639,9 +639,9 @@ def test_test_011_still_flags_unverified_mock(tmp_path: Path) -> None:
 def test_test_011_ignores_test_def_inside_string_literal(tmp_path: Path) -> None:
     """TEST-011: 'def test_X():' text inside a string literal must not be scanned.
 
-    Regression: the checker previously regex-matched `def test_a():` text
-    embedded in a string passed to write_text() and falsely flagged it as
-    an unverified-mock test. AST-based test discovery fixes that. The body
+    Regression: regex-matching `def test_a():` text embedded in a string
+    passed to write_text() would falsely flag it as an unverified-mock
+    test. AST-based test discovery prevents that. The body
     also references ``check_mock_assertions`` so mock names embedded only in
     fixture strings do not trip the capture regex for MagicMock/patch.
     """

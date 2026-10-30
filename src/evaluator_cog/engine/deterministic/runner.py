@@ -330,10 +330,10 @@ def run_all_checks(
             return
 
         # Guard: never fire a rule whose catalog check_mode is "llm" on the
-        # deterministic path. This used to be possible — any rule registered
-        # here would fire regardless of its intended routing — producing
-        # findings with source="conformance_deterministic" for rules that
-        # should only be assessed by engine/llm.py. The rule is still marked
+        # deterministic path. Without this, any rule registered here would
+        # fire regardless of its intended routing, producing findings with
+        # source="conformance_deterministic" for rules that should only be
+        # assessed by engine/llm.py. The rule is still marked
         # as "checked" above (so EVAL-007's coverage math is unchanged) but
         # no check function is invoked here.
         if evaluator_config is not None and evaluator_config.rule_catalog:
@@ -374,7 +374,7 @@ def run_all_checks(
                 else None
             )
             is_deferred = result.disposition.value == "run_deferred"
-            # A deferral whose `until:` has passed is no longer a
+            # A deferral whose `until:` has passed is not a
             # deferral — resolve_dispatch has already dropped it out of
             # RUN_DEFERRED — but the finding should say a deadline was
             # missed rather than simply reappearing at full severity
@@ -666,7 +666,7 @@ def run_all_checks(
     _is_static = (
         evaluator_config is not None and evaluator_config.is_static_site
     ) or dod_type == "new_frontend_site"
-    # Wave 9 — coverage sweep for 35 rules previously only in catalog
+    # Checks by domain
     # ==================================================================
 
     # API domain — api-service only
