@@ -369,3 +369,66 @@ def test_a_partial_pass_says_so() -> None:
 
     assert report.severity == "WARN"
     assert "check_failed" in report.text()
+
+
+# ── a clean pass supersedes the last pass's drift ────────────────────────
+
+
+def _drift_pass(*, xstack_006=(), xstack_008=(), eval_007=(), raises=False):
+    """Run the applies_to-absent checks; return what posted as standards_drift."""
+    ctx = c.RunContext.for_run("introspection")
+    posted: list[dict] = []
+
+    def _capture(_label, **kwargs):
+        if kwargs["source"] == "standards_drift":
+            posted.append(kwargs)
+        return MagicMock()
+
+    def _boom(**_kwargs):
+        raise RuntimeError("down")
+
+    with (
+        patch.object(c, "_post_tracked", side_effect=_capture),
+        patch("evaluator_cog.engine.deterministic.check_eval_003", return_value=[]),
+        patch(
+            "evaluator_cog.engine.deterministic.check_xstack_006",
+            side_effect=_boom if raises else None,
+            return_value=list(xstack_006),
+        ),
+        patch(
+            "evaluator_cog.engine.deterministic.check_xstack_008",
+            return_value=list(xstack_008),
+        ),
+        patch(
+            "evaluator_cog.engine.deterministic.check_eval_007",
+            return_value=list(eval_007),
+        ),
+    ):
+        c._run_applies_to_absent_checks(
+            ctx=ctx,
+            ecosystem={},
+            rule_catalog={},
+            standards_version="7.29.0",
+            evaluator_standards_version="7.29.0",
+            run_id="introspection-7.29.0-abc",
+        )
+    return posted
+
+
+def test_a_clean_pass_posts_a_success_row_to_supersede_old_drift() -> None:
+    posted = _drift_pass()
+
+    assert len(posted) == 1
+    assert posted[0]["run_id"] == "introspection-7.29.0-abc"
+    assert posted[0]["findings"][0]["severity"] == "SUCCESS"
+
+
+def test_a_pass_with_drift_posts_only_the_drift() -> None:
+    finding = {"rule_id": "EVAL-007", "severity": "ERROR", "finding": "drift"}
+    posted = _drift_pass(eval_007=[finding])
+
+    assert [p["findings"] for p in posted] == [[finding]]
+
+
+def test_a_pass_where_a_drift_check_failed_is_not_called_clean() -> None:
+    assert _drift_pass(raises=True) == []
