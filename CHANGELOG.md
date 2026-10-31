@@ -1,3 +1,15 @@
+# [3.63.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.62.4...v3.63.0) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 7.8.0 ([bfbe9da](https://github.com/mini-app-polis/evaluator-cog/commit/bfbe9da3c841de60d36ecb5bce8a079274ca3a61))
+
+
+### Features
+
+* **evaluator:** narrowed exemptions, retired-registry doc checks, TypeScript rule branches, and startup settings log ([2f5c841](https://github.com/mini-app-polis/evaluator-cog/commit/2f5c84175c86331f82dffa9f58ecd8d47524c69d))
+
 ## [3.62.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.62.3...v3.62.4) (2026-10-31)
 
 
