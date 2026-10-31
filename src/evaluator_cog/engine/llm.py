@@ -226,6 +226,8 @@ _ANTHROPIC_ATTEMPTS = 3
 _ANTHROPIC_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504, 529})
 _ANTHROPIC_BACKOFF_SECONDS = 2.0
 _ANTHROPIC_BACKOFF_CAP_SECONDS = 30.0
+#: EVALUATOR_LLM_TIMEOUT_SECONDS when unset: seconds one model call may take.
+LLM_TIMEOUT_SECONDS_DEFAULT = "120"
 
 
 def _anthropic_retry_delay(response: httpx.Response | None, attempt: int) -> float:
@@ -289,7 +291,9 @@ def _anthropic_messages_create(
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": user_prompt}],
     }
-    _llm_timeout = float(os.environ.get("EVALUATOR_LLM_TIMEOUT_SECONDS", "120"))
+    _llm_timeout = float(
+        os.environ.get("EVALUATOR_LLM_TIMEOUT_SECONDS", LLM_TIMEOUT_SECONDS_DEFAULT)
+    )
     # Throttling (429), overload (529) and 5xx are retried with backoff, as
     # are connection failures. Without this one overloaded response failed
     # the repository's whole evaluation, and the queue re-ran the job from

@@ -11,6 +11,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from evaluator_cog.engine.deterministic import _typescript as ts
 from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
@@ -611,9 +612,45 @@ def check_no_print_statements(repo_path: Path) -> list[Finding]:
                         "cd_readiness",
                         f"print() statement found in {py_file.relative_to(repo_path)}.",
                         "Replace with structured logger from common-python-utils.",
+                        file=py_file.relative_to(repo_path),
                     )
                 )
                 break  # one finding per file is enough
+    return findings
+
+
+def check_no_console_calls(repo_path: Path) -> list[Finding]:
+    """CD-003, TypeScript: console.* is called only in the repo's logger module.
+
+    Production code is ``src/**/*.ts`` and ``src/**/*.tsx`` less test files.
+    Files under ``src/cli/``, files package.json's ``bin`` names, and the
+    logger module itself may call console.
+    """
+    CHECK_ID = "CD-003"
+    findings: list[Finding] = []
+    module = ts.logger_module(repo_path)
+    cli = ts.cli_entry_points(repo_path)
+    cli_dir = repo_path / "src" / "cli"
+    for path in ts.source_files(repo_path):
+        if path == module or path.resolve() in cli or cli_dir in path.parents:
+            continue
+        text = ts.read(path)
+        m = ts.CONSOLE_CALL.search(text)
+        if m is None:
+            continue
+        rel = path.relative_to(repo_path)
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "cd_readiness",
+                f"{rel}: console call outside the logger module "
+                f"(line {text.count(chr(10), 0, m.start()) + 1}).",
+                "Log through the repo's logger module (a src/ file named logger), "
+                "the one place console.* is called.",
+                file=rel,
+            )
+        )
     return findings
 
 
@@ -690,12 +727,18 @@ def _stdlib_logging_is_primary(text: str) -> bool:
 
 
 def check_structured_logging(repo_path: Path) -> list[Finding]:
-    """CD-009: Structured logging via shared library."""
+    """CD-009: Structured logging via shared library.
+
+    A TypeScript repo (package.json, no pyproject.toml) has no shared
+    logger: it is checked through its own logger module instead.
+    """
     CHECK_ID = "CD-009"
     findings: list[Finding] = []
     src = repo_path / "src"
     if not src.is_dir():
         return findings
+    if ts.is_typescript_repo(repo_path):
+        return _check_typescript_logger_module(repo_path)
 
     for py_file in src.rglob("*.py"):
         text = py_file.read_text()
@@ -724,6 +767,45 @@ def check_structured_logging(repo_path: Path) -> list[Finding]:
             )
             break
     return findings
+
+
+def _check_typescript_logger_module(repo_path: Path) -> list[Finding]:
+    """CD-009, TypeScript: a logger module exists if src/ logs, and it emits
+    every field of the standard event shape."""
+    module = ts.logger_module(repo_path)
+    if module is None:
+        logs = any(
+            ts.CONSOLE_CALL.search(ts.read(p)) for p in ts.source_files(repo_path)
+        )
+        if not logs:
+            return []
+        return [
+            _finding(
+                "CD-009",
+                "WARN",
+                "cd_readiness",
+                "src/ logs, but the repo has no logger module (a src/ file named "
+                "logger).",
+                "Add a logger module that builds every event in the standard "
+                "shape, and log through it.",
+            )
+        ]
+    missing = ts.missing_event_fields(ts.read(module))
+    if not missing:
+        return []
+    rel = module.relative_to(repo_path)
+    return [
+        _finding(
+            "CD-009",
+            "WARN",
+            "cd_readiness",
+            f"{rel} does not set every field of the standard log event: "
+            f"missing {', '.join(missing)}.",
+            "Emit timestamp, service, level, category, event and context "
+            "(context may be omitted when empty) on every event.",
+            file=rel,
+        )
+    ]
 
 
 #: The project every value is edited in. A repo reads it only through its
@@ -1118,12 +1200,21 @@ def check_migration_in_ci(
     repo_path: Path,
     language: str = "python",
 ) -> list[Finding]:
-    """API-011: CI runs database migrations on deploy.
+    """API-011: migrations are applied automatically before the new version is live.
 
-    Python (Alembic): ci.yml contains 'alembic upgrade head' in a deploy job.
-    TypeScript (Drizzle): ci.yml contains 'drizzle-kit push' or 'drizzle-kit migrate'.
+    Passes on any one of: the raw-SQL runner (numbered SQL files under
+    migrations/, run by a repo script the start command chains with && ahead
+    of the server); Python (Alembic): ci.yml contains 'alembic upgrade head';
+    TypeScript (Drizzle): ci.yml contains 'drizzle-kit push' or 'drizzle-kit
+    migrate'.
     """
+    from evaluator_cog.engine.deterministic.operations import (
+        runs_raw_sql_migrations_before_start,
+    )
+
     findings: list[Finding] = []
+    if runs_raw_sql_migrations_before_start(repo_path):
+        return findings
 
     ci_texts = []
     ci = repo_path / ".github" / "workflows" / "ci.yml"
@@ -1138,7 +1229,9 @@ def check_migration_in_ci(
                 "ERROR",
                 "structural_conformance",
                 "api-service has no .github/workflows/ci.yml — migration steps cannot be verified.",
-                "Add a ci.yml with deploy job including migration step.",
+                "Add a ci.yml with deploy job including migration step, or apply "
+                "numbered migrations/*.sql with a runner script the start "
+                "command chains with && before the server.",
             )
         )
         return findings
@@ -1154,7 +1247,9 @@ def check_migration_in_ci(
                     "structural_conformance",
                     "ci.yml has no 'alembic upgrade head' step.",
                     "Add 'alembic upgrade head' to the deploy job so migrations run "
-                    "automatically on release.",
+                    "automatically on release, or apply numbered migrations/*.sql "
+                    "with a runner script the start command chains with && "
+                    "before the server.",
                 )
             )
     else:
@@ -1165,7 +1260,9 @@ def check_migration_in_ci(
                     "ERROR",
                     "structural_conformance",
                     "ci.yml has no 'drizzle-kit push' or 'drizzle-kit migrate' step.",
-                    "Add a Drizzle migration step to the deploy job.",
+                    "Add a Drizzle migration step to the deploy job, or apply "
+                    "numbered migrations/*.sql with a runner script the start "
+                    "command chains with && before the server.",
                 )
             )
     return findings
@@ -1377,6 +1474,131 @@ def check_three_layer_observability(
                 "cd_readiness",
                 "Layer 3 missing: Sentry integration not detected.",
                 layer3_hint,
+            )
+        )
+    return findings
+
+
+_JS_SENTRY_INIT = re.compile(r"\bSentry\.init\s*\(")
+_SENTRY_NAMED_INIT = re.compile(
+    r"import\s*\{[^}]*\binit\b[^}]*\}\s*from\s*['\"]@sentry/[^'\"]+['\"]"
+)
+_RENDER_CALL = re.compile(r"\bcreateRoot\s*\(|\.render\s*\(|\bhydrateRoot\s*\(")
+_MODULE_SCRIPT = re.compile(
+    r"<script\b[^>]*\btype\s*=\s*['\"]module['\"][^>]*\bsrc\s*=\s*['\"]([^'\"]+)['\"]"
+    r"|<script\b[^>]*\bsrc\s*=\s*['\"]([^'\"]+)['\"][^>]*\btype\s*=\s*['\"]module['\"]",
+    re.IGNORECASE,
+)
+_STATIC_IMPORT = re.compile(
+    r"^\s*import\s+(?:[^'\";]*?\s+from\s+)?['\"]([^'\"]+)['\"]", re.MULTILINE
+)
+
+
+def _resolve_import(repo_path: Path, importer: Path, spec: str) -> Path | None:
+    """A relative or ``@/`` (src/) import, resolved to a file in the repo."""
+    if spec.startswith("@/"):
+        base = repo_path / "src" / spec[2:]
+    elif spec.startswith("."):
+        base = importer.parent / spec
+    else:
+        return None
+    for candidate in (
+        base,
+        *(base.with_name(base.name + ext) for ext in (".ts", ".tsx", ".js", ".jsx")),
+        *(base / f"index{ext}" for ext in (".ts", ".tsx", ".js", ".jsx")),
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _inits_sentry(text: str) -> int | None:
+    """Offset of the Sentry.init call in `text`, or None."""
+    m = _JS_SENTRY_INIT.search(text)
+    if m is None and _SENTRY_NAMED_INIT.search(text):
+        m = re.search(r"(?<![\w.])init\s*\(", text)
+    return m.start() if m else None
+
+
+def _sentry_starts_before_render(repo_path: Path) -> bool:
+    """Whether the module index.html loads starts Sentry before the app renders.
+
+    The entry module's static imports are evaluated before its body, so a
+    Sentry.init at the top level of a module it imports ahead of the
+    render call counts as well as one in the entry module itself.
+    """
+    index = repo_path / "index.html"
+    m = _MODULE_SCRIPT.search(ts.read(index)) if index.is_file() else None
+    if m is None:
+        return False
+    entry = repo_path / (m.group(1) or m.group(2)).lstrip("/")
+    text = ts.read(entry) if entry.is_file() else ""
+    if not text:
+        return False
+    render = _RENDER_CALL.search(text)
+    render_at = render.start() if render else len(text)
+    at = _inits_sentry(text)
+    if at is not None and at < render_at:
+        return True
+    for imp in _STATIC_IMPORT.finditer(text, 0, render_at):
+        target = _resolve_import(repo_path, entry, imp.group(1))
+        if target is not None and _inits_sentry(ts.read(target)) is not None:
+            return True
+    return False
+
+
+def check_cd_010_react_app(repo_path: Path) -> list[Finding]:
+    """CD-010 for a react-app: Layers 2 and 3.
+
+    Layer 1 has nothing in the repo: the host serves the site and CD-032
+    checks every deploy. Layer 2 is the repo's logger module, emitting the
+    CD-009 shape, with no other module logging around it. Layer 3 is
+    Sentry started by the module index.html loads, before the app renders,
+    and a SENTRY_DSN name in .env.example.
+    """
+    CHECK_ID = "CD-010"
+    findings: list[Finding] = []
+
+    module = ts.logger_module(repo_path)
+    bypassing = [
+        p.relative_to(repo_path)
+        for p in ts.source_files(repo_path)
+        if p != module and ts.CONSOLE_CALL.search(ts.read(p))
+    ]
+    if module is None or ts.missing_event_fields(ts.read(module)) or bypassing:
+        detail = (
+            "no logger module (a src/ file named logger)"
+            if module is None
+            else "the logger module does not emit the standard event shape"
+            if ts.missing_event_fields(ts.read(module))
+            else "modules log around the logger module: "
+            + ", ".join(str(p) for p in bypassing)
+        )
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                "cd_readiness",
+                f"Layer 2 missing: {detail}.",
+                "Keep one logger module under src/ that emits the CD-009 shape, "
+                "and import it wherever the app logs.",
+            )
+        )
+
+    env = repo_path / ".env.example"
+    env_text = ts.read(env) if env.is_file() else ""
+    if not (_sentry_starts_before_render(repo_path) and "SENTRY_DSN" in env_text):
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "ERROR",
+                "cd_readiness",
+                "Layer 3 missing: Sentry is not started by the module index.html "
+                "loads before the app renders, or .env.example names no "
+                "SENTRY_DSN.",
+                "Call Sentry.init in the entry module (or a module it imports "
+                "first), before createRoot(...).render, and add SENTRY_DSN or "
+                "SENTRY_DSN_<PROJECT> to .env.example.",
             )
         )
     return findings

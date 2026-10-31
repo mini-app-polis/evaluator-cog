@@ -193,3 +193,77 @@ def test_the_history_form_of_each_phrase_is_still_a_finding(
     repo = _repo(tmp_path, {"src/pkg/mod.py": f"x = 1  # {comment}\n"})
     (finding,) = check_doc_017(repo)
     assert f'line 1: "{phrase}"' in finding["finding"]
+
+
+# ── The retired registry ──────────────────────────────────────────────────
+
+_RETIRED = {
+    "Oldorch": {"what": "an orchestrator", "replaced_by": "Lambda", "when": "2026-09"},
+    "acme-api": {"what": "an API", "replaced_by": "acme-v2", "when": "2026-10"},
+}
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "// (acme-api src/lib/db-errors.ts)",
+        "// acme-api lib/cache.ts",
+        "# ported to here from Oldorch's runner.py",
+        "// see acme-api/src/index.ts",
+    ],
+)
+def test_doc016_flags_a_retired_component_s_file(tmp_path: Path, line: str) -> None:
+    repo = _repo(tmp_path, {"src/app/mod.ts": f"{line}\n"})
+    (finding,) = check_doc_016(repo, repo_type="api-service", retired=_RETIRED)
+    assert "retired" in finding["finding"]
+    assert finding["file"] == "src/app/mod.ts"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "// acme-api is gone",
+        "# Oldorch.serve is not called here",
+        "# Oldorchestra src/x.py",
+    ],
+)
+def test_doc016_a_retired_name_without_a_path_is_not_a_file(
+    tmp_path: Path, line: str
+) -> None:
+    repo = _repo(tmp_path, {"src/app/mod.py": f"{line}\nx = 1\n"})
+    assert check_doc_016(repo, repo_type="api-service", retired=_RETIRED) == []
+
+
+def test_doc016_without_a_registry_is_unchanged(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, {"src/app/mod.ts": "// acme-api lib/cache.ts\n"})
+    assert check_doc_016(repo, repo_type="api-service") == []
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        "# ported from the old runner",
+        "# carried over from the first version",
+        "# same as Oldorch did",
+        "# as in acme-api",
+        "# like Oldorch",
+        "# unlike Oldorch",
+        "# matching acme-api",
+        "# from Oldorch",
+        "# replaces Oldorch",
+        "# keeps acme-api's wire contract",
+    ],
+)
+def test_doc017_flags_history_and_comparisons(tmp_path: Path, comment: str) -> None:
+    repo = _repo(tmp_path, {"src/pkg/mod.py": f"{comment}\nx = 1\n"})
+    (finding,) = check_doc_017(repo, retired=_RETIRED)
+    assert finding["rule_id"] == "DOC-017"
+    assert finding["file"] == "src/pkg/mod.py"
+    assert "line 1:" in finding["finding"]
+
+
+def test_doc017_a_bare_mention_is_not_a_comparison(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, {"src/pkg/mod.py": "# Talks to acme-v2.\nx = 1\n"})
+    assert check_doc_017(repo, retired=_RETIRED) == []
+    repo = _repo(tmp_path, {"src/pkg/mod.py": "# Oldorchestra's queue\nx = 1\n"})
+    assert check_doc_017(repo, retired=_RETIRED) == []

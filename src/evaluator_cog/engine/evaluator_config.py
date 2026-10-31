@@ -15,6 +15,7 @@ It falls back gracefully when evaluator.yaml is absent (migration period).
 from __future__ import annotations
 
 import datetime as _dt
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -41,6 +42,62 @@ class Disposition(StrEnum):
     RUN_DEFAULT = "run_default"
 
 
+def _glob_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a path glob: ``*`` and ``?`` stay within one ``/`` segment,
+    ``**`` crosses segments, ``[...]`` is a character class."""
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+            continue
+        if pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+            continue
+        if ch == "*":
+            out.append("[^/]*")
+        elif ch == "?":
+            out.append("[^/]")
+        elif ch == "[":
+            end = pattern.find("]", i + 1)
+            if end == -1:
+                out.append(re.escape(ch))
+            else:
+                out.append("[" + pattern[i + 1 : end].replace("\\", "\\\\") + "]")
+                i = end
+        else:
+            out.append(re.escape(ch))
+        i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+@dataclass(frozen=True)
+class NarrowedExemption:
+    """An evaluator.yaml exemption that names the ``paths`` or ``routes``
+    it covers (index.yaml ``schema.evaluator_yaml.exemptions.fields``).
+
+    The rule still runs. A finding whose ``file`` matches a ``paths`` glob,
+    or whose ``route`` matches a ``routes`` entry, is covered; a finding
+    that names neither is never covered.
+    """
+
+    reason: str
+    paths: tuple[str, ...] = ()
+    routes: tuple[str, ...] = ()
+
+    def covers(self, finding: dict) -> bool:
+        file = str(finding.get("file") or "").strip().removeprefix("./")
+        route = str(finding.get("route") or "").strip()
+        if file and any(
+            _glob_regex(p.removeprefix("./")).match(file) for p in self.paths
+        ):
+            return True
+        return bool(route) and any(_glob_regex(r).match(route) for r in self.routes)
+
+
 @dataclass
 class DispositionResult:
     """Resolved dispatch for a (rule, repo) pair.
@@ -57,6 +114,10 @@ class DispositionResult:
       disposition is whatever the remaining precedence steps resolve to
       — but the date is carried so the finding can say that a deadline
       was missed rather than silently appearing at full severity.
+    - `narrowed_exemptions`: per-repo exemptions for this rule that name
+      `paths` or `routes`. They do not change the disposition; the caller
+      drops each finding one of them covers to INFO with its reason, and
+      every other finding takes the disposition as resolved.
     """
 
     disposition: Disposition
@@ -64,6 +125,14 @@ class DispositionResult:
     downgraded_severity: str | None = None
     modifier_rule_id: str | None = None
     deferral_expired_on: _dt.date | None = None
+    narrowed_exemptions: tuple[NarrowedExemption, ...] = ()
+
+    def covering_exemption(self, finding: dict) -> NarrowedExemption | None:
+        """The narrowed exemption that covers `finding`, if any."""
+        for exemption in self.narrowed_exemptions:
+            if exemption.covers(finding):
+                return exemption
+        return None
 
     @property
     def should_run(self) -> bool:
@@ -136,6 +205,11 @@ class EvaluatorConfig:
     traits: list[str] = field(default_factory=list)
     exemption_ids: list[str] = field(default_factory=list)
     exemption_reasons: dict[str, str] = field(default_factory=dict)
+    # rule_id -> exemptions that name `paths` or `routes`. A rule listed
+    # here and not in `exemption_ids` still runs.
+    narrowed_exemptions: dict[str, list[NarrowedExemption]] = field(
+        default_factory=dict
+    )
     deferral_ids: list[str] = field(default_factory=list)
     deferral_reasons: dict[str, str] = field(default_factory=dict)
     # rule_id -> the deferral's `until:` date. A rule deferred
@@ -189,6 +263,8 @@ class EvaluatorConfig:
           1. scope           — applies_to vs repo_type
           2. trait_exemption — trait.exempts includes rule
           3. repo_exemption  — evaluator.yaml exemptions includes rule
+             (an exemption naming `paths`/`routes` does not skip: it rides
+             on the result as `narrowed_exemptions`)
           4. repo_deferral   — evaluator.yaml deferrals includes rule
           5. trait_downgrade — trait.downgrades includes rule
           6. rule_modifier   — some other rule's modifies: includes rule
@@ -215,12 +291,15 @@ class EvaluatorConfig:
                     reason=f"Exempted by trait: {trait}",
                 )
 
-        # Step 3 — per-repo exemption.
+        # Step 3 — per-repo exemption. A whole-rule exemption skips; a
+        # narrowed one lets the rule run and travels on whatever result
+        # the remaining steps resolve to.
         if rule_id in self.exemption_ids:
             return DispositionResult(
                 disposition=Disposition.SKIP_REPO_EXEMPT,
                 reason=self.exemption_reasons.get(rule_id, ""),
             )
+        narrowed = tuple(self.narrowed_exemptions.get(rule_id, ()))
 
         # Step 4 — per-repo deferral.
         #
@@ -246,6 +325,7 @@ class EvaluatorConfig:
                 return DispositionResult(
                     disposition=Disposition.RUN_DEFERRED,
                     reason=self.deferral_reasons.get(rule_id, ""),
+                    narrowed_exemptions=narrowed,
                 )
             expired_on = until
 
@@ -259,6 +339,7 @@ class EvaluatorConfig:
                         reason=f"Downgraded by trait: {trait}. {dg.get('reason', '')}".strip(),
                         downgraded_severity=dg.get("to") or "INFO",
                         deferral_expired_on=expired_on,
+                        narrowed_exemptions=narrowed,
                     )
 
         # Step 6 — rule modifier.
@@ -274,11 +355,14 @@ class EvaluatorConfig:
                     reason=f"Modified by rule: {other_id}",
                     modifier_rule_id=other_id,
                     deferral_expired_on=expired_on,
+                    narrowed_exemptions=narrowed,
                 )
 
         # Step 7 — default.
         return DispositionResult(
-            disposition=Disposition.RUN_DEFAULT, deferral_expired_on=expired_on
+            disposition=Disposition.RUN_DEFAULT,
+            deferral_expired_on=expired_on,
+            narrowed_exemptions=narrowed,
         )
 
     def is_deferred(self, rule_id: str) -> bool:
@@ -481,15 +565,27 @@ def _parse_evaluator_yaml(
 
     exemption_ids = []
     exemption_reasons = {}
+    narrowed_exemptions: dict[str, list[NarrowedExemption]] = {}
     for item in raw.get("exemptions", []) or []:
         if not isinstance(item, dict):
             continue
         rule_id = str(item.get("rule", "")).strip()
         reason = str(item.get("reason", "")).strip()
-        if rule_id:
-            exemption_ids.append(rule_id)
-            if reason:
-                exemption_reasons[rule_id] = reason
+        if not rule_id:
+            continue
+        if "paths" in item or "routes" in item:
+            # Narrowed: the rule runs and only what is named is covered.
+            # A malformed list narrows to nothing rather than widening to
+            # the whole rule — a typo must not hide every finding.
+            paths = _exemption_globs(item, "paths", rule_id, source)
+            routes = _exemption_globs(item, "routes", rule_id, source)
+            narrowed_exemptions.setdefault(rule_id, []).append(
+                NarrowedExemption(reason=reason, paths=paths, routes=routes)
+            )
+            continue
+        exemption_ids.append(rule_id)
+        if reason:
+            exemption_reasons[rule_id] = reason
 
     deferral_ids = []
     deferral_reasons = {}
@@ -520,12 +616,37 @@ def _parse_evaluator_yaml(
         traits=traits,
         exemption_ids=exemption_ids,
         exemption_reasons=exemption_reasons,
+        narrowed_exemptions=narrowed_exemptions,
         deferral_ids=deferral_ids,
         deferral_reasons=deferral_reasons,
         deferral_until=deferral_until,
         layout_exceptions=layout_exceptions,
         source=source,
     )
+
+
+def _exemption_globs(
+    item: dict, key: str, rule_id: str, source: str
+) -> tuple[str, ...]:
+    """Read an exemption's `paths` or `routes`: a non-empty list of
+    non-empty strings. Anything else is warned about and read as empty."""
+    if key not in item:
+        return ()
+    value = item.get(key)
+    raw_list = value if isinstance(value, list) else []
+    entries = tuple(v.strip() for v in raw_list if isinstance(v, str) and v.strip())
+    if entries and len(entries) == len(raw_list):
+        return entries
+    log.warning(
+        "evaluator_config: %s: exemption for %s has a malformed %s: %r — "
+        "it must be a non-empty list of non-empty strings; entries that are "
+        "not are ignored",
+        source,
+        rule_id,
+        key,
+        value,
+    )
+    return entries
 
 
 def _parse_until(raw_until: object, rule_id: str, source: str) -> _dt.date | None:

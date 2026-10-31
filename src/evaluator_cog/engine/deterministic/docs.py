@@ -461,7 +461,9 @@ def check_split_package_identity(repo_path: Path) -> list[Finding]:
     if not pkg_dirs:
         return findings
     pkg_name = pkg_dirs[0].name
-    if project_name.replace("-", "_") == pkg_name:
+    # Normalised as PEP 503 does, with `_` as the separator PY-011 expects:
+    # `My.Service` and `my-service` both import as `my_service`.
+    if re.sub(r"[-_.]+", "_", project_name).lower() == pkg_name:
         return findings
 
     init_file = pkg_dirs[0] / "__init__.py"
@@ -631,14 +633,72 @@ def _public_definitions(
     return found
 
 
-def check_public_docstrings(repo_path: Path) -> list[Finding]:
-    """DOC-006: Public functions/classes have docstrings."""
+#: DOC-006, TypeScript: an exported function or class declaration, or an
+#: exported const bound to an arrow function or function expression.
+_TS_EXPORT = re.compile(
+    r"^[ \t]*export\s+(?:default\s+)?(?:"
+    r"(?:async\s+)?function\b\*?\s*(?P<fn>[\w$]+)?"
+    r"|(?:abstract\s+)?class\b\s*(?P<cls>[\w$]+)?"
+    r"|const\s+(?P<const>[\w$]+)\s*(?::[^=\n]+)?=\s*(?:async\s+)?"
+    r"(?:function\b|<[^>\n]*>\s*\(|\([^)]*\)\s*(?::[^=\n]+)?=>|[\w$]+\s*=>)"
+    r")",
+    re.MULTILINE,
+)
+
+
+def _preceded_by_doc_comment(text: str, offset: int) -> bool:
+    """Whether the nearest non-blank line before `offset` closes a ``/** */``."""
+    before = text[:offset].rstrip()
+    if not before.endswith("*/"):
+        return False
+    start = before.rfind("/*")
+    return start != -1 and before.startswith("/**", start)
+
+
+def _public_docstrings_typescript(repo_path: Path) -> list[Finding]:
+    """DOC-006, TypeScript: exports from ``src/**/*.ts`` carry a ``/** */``.
+
+    Test files and ``*.d.ts`` are not read, nor are ``.tsx`` files: a React
+    component's name and props type say what it renders.
+    """
+    from evaluator_cog.engine.deterministic import _typescript as ts
+
+    findings: list[Finding] = []
+    for path in ts.source_files(repo_path, (".ts",)):
+        text = ts.read(path)
+        rel = path.relative_to(repo_path)
+        for m in _TS_EXPORT.finditer(text):
+            if _preceded_by_doc_comment(text, m.start()):
+                continue
+            kind = "class" if re.search(r"\bclass\b", m.group(0)) else "function"
+            name = m.group("fn") or m.group("cls") or m.group("const") or "default"
+            findings.append(
+                _finding(
+                    "DOC-006",
+                    "WARN",
+                    "documentation_coverage",
+                    f"{rel}::{name}: exported {kind} missing a /** */ doc comment.",
+                    "Add a /** */ comment saying what it does.",
+                    file=rel,
+                )
+            )
+    return findings
+
+
+def check_public_docstrings(repo_path: Path, language: str = "python") -> list[Finding]:
+    """DOC-006: Public functions/classes have docstrings.
+
+    Python: every public function and class. TypeScript: every export from
+    a ``.ts`` module.
+    """
     CHECK_ID = "DOC-006"
 
     findings: list[Finding] = []
     src = repo_path / "src"
     if not src.is_dir():
         return findings
+    if language == "typescript":
+        return _public_docstrings_typescript(repo_path)
 
     for py_file in src.rglob("*.py"):
         try:
@@ -915,9 +975,90 @@ def _line_of(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
-def check_doc_016(repo_path: Path, *, repo_type: str = "") -> list[Finding]:
-    """DOC-016: code and tests name another repo's public contract, never its internals."""
+# ── The catalog's `retired` registry, as DOC-014, DOC-016 and DOC-017 read it ─
+
+
+def _retired_term(term: str) -> str:
+    """A retired name as a regex: case-insensitive (the caller's flag),
+    bounded on both sides by anything that is not a letter or digit."""
+    return rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])"
+
+
+def _retired_terms(retired: dict | None) -> list[str]:
+    """The registry's keys, longest first so an overlap reports the fuller name."""
+    if not isinstance(retired, dict):
+        return []
+    return sorted(
+        (str(k).strip() for k in retired if str(k).strip()),
+        key=lambda t: (-len(t), t),
+    )
+
+
+#: DOC-016: what separates tokens on a line, and a token that is a path or
+#: file name — one containing `/`, or ending in a source or document extension.
+_TOKEN_SEP = re.compile(r"[\s()\[\]{}<>\"'`,;]+")
+_PATH_LIKE = re.compile(r"/|\.(?:py|ts|tsx|js|jsx|sql|md)$", re.IGNORECASE)
+
+
+def _retired_file_hits(text: str, terms: list[str]) -> list[tuple[int, str, str]]:
+    """DOC-016: a retired name followed on the same line by a path or file name.
+
+    Returns (line, matched text, term), the text running from the name to
+    the end of the path.
+    """
+    hits: list[tuple[int, str, str]] = []
+    for term in terms:
+        for m in re.finditer(_retired_term(term), text, re.IGNORECASE):
+            line_end = text.find("\n", m.end())
+            rest = text[m.end() : line_end if line_end != -1 else len(text)]
+            offset = 0
+            for piece in _TOKEN_SEP.split(rest):
+                found = rest.find(piece, offset) if piece else offset
+                offset = found + len(piece)
+                # A comment marker (`*/`, `//`) holds a slash but names nothing.
+                if _PATH_LIKE.search(piece) and re.search(r"[A-Za-z0-9]", piece):
+                    hits.append(
+                        (_line_of(text, m.start()), m.group(0) + rest[:offset], term)
+                    )
+                    break
+    return hits
+
+
+def _retired_comparison_pattern(term: str) -> re.Pattern[str]:
+    """DOC-017: the code measured against a retired component."""
+    t = _retired_term(term)
+    return re.compile(
+        rf"\b(?:same as|as in|as|unlike|like|matching|from|replaces|replaced)\s+{t}"
+        rf"|{t}['’]s\b",
+        re.IGNORECASE,
+    )
+
+
+def _retired_comparison_hits(
+    comments: list[tuple[int, str]], terms: list[str]
+) -> list[tuple[int, str, str]]:
+    """DOC-017's comparisons in `comments`: (line, matched text, term)."""
+    hits: list[tuple[int, str, str]] = []
+    for term in terms:
+        pattern = _retired_comparison_pattern(term)
+        for start, comment in comments:
+            for m in pattern.finditer(comment):
+                hits.append(
+                    (start + comment.count("\n", 0, m.start()), m.group(0), term)
+                )
+    return hits
+
+
+def check_doc_016(
+    repo_path: Path, *, repo_type: str = "", retired: dict | None = None
+) -> list[Finding]:
+    """DOC-016: code and tests name another repo's public contract, never its internals.
+
+    `retired` is the catalog's registry of retired components: citing one's
+    files is a finding in every repo.
+    """
     CHECK_ID = "DOC-016"
+    terms = _retired_terms(retired)
 
     patterns: list[tuple[str, re.Pattern[str]]] = list(_TRACKER_PATTERNS)
     if repo_type not in _TERRAFORM_OWNERS:
@@ -932,9 +1073,15 @@ def check_doc_016(repo_path: Path, *, repo_type: str = "") -> list[Finding]:
         except (OSError, UnicodeDecodeError):
             continue
         hits = sorted(
-            (_line_of(text, m.start()), m.group(0), what)
-            for what, pattern in patterns
-            for m in pattern.finditer(text)
+            [
+                (_line_of(text, m.start()), m.group(0), what)
+                for what, pattern in patterns
+                for m in pattern.finditer(text)
+            ]
+            + [
+                (n, match, f"a file of retired {term}")
+                for n, match, term in _retired_file_hits(text, terms)
+            ]
         )
         if not hits:
             continue
@@ -950,6 +1097,7 @@ def check_doc_016(repo_path: Path, *, repo_type: str = "") -> list[Finding]:
                 "Name the other repo, or link its public contract (an API "
                 "route, its OpenAPI document), instead of its files, "
                 "migrations or board tasks.",
+                file=rel,
             )
         )
     return findings
@@ -959,7 +1107,7 @@ _MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
 #: DOC-017's phrases: a comment telling the code's history.
 _HISTORY_PHRASES = re.compile(
     r"\b(?:previously|used to|no longer|was changed|was renamed|moved from"
-    r"|originally"
+    r"|originally|ported from|carried over"
     r"|as of (?:\d{4}-\d{2}(?:-\d{2})?|\d{1,2}/\d{1,2}/\d{2,4}"
     rf"|{_MONTH} \d{{1,2}}(?:, \d{{4}})?|\d{{1,2}} {_MONTH} \d{{4}}|{_MONTH} \d{{4}}))\b",
     re.IGNORECASE,
@@ -1051,9 +1199,21 @@ def _other_comments(path: Path, text: str) -> list[tuple[int, str]]:
     return [(_line_of(text, m.start()), m.group(0)) for m in pattern.finditer(text)]
 
 
-def check_doc_017(repo_path: Path) -> list[Finding]:
-    """DOC-017: code comments describe the code as it is, not its history."""
+def _comments_of(path: Path, text: str) -> list[tuple[int, str]]:
+    """Comments and docstrings in a source file, each with its first line."""
+    return (
+        _python_comments(text) if path.suffix == ".py" else _other_comments(path, text)
+    )
+
+
+def check_doc_017(repo_path: Path, *, retired: dict | None = None) -> list[Finding]:
+    """DOC-017: code comments describe the code as it is, not its history.
+
+    `retired` is the catalog's registry of retired components: a comment
+    measuring the code against one is history too.
+    """
     CHECK_ID = "DOC-017"
+    terms = _retired_terms(retired)
 
     findings: list[Finding] = []
     for path in _code_files(repo_path):
@@ -1061,16 +1221,15 @@ def check_doc_017(repo_path: Path) -> list[Finding]:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        comments = (
-            _python_comments(text)
-            if path.suffix == ".py"
-            else _other_comments(path, text)
-        )
+        comments = _comments_of(path, text)
         hits = sorted(
-            (start + comment.count("\n", 0, m.start()), m.group(0))
-            for start, comment in comments
-            for m in _HISTORY_PHRASES.finditer(comment)
-            if not _is_present_tense(comment, m)
+            [
+                (start + comment.count("\n", 0, m.start()), m.group(0))
+                for start, comment in comments
+                for m in _HISTORY_PHRASES.finditer(comment)
+                if not _is_present_tense(comment, m)
+            ]
+            + [(n, match) for n, match, _t in _retired_comparison_hits(comments, terms)]
         )
         if not hits:
             continue
@@ -1084,6 +1243,165 @@ def check_doc_017(repo_path: Path) -> list[Finding]:
                 f"{rel} has comments telling the code's history: {listed}.",
                 "Say what the code does now; put what changed, and when, in an "
                 "ADR or the CHANGELOG.",
+                file=rel,
+            )
+        )
+    return findings
+
+
+# ── DOC-014: living docs do not describe a retired component as current ─────
+
+#: Words that make a sentence about the retirement rather than a description
+#: of the present.
+_PROVENANCE = re.compile(
+    r"retire|replaced|removed|superseded|deprecated|formerly|previously"
+    r"|no longer|used to|moved off|migrated from|merged from|instead of"
+    r"|in place of|legacy|historical",
+    re.IGNORECASE,
+)
+#: A sentence ends at `.`, `?` or `!` before whitespace, or at a blank line.
+_SENTENCE_END = re.compile(r"[.?!](?=\s|$)|\n[ \t]*\n")
+_HISTORICAL_MARKER = "<!-- historical"
+
+
+def _sentence_around(text: str, start: int, end: int) -> str:
+    """The sentence of `text` holding the span start..end."""
+    left = 0
+    for boundary in _SENTENCE_END.finditer(text, 0, start):
+        left = boundary.end()
+    right = _SENTENCE_END.search(text, end)
+    return text[left : right.start() if right else len(text)]
+
+
+def _is_historical_doc(text: str) -> bool:
+    for line in text.splitlines():
+        if line.strip():
+            return line.lstrip().startswith(_HISTORICAL_MARKER)
+    return False
+
+
+def _doc014_texts(
+    repo_path: Path,
+) -> list[tuple[Path, bool, list[tuple[int, str, bool]]]]:
+    """Each living-doc file, whether it is source, and its texts as
+    (first line, text, is_key_line).
+
+    README.md, docs/ (not docs/decisions/ or a file marked historical),
+    .env.example line by line, and the comments and docstrings of source
+    under src/. CHANGELOG.md and tests/ are history and fixtures.
+    """
+    out: list[tuple[Path, bool, list[tuple[int, str, bool]]]] = []
+
+    def _read(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    readme = repo_path / "README.md"
+    if readme.is_file() and (text := _read(readme)) is not None:
+        out.append((readme, False, [(1, text, False)]))
+
+    docs = repo_path / "docs"
+    if docs.is_dir():
+        for path in sorted(docs.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.relative_to(docs).parts[0] == "decisions":
+                continue
+            text = _read(path)
+            if text is None or _is_historical_doc(text):
+                continue
+            out.append((path, False, [(1, text, False)]))
+
+    env = repo_path / ".env.example"
+    if env.is_file() and (text := _read(env)) is not None:
+        lines = [
+            (n, line, not line.lstrip().startswith("#"))
+            for n, line in enumerate(text.splitlines(), start=1)
+        ]
+        out.append((env, False, lines))
+
+    for path in _code_files(repo_path):
+        if path.relative_to(repo_path).parts[0] != "src":
+            continue
+        text = _read(path)
+        if text is None:
+            continue
+        out.append(
+            (path, True, [(start, c, False) for start, c in _comments_of(path, text)])
+        )
+    return out
+
+
+def _replaced_by(retired: dict | None, term: str) -> str:
+    entry = (retired or {}).get(term)
+    return (
+        str(entry.get("replaced_by") or "").strip() if isinstance(entry, dict) else ""
+    )
+
+
+def check_doc_014(repo_path: Path, *, retired: dict | None = None) -> list[Finding]:
+    """DOC-014: living docs do not describe a retired component as current.
+
+    `retired` is the catalog's registry of retired components, the rule's
+    only list of terms. Without it there is nothing to look for.
+    """
+    CHECK_ID = "DOC-014"
+    terms = _retired_terms(retired)
+    if not terms:
+        return []
+    patterns = [(t, re.compile(_retired_term(t), re.IGNORECASE)) for t in terms]
+
+    findings: list[Finding] = []
+    for path, is_source, texts in _doc014_texts(repo_path):
+        # A line DOC-016 or DOC-017 reports for the same term is left to it.
+        left_to_others: set[tuple[int, str]] = set()
+        if is_source:
+            with suppress(OSError, UnicodeDecodeError):
+                source = path.read_text(encoding="utf-8")
+                left_to_others = {
+                    (n, t) for n, _m, t in _retired_file_hits(source, terms)
+                } | {
+                    (n, t)
+                    for n, _m, t in _retired_comparison_hits(
+                        _comments_of(path, source), terms
+                    )
+                }
+
+        hits: list[tuple[int, str]] = []
+        for start, text, is_key_line in texts:
+            claimed: list[tuple[int, int]] = []
+            for term, pattern in patterns:
+                for m in pattern.finditer(text):
+                    # Longest term first: a shorter one inside it is the same mention.
+                    if any(a <= m.start() and m.end() <= b for a, b in claimed):
+                        continue
+                    claimed.append((m.start(), m.end()))
+                    line = start + text.count("\n", 0, m.start())
+                    if (line, term) in left_to_others:
+                        continue
+                    if not is_key_line and _PROVENANCE.search(
+                        _sentence_around(text, m.start(), m.end())
+                    ):
+                        continue
+                    hits.append((line, term))
+        if not hits:
+            continue
+        rel = path.relative_to(repo_path)
+        listed = "; ".join(
+            f"line {n}: {term} (replaced by: {_replaced_by(retired, term)})"
+            for n, term in sorted(set(hits))
+        )
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                "documentation_coverage",
+                f"{rel} describes a retired component as current: {listed}.",
+                "Describe what does the job now, or move the history to an ADR "
+                "or the CHANGELOG.",
+                file=rel,
             )
         )
     return findings

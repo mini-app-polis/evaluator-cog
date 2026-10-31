@@ -35,8 +35,9 @@ exemptions:
       Every hit is test data under tests/: the Terraform and migration file
       names are fixtures the checks read from a synthetic repo, and the
       tracker ids and links are DOC-016's own examples. None is a
-      reference to another repo. Exemptions are per rule, so this covers
-      src/ too; src/ keeps to DOC-016 by review.
+      reference to another repo.
+    paths:
+      - "tests/**"
 
 # TEST-001/002/004 covered by pipeline-cog type scoping (evaluator has no
 # normalization/deduplication of external data — its output is evaluation findings).

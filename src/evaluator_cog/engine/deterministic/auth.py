@@ -179,6 +179,8 @@ def check_unauthenticated_routes(
                     "intentional public access in the route's decorator "
                     "description=/summary= or docstring with the phrase "
                     "'intentionally public'.",
+                    file=rel,
+                    route=route_path,
                 )
             )
     return findings

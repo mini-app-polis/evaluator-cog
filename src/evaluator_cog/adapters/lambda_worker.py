@@ -24,11 +24,13 @@ beside it.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from mini_app_polis import load_secrets, timing
 from mini_app_polis import logger as logger_mod
 from mini_app_polis.api.contract import EvaluationIntrospectionMessage
+from mini_app_polis.environment import current_environment, log_settings
 from mini_app_polis.lambda_worker import (
     RunOutOfTime,
     UnprocessableMessage,
@@ -39,6 +41,9 @@ from mini_app_polis.lambda_worker import (
 from mini_app_polis.sentry import init_sentry
 
 from evaluator_cog.adapters.queue import _report_failure, process_message
+from evaluator_cog.engine.deterministic.versioning import GIT_TIMEOUT_SECONDS_DEFAULT
+from evaluator_cog.engine.llm import LLM_TIMEOUT_SECONDS_DEFAULT
+from evaluator_cog.flows import conformance
 
 log = logger_mod.get_logger()
 
@@ -70,6 +75,67 @@ DEADLINE_MARGIN_SECONDS = 30
 #: from the zip, so importing it fails the worker at start. A test pins the
 #: two together, so a change upstream fails CI rather than drifting.
 REQUEST_HEADROOM_SECONDS: float = 60.0
+
+
+#: Whether this container has logged its effective settings.
+_settings_logged = False
+
+
+def effective_settings() -> dict[str, Any]:
+    """Each setting this cog reads, as resolved with its default applied.
+
+    Secrets are included so the report says whether each is set; the shared
+    helper shows a value only for a name on ``SETTINGS_ALLOWLIST``. The
+    names are the ones .env.example lists.
+    """
+
+    def env(name: str, default: str | None = None) -> str | None:
+        return os.environ.get(name, default)
+
+    return {
+        "ENVIRONMENT": current_environment().value,
+        "ANTHROPIC_API_KEY": env("ANTHROPIC_API_KEY"),
+        "ANTHROPIC_MODEL": env("ANTHROPIC_MODEL", conformance.ANTHROPIC_MODEL_DEFAULT),
+        "GITHUB_TOKEN": env("GITHUB_TOKEN"),
+        # Resolved once, when the module loads.
+        "ECOSYSTEM_STANDARDS_CATALOG_URL": conformance._STANDARDS_CATALOG_URL,
+        "EVALUATOR_CLONE_TIMEOUT_SECONDS": env(
+            "EVALUATOR_CLONE_TIMEOUT_SECONDS",
+            conformance.CLONE_TIMEOUT_SECONDS_DEFAULT,
+        ),
+        "EVALUATOR_GIT_TIMEOUT_SECONDS": env(
+            "EVALUATOR_GIT_TIMEOUT_SECONDS", GIT_TIMEOUT_SECONDS_DEFAULT
+        ),
+        "EVALUATOR_HTTP_TIMEOUT_SECONDS": env(
+            "EVALUATOR_HTTP_TIMEOUT_SECONDS",
+            conformance.HTTP_TIMEOUT_SECONDS_DEFAULT,
+        ),
+        "EVALUATOR_LLM_TIMEOUT_SECONDS": env(
+            "EVALUATOR_LLM_TIMEOUT_SECONDS", LLM_TIMEOUT_SECONDS_DEFAULT
+        ),
+        "KAIANO_API_BASE_URL": env("KAIANO_API_BASE_URL"),
+        "KAIANO_API_BASE_URL_DEV": env("KAIANO_API_BASE_URL_DEV"),
+        "EVALUATOR_COG_API_KEY": env("EVALUATOR_COG_API_KEY"),
+        "SENTRY_DSN_COGS": env("SENTRY_DSN_COGS"),
+        # The shared logger's default level.
+        "LOGGING_LEVEL": env("LOGGING_LEVEL", "INFO"),
+    }
+
+
+def _log_settings_once() -> None:
+    """Log the effective settings on a container's first invocation only.
+
+    Not at import: the settings reach the environment from Parameter Store
+    in the handler, so only after the first load do they show as set.
+    """
+    global _settings_logged
+    if _settings_logged:
+        return
+    _settings_logged = True
+    try:
+        log_settings(effective_settings())
+    except Exception:  # noqa: BLE001 — the report is not the job
+        log.exception("worker: could not log the effective settings")
 
 
 def _mode_label(body: str) -> str:
@@ -117,6 +183,9 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 — nothing can run without its settings
         log.exception("worker: could not refresh settings from SSM")
         return all_failed(event)
+    # Once per cold start: one line per setting, a value only for names in
+    # SETTINGS_ALLOWLIST.
+    _log_settings_once()
 
     def handle(record: dict[str, Any]) -> None:
         body = record.get("body") or ""

@@ -60,8 +60,19 @@ def _finding(
     dimension: str,
     finding: str,
     suggestion: str = "",
+    *,
+    file: str | Path | None = None,
+    route: str | None = None,
 ) -> Finding:
-    return {
+    """Build a finding dict.
+
+    ``file`` (repo-relative) and ``route`` (the effective mounted path the
+    check resolved) locate the finding. They are what an evaluator.yaml
+    exemption's ``paths:`` and ``routes:`` match against, so a check that
+    reports per file or per route should pass them; a finding without
+    them is never covered by a narrowed exemption.
+    """
+    out: Finding = {
         "rule_id": rule_id,
         "violation_id": rule_id or None,
         "severity": severity,
@@ -69,6 +80,11 @@ def _finding(
         "finding": finding,
         "suggestion": suggestion,
     }
+    if file is not None and str(file):
+        out["file"] = Path(file).as_posix()
+    if route:
+        out["route"] = route
+    return out
 
 
 def _dict_key_constant_ids(tree: ast.AST) -> set[int]:

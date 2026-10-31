@@ -12,6 +12,9 @@ from evaluator_cog.engine.deterministic._shared import (
     _finding,
 )
 
+#: EVALUATOR_GIT_TIMEOUT_SECONDS when unset: seconds one git command may take.
+GIT_TIMEOUT_SECONDS_DEFAULT = "10"
+
 
 def check_releaserc(repo_path: Path) -> list[Finding]:
     """VER-003: semantic-release on all repos."""
@@ -122,7 +125,9 @@ def _git_log_lines(repo_path: Path, args: list[str]) -> list[str]:
     if not (repo_path / ".git").is_dir():
         return []
     try:
-        timeout = float(os.environ.get("EVALUATOR_GIT_TIMEOUT_SECONDS", "10"))
+        timeout = float(
+            os.environ.get("EVALUATOR_GIT_TIMEOUT_SECONDS", GIT_TIMEOUT_SECONDS_DEFAULT)
+        )
         result = subprocess.run(
             ["git", "-C", str(repo_path), "log", *args],
             capture_output=True,
@@ -221,7 +226,11 @@ def check_breaking_change_footer(repo_path: Path) -> list[Finding]:
             ["git", "-C", str(repo_path), "tag", "--list"],
             capture_output=True,
             text=True,
-            timeout=float(os.environ.get("EVALUATOR_GIT_TIMEOUT_SECONDS", "10")),
+            timeout=float(
+                os.environ.get(
+                    "EVALUATOR_GIT_TIMEOUT_SECONDS", GIT_TIMEOUT_SECONDS_DEFAULT
+                )
+            ),
             check=False,
         )
     except (subprocess.SubprocessError, OSError):
