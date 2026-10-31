@@ -1,3 +1,11 @@
+## [3.62.4](https://github.com/mini-app-polis/evaluator-cog/compare/v3.62.3...v3.62.4) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 7.7.0 ([d64d635](https://github.com/mini-app-polis/evaluator-cog/commit/d64d6353623e5bef9066a40a9c8883ca49e98d6b))
+* **deps:** patch vulnerable dependencies (pyasn1) ([8b5d995](https://github.com/mini-app-polis/evaluator-cog/commit/8b5d995bfa4c9e863bf5b7070d342f2f5dd85177))
+
 ## [3.62.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.62.2...v3.62.3) (2026-10-30)
 
 
