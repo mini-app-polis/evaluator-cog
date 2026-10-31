@@ -4,7 +4,8 @@ CD-020 polices the seam between what a repository *declares* and what
 actually ships: a ``uv.lock`` that records the project's own version goes
 stale the moment a release bumps it, and every subsequent install resolves
 against a graph nobody released. The file-sourced version scheme (PY-017)
-keeps the version out of the lock, so a release never touches it.
+keeps the version out of the lock, so a release never touches it. A
+TypeScript repo's CI installs exactly what its Node lockfile resolves.
 
 CD-016 (serve() wrapped in serve_with_retry) lived here until Prefect was
 retired (ecosystem-standards ADR-0009); pipeline cogs have no startup
@@ -29,6 +30,7 @@ from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
 )
+from evaluator_cog.engine.deterministic._workflows import load_workflows
 
 _DIMENSION = "cd_readiness"
 
@@ -451,6 +453,63 @@ def _check_source_refs_are_tags(sources: dict[str, Any]) -> list[Finding]:
     return findings
 
 
+# A command boundary inside a run: script.
+_COMMAND_SPLIT = re.compile(r"\n|&&|\|\||;")
+_PNPM_INSTALL = re.compile(r"(?<![\w-])pnpm\s+(?:install|i)(?![\w-])(?P<args>.*)")
+_NPM_INSTALL = re.compile(r"(?<![\w-])npm\s+(?:install|i)(?![\w-])(?P<args>.*)")
+
+
+def _check_node_installs_are_frozen(repo_path: Path) -> list[Finding]:
+    """CD-020 (5): CI installs exactly what the Node lockfile resolves.
+
+    Jobs that delegate with ``uses:`` carry no steps here; theirs belong to
+    the workflow they call.
+    """
+    pnpm = (repo_path / "pnpm-lock.yaml").is_file()
+    npm = (repo_path / "package-lock.json").is_file()
+    if not (pnpm or npm):
+        return []
+    findings: list[Finding] = []
+    for workflow in load_workflows(repo_path):
+        for step in workflow.steps:
+            for command in _COMMAND_SPLIT.split(step.run):
+                command = command.split("#", 1)[0]
+                m = _PNPM_INSTALL.search(command) if pnpm else None
+                if m and "--frozen-lockfile" not in m.group("args"):
+                    findings.append(
+                        _finding(
+                            "CD-020",
+                            "ERROR",
+                            _DIMENSION,
+                            f"{step.location}: `{command.strip()}` re-resolves "
+                            "instead of installing pnpm-lock.yaml.",
+                            "Use `pnpm install --frozen-lockfile` so CI installs "
+                            "exactly what the lock resolves.",
+                            file=workflow.rel,
+                        )
+                    )
+                    break
+                if npm and (m := _NPM_INSTALL.search(command)):
+                    names_package = any(
+                        not arg.startswith("-") for arg in m.group("args").split()
+                    )
+                    if not names_package:
+                        findings.append(
+                            _finding(
+                                "CD-020",
+                                "ERROR",
+                                _DIMENSION,
+                                f"{step.location}: `{command.strip()}` re-resolves "
+                                "instead of installing package-lock.json.",
+                                "Use `npm ci` so CI installs exactly what the lock "
+                                "resolves.",
+                                file=workflow.rel,
+                            )
+                        )
+                        break
+    return findings
+
+
 def check_cd_020(repo_path: Path) -> list[Finding]:
     """CD-020: the lockfile is released with the version it locks.
 
@@ -474,14 +533,16 @@ def check_cd_020(repo_path: Path) -> list[Finding]:
         installs it. A bare name is correct and is not flagged.
     (4) Every git source must pin a version tag rather than a branch or a
         raw commit SHA.
+    (5) TypeScript: with ``pnpm-lock.yaml``, every ``pnpm install`` run step
+        in a workflow passes ``--frozen-lockfile``; with
+        ``package-lock.json``, the project is installed with ``npm ci``.
 
-    A repository with no ``uv.lock`` is exempt outright: it is not
+    Clauses (1)-(4) skip a repository with no ``uv.lock``: it is not
     uv-managed, there is no lockfile to drift, and PY-001 is the rule that
-    speaks to that instead. Returning ``[]`` here keeps this ERROR off
-    repositories the rule was never written about.
+    speaks to that instead. Clause (5) skips one with neither Node lockfile.
     """
     CHECK_ID = "CD-020"
-    findings: list[Finding] = []
+    findings: list[Finding] = _check_node_installs_are_frozen(repo_path)
 
     if not (repo_path / "uv.lock").is_file():
         return findings

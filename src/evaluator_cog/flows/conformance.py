@@ -90,6 +90,12 @@ _STANDARDS_CATALOG_URL = os.environ.get(
     "https://api.kaianolevine.com/v1/standards/catalog",
 )
 
+#: Defaults for the settings read where they are used, each an environment
+#: variable's value as a string.
+ANTHROPIC_MODEL_DEFAULT = "claude-sonnet-5-5"
+HTTP_TIMEOUT_SECONDS_DEFAULT = "20"
+CLONE_TIMEOUT_SECONDS_DEFAULT = "60"
+
 #: Identifies this client to the API's edge. Cloudflare's browser integrity
 #: check rejects unidentified automation, and the path that fetches every
 #: rule must not be where that is discovered.
@@ -386,7 +392,9 @@ def _assert_findings_were_delivered(*, ctx: RunContext) -> None:
 
 def _fetch_yaml(url: str) -> dict:
     """Fetch and parse a YAML file from a URL. Never raises — returns {} on failure."""
-    timeout = float(os.environ.get("EVALUATOR_HTTP_TIMEOUT_SECONDS", "20"))
+    timeout = float(
+        os.environ.get("EVALUATOR_HTTP_TIMEOUT_SECONDS", HTTP_TIMEOUT_SECONDS_DEFAULT)
+    )
     try:
         r = _get_with_retry(url, timeout=timeout)
         r.raise_for_status()
@@ -412,7 +420,9 @@ def _fetch_catalog(*, ctx: RunContext) -> dict:
     """
     if ctx.catalog is not None:
         return ctx.catalog
-    timeout = float(os.environ.get("EVALUATOR_HTTP_TIMEOUT_SECONDS", "20"))
+    timeout = float(
+        os.environ.get("EVALUATOR_HTTP_TIMEOUT_SECONDS", HTTP_TIMEOUT_SECONDS_DEFAULT)
+    )
     try:
         response = _get_with_retry(
             _STANDARDS_CATALOG_URL,
@@ -458,7 +468,8 @@ def _get_standards_version(*, ctx: RunContext) -> str:
 
 
 def _fetch_catalog_schema(*, ctx: RunContext) -> dict:
-    """Traits, repo types and statuses, in the shapes the dispatcher expects.
+    """Traits, repo types, statuses and the retired registry, in the shapes
+    the dispatcher and checks expect.
 
     The catalog carries these already resolved; this only reshapes them.
     """
@@ -497,7 +508,25 @@ def _fetch_catalog_schema(*, ctx: RunContext) -> dict:
         {str(k) for k in raw_statuses} if isinstance(raw_statuses, dict) else set()
     )
 
-    return {"traits": traits, "repo_types": repo_types, "statuses": statuses}
+    # The retired registry: the only list of terms DOC-014, DOC-016 and
+    # DOC-017 match.
+    raw_retired = catalog.get("retired") or {}
+    retired: dict[str, dict] = (
+        {
+            str(name): dict(body)
+            for name, body in raw_retired.items()
+            if str(name).strip() and isinstance(body, dict)
+        }
+        if isinstance(raw_retired, dict)
+        else {}
+    )
+
+    return {
+        "traits": traits,
+        "repo_types": repo_types,
+        "statuses": statuses,
+        "retired": retired,
+    }
 
 
 def _fetch_full_rule_catalog(*, ctx: RunContext) -> dict[str, dict]:
@@ -815,7 +844,11 @@ def _download_repo(
     dest = Path(tmp_dir) / repo_id
 
     try:
-        timeout = float(os.environ.get("EVALUATOR_CLONE_TIMEOUT_SECONDS", "60"))
+        timeout = float(
+            os.environ.get(
+                "EVALUATOR_CLONE_TIMEOUT_SECONDS", CLONE_TIMEOUT_SECONDS_DEFAULT
+            )
+        )
         content = _fetch_zipball(url, headers, timeout, f"{org}/{repo_id}", ctx=ctx)
         if content is None:
             return None
@@ -961,7 +994,7 @@ def run_conformance_check(
                 if evaluator_config is not None
                 else None
             )
-            model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+            model = os.environ.get("ANTHROPIC_MODEL", ANTHROPIC_MODEL_DEFAULT)
 
             def _ask(only_rule_ids: list[str] | None) -> list[dict[str, Any]]:
                 prompt = build_conformance_prompt(

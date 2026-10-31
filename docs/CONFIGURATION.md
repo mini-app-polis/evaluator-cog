@@ -15,6 +15,12 @@ a cold start: `SENTRY_DSN_COGS` is read once per cold start, in
 `adapters/lambda_worker`, and `ECOSYSTEM_STANDARDS_CATALOG_URL` when its
 module loads.
 
+On a container's first invocation, once the settings are loaded, the
+worker logs each setting it reads with its default applied, one line per
+name. A name listed in `SETTINGS_ALLOWLIST` (comma-separated, read by the
+shared library) shows its value as `NAME=value (set|default)`; every other
+name shows only `NAME (set|unset)`, so a secret's value is never logged.
+
 Locally, run under `doppler run` with Doppler's `dev` config; nothing reads
 a `.env` file. `uv run check-doppler-keys` checks that dev holds every
 required name.

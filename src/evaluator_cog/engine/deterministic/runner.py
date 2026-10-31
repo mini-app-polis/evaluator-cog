@@ -11,6 +11,7 @@ from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
 )
+from evaluator_cog.engine.deterministic._typescript import is_typescript_repo
 from evaluator_cog.engine.deterministic.api import (
     check_async_sqlalchemy,
     check_cors_config,
@@ -52,11 +53,13 @@ from evaluator_cog.engine.deterministic.containers import (
 from evaluator_cog.engine.deterministic.delivery import (
     check_canonical_ci_job_names,
     check_cd_010_infrastructure,
+    check_cd_010_react_app,
     check_cd_031,
     check_ci,
     check_coverage_floor,
     check_gha_not_trigger_relay,
     check_migration_in_ci,
+    check_no_console_calls,
     check_no_hardcoded_secrets,
     check_no_hardcoded_urls,
     check_no_print_statements,
@@ -73,6 +76,7 @@ from evaluator_cog.engine.deterministic.dependencies import check_xstack_007
 from evaluator_cog.engine.deterministic.docs import (
     check_adrs_present,
     check_changelog,
+    check_doc_014,
     check_doc_016,
     check_doc_017,
     check_env_example,
@@ -305,6 +309,13 @@ def run_all_checks(
         }.get(dod_type or "", "")
     )
 
+    is_react_app = (
+        evaluator_config is not None and evaluator_config.is_react_app
+    ) or dod_type == "new_react_app"
+    # A repo with package.json and no pyproject.toml: the logging rules'
+    # TypeScript branches read it through its own logger module.
+    is_ts_repo = is_typescript_repo(repo_path)
+
     checked_rule_ids: set[str] = set()
 
     def _mark_checked(*rule_ids: str) -> None:
@@ -354,6 +365,7 @@ def run_all_checks(
             is_deferred = False
             deferral_expired_on = None
             rule_status = ""
+            narrowed_result = None
             # No catalog on the legacy path, so nothing to backfill from —
             # the check's own dimension literal stands.
             rule_meta: dict = {}
@@ -380,6 +392,9 @@ def run_all_checks(
             # missed rather than simply reappearing at full severity
             # with no account of why.
             deferral_expired_on = result.deferral_expired_on
+            # Exemptions naming `paths`/`routes`: the rule runs, and only
+            # the findings they cover are dropped to INFO.
+            narrowed_result = result if result.narrowed_exemptions else None
 
         try:
             _started = time.monotonic()
@@ -388,7 +403,22 @@ def run_all_checks(
             if progress is not None and _elapsed >= SLOW_CHECK_SECONDS:
                 progress(f"{rule_id} took {_elapsed:.1f}s")
             for f in new_findings:
-                if is_deferred:
+                covering = (
+                    narrowed_result.covering_exemption(f)
+                    if narrowed_result is not None
+                    else None
+                )
+                if covering is not None:
+                    f["severity"] = "INFO"
+                    f["exempted"] = True
+                    f["exemption_reason"] = covering.reason
+                    note = (
+                        f"exempted in evaluator.yaml: {covering.reason}"
+                        if covering.reason
+                        else "exempted in evaluator.yaml"
+                    )
+                    f["finding"] = f"{f.get('finding', '')} ({note})".strip()
+                elif is_deferred:
                     f["severity"] = "INFO"
                     f["deferred"] = True
                     if disposition_info_reason and "deferred_reason" not in f:
@@ -398,7 +428,7 @@ def run_all_checks(
                     f["downgraded"] = True
                     if disposition_info_reason and "downgrade_reason" not in f:
                         f["downgrade_reason"] = disposition_info_reason
-                if deferral_expired_on is not None:
+                if deferral_expired_on is not None and covering is None:
                     f["deferral_expired"] = True
                     f["deferral_expired_on"] = deferral_expired_on.isoformat()
                     f["finding"] = (
@@ -449,8 +479,19 @@ def run_all_checks(
     _run(check_split_package_identity, "DOC-009")
     # DOC-016 / DOC-017 — code that names only what is its own, and says
     # what it does now. Every repo type; each reads src/ and tests/ only.
-    _run(lambda p: check_doc_016(p, repo_type=_repo_type_for_checks), "DOC-016")
-    _run(check_doc_017, "DOC-017")
+    # They and DOC-014 read the catalog's retired registry.
+    _schema = (
+        evaluator_config.catalog_schema
+        if evaluator_config is not None
+        else catalog_schema
+    )
+    _retired = (_schema or {}).get("retired") or {}
+    _run(
+        lambda p: check_doc_016(p, repo_type=_repo_type_for_checks, retired=_retired),
+        "DOC-016",
+    )
+    _run(lambda p: check_doc_017(p, retired=_retired), "DOC-017")
+    _run(lambda p: check_doc_014(p, retired=_retired), "DOC-014")
 
     if not is_library:
         _run(check_env_example, "DOC-004")
@@ -476,6 +517,8 @@ def run_all_checks(
         _run(check_naming_conventions, "PY-011")
         _run(check_dedup_handling_present, "PY-013")
         _run(check_finally_cleanup, "PY-014")
+    elif is_ts_repo:
+        _run(check_no_console_calls, "CD-003")
 
     if (is_python or is_fastapi) and not is_library and not is_frontend:
         _run(check_common_python_utils_dep, "PY-006")
@@ -708,8 +751,8 @@ def run_all_checks(
             _run(check_owner_id_column, "API-006")
             _run(check_auth_header_parity, "AUTH-002")
 
-    # CD-008 logger misuse — applies broadly; language-gated to Python.
-    if language == "python":
+    # CD-008 logger misuse — Python, or a TypeScript repo's logger module.
+    if language == "python" or is_ts_repo:
         _run(check_logger_misuse, "CD-008")
 
     # CD-010 three-layer observability — applies to all runtime services.
@@ -728,6 +771,8 @@ def run_all_checks(
     # alarm — is declared in mini-app-polis/infra and checked there.
     if is_infrastructure:
         _run(check_cd_010_infrastructure, "CD-010")
+    if is_react_app:
+        _run(check_cd_010_react_app, "CD-010")
     # CD-036 is CD-010's Layer 4 for APIs, checked on its own until a
     # second type has metrics work to do. Not gated on language: an API
     # not yet in Python gets the finding, which its deferral suppresses.
@@ -743,9 +788,15 @@ def run_all_checks(
     if _is_static:
         _run(check_cloudflare_pages_deploy, "CD-014")
 
-    # DOC-006 / DOC-007 — Python docstring / Pydantic descriptions.
+    # DOC-006 / DOC-007 — docstrings (Python, or doc comments on a
+    # TypeScript module's exports) / Pydantic descriptions.
     if language == "python":
         _run(check_public_docstrings, "DOC-006")
+    elif language == "typescript":
+        _run(
+            lambda p: check_public_docstrings(p, language="typescript"),
+            "DOC-006",
+        )
     if language == "python" and (is_pipeline_cog or is_api_service):
         _run(check_pydantic_field_descriptions, "DOC-007")
 
@@ -833,12 +884,7 @@ def run_all_checks(
     def _test_013(p: Path) -> list[Finding]:
         return check_hardcoded_time_values(p, language=language)
 
-    if (
-        is_pipeline_cog
-        or is_api_service
-        or (evaluator_config is not None and evaluator_config.is_react_app)
-        or dod_type == "new_react_app"
-    ):
+    if is_pipeline_cog or is_api_service:
         _run(_test_013, "TEST-013")
 
     # XSTACK-004 — env var prefix. Frontend + api-service.

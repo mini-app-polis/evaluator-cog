@@ -111,6 +111,44 @@ def check_logger_misuse(repo_path: Path) -> list[Finding]:
                         "indicate unexpected failures.",
                     )
                 )
+    findings.extend(_logger_misuse_typescript(repo_path, noise_re))
+    return findings
+
+
+def _logger_misuse_typescript(
+    repo_path: Path, noise_re: re.Pattern[str]
+) -> list[Finding]:
+    """CD-008, TypeScript: the same over calls to the repo's logger module.
+
+    The patterns are matched against the strings a ``logger.error`` call
+    passes — its ``event`` name with underscores read as spaces, and any
+    message. A repo with no logger module has no subject here.
+    """
+    from evaluator_cog.engine.deterministic import _typescript as ts
+
+    if ts.logger_module(repo_path) is None:
+        return []
+    findings: list[Finding] = []
+    for path in ts.source_files(repo_path):
+        text = ts.read(path)
+        rel = path.relative_to(repo_path)
+        for m in ts.LOGGER_CALL.finditer(text):
+            if m.group(1) != "error":
+                continue
+            for value in ts.call_strings(text, m.end() - 1):
+                if noise_re.search(value.replace("_", " ")):
+                    findings.append(
+                        _finding(
+                            "CD-008",
+                            "WARN",
+                            "cd_readiness",
+                            f"{rel}: logger.error used for expected outcome: {value!r}.",
+                            "Downgrade to logger.warn or logger.info — errors should "
+                            "indicate unexpected failures.",
+                            file=rel,
+                        )
+                    )
+                    break
     return findings
 
 

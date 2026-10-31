@@ -18,6 +18,7 @@ evaluator-cog/
           _routes.py            # AST route enumeration for the identity rules
           _terraform.py         # reads the Terraform facts the runtime rules need
           _workflows.py         # shared GitHub Actions workflow parser
+          _typescript.py        # TypeScript source files and the logger module the logging rules read
           runner.py             # run_all_checks dispatcher + dedup
           docs.py               # README / CHANGELOG / docstring checks
           python.py             # pyproject / src-layout / naming

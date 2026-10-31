@@ -397,6 +397,12 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
         "/version",
     )
 
+    def _is_exempt(route: str) -> bool:
+        # The root carries no resource — only a redirect or a description
+        # of the service — and cannot move under /v1/ and stay the root.
+        # Matched exactly: every route starts with "/".
+        return route == "/" or any(route.startswith(p) for p in exempt_paths)
+
     if language == "python":
         import ast
 
@@ -525,7 +531,7 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
                         _join_paths(include_prefix, local_prefix), route
                     )
 
-                    if any(effective_route.startswith(p) for p in exempt_paths):
+                    if _is_exempt(effective_route):
                         continue
                     if not effective_route.startswith("/v1/"):
                         findings.append(
@@ -535,6 +541,8 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
                                 "structural_conformance",
                                 f"{rel}::{node.name}: effective route {effective_route!r} missing /v1/ prefix.",
                                 "Mount routes under /v1/ to support versioning.",
+                                file=rel,
+                                route=effective_route,
                             )
                         )
     else:
@@ -549,7 +557,7 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
             rel = ts_file.relative_to(repo_path)
             for m in route_re.finditer(text):
                 route = m.group(1)
-                if any(route.startswith(p) for p in exempt_paths):
+                if _is_exempt(route):
                     continue
                 if not route.startswith("/v1/"):
                     findings.append(
@@ -559,6 +567,8 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
                             "structural_conformance",
                             f"{rel}: route {route!r} missing /v1/ prefix.",
                             "Mount routes under /v1/ to support versioning.",
+                            file=rel,
+                            route=route,
                         )
                     )
     return findings

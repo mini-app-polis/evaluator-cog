@@ -351,6 +351,48 @@ def _start_command_scripts(repo_path: Path) -> list[Path]:
     return found
 
 
+_NUMBERED_SQL_MIGRATION = re.compile(r"^\d{3,}_.+\.sql$")
+_NAMES_MIGRATIONS_DIR = re.compile(r"\bmigrations\b")
+
+
+def runs_raw_sql_migrations_before_start(repo_path: Path) -> bool:
+    """API-011's raw-SQL runner: true when all three hold.
+
+    (a) ``migrations/`` holds a numbered SQL file;
+    (b) a start command, read from the same sources OPS-002 reads, runs a
+        script in the repo chained with ``&&`` before a further command —
+        the one that starts the server, which so runs only if the script
+        succeeds;
+    (c) that script names the ``migrations`` directory.
+    """
+    migrations = repo_path / "migrations"
+    if not migrations.is_dir() or not any(
+        p.is_file() and _NUMBERED_SQL_MIGRATION.match(p.name)
+        for p in migrations.iterdir()
+    ):
+        return False
+
+    commands = _dockerfile_start_commands(repo_path)
+    descriptor = _descriptor_start_command(repo_path)
+    if descriptor:
+        commands.append(descriptor)
+    commands.extend(_iac_start_commands(repo_path))
+
+    for command in commands:
+        segments = [s.strip() for s in command.split("&&")]
+        for i, segment in enumerate(segments[:-1]):
+            if not any(segments[i + 1 :]):
+                break
+            for script in _scripts_named_by(repo_path, segment):
+                try:
+                    text = script.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if _NAMES_MIGRATIONS_DIR.search(text):
+                    return True
+    return False
+
+
 def check_ops_002(repo_path: Path) -> list[Finding]:
     """OPS-002: Migrations run under a database role without DDL on the runtime path.
 
