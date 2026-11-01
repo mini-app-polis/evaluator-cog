@@ -1,3 +1,10 @@
+## [3.64.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.64.0...v3.64.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* drop exempted findings, stop requiring retired common-typescript-utils, and clear DOC-006/014/017 findings ([d9e62da](https://github.com/mini-app-polis/evaluator-cog/commit/d9e62da1f972db246f108f598a20b3353000ab28))
+
 # [3.64.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.63.0...v3.64.0) (2026-11-01)
 
 
