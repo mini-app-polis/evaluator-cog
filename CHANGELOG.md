@@ -1,3 +1,16 @@
+# [3.64.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.63.0...v3.64.0) (2026-11-01)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 7.8.1 ([430a322](https://github.com/mini-app-polis/evaluator-cog/commit/430a322e9ed7032bc05a8354e5056873ad83a023))
+* **deterministic:** resolve API-004 router prefixes per module and locate API-006 findings ([add2a52](https://github.com/mini-app-polis/evaluator-cog/commit/add2a52697cc982a3279c112671ea7450d9139e3))
+
+
+### Features
+
+* **deterministic:** flag FE-005 form components without useForm ([57b17aa](https://github.com/mini-app-polis/evaluator-cog/commit/57b17aa03097109bbe97d57ac09a0a81109b85b4))
+
 # [3.63.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.62.4...v3.63.0) (2026-10-31)
 
 
