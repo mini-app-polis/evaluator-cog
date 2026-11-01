@@ -1,12 +1,18 @@
 """Exemptions that name the paths or routes they cover, API-004's root and
-API-011's raw-SQL runner."""
+per-module router prefixes, API-006's models file, and API-011's raw-SQL
+runner."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from evaluator_cog.engine.deterministic import run_all_checks
-from evaluator_cog.engine.deterministic.api import check_v1_route_prefix
+from evaluator_cog.engine.deterministic.api import (
+    check_owner_id_column,
+    check_v1_route_prefix,
+)
 from evaluator_cog.engine.deterministic.delivery import check_migration_in_ci
 from evaluator_cog.engine.evaluator_config import (
     EvaluatorConfig,
@@ -16,6 +22,7 @@ from evaluator_cog.engine.evaluator_config import (
 
 _CATALOG = {
     "API-004": {"applies_to": ["api-service"], "modifies": [], "status": "requirement"},
+    "API-006": {"applies_to": ["api-service"], "modifies": [], "status": "requirement"},
 }
 
 
@@ -194,6 +201,182 @@ def test_api004_never_flags_the_root(tmp_path: Path) -> None:
     py = check_v1_route_prefix(tmp_path, language="python")
     assert [f["route"] for f in py] == ["/other"]
     assert check_v1_route_prefix(tmp_path, language="typescript") == []
+
+
+# ── API-004: router prefixes resolve per module ─────────────────────────────
+
+# api-deejaytools' shape: every router module names its router `router`, the
+# substantive ones carry an APIRouter(prefix="/v1/..."), and main.py mounts
+# them all with a bare include_router — so one unprefixed module's routes
+# must not borrow another module's prefix.
+_PER_MODULE_ROUTERS = {
+    "src/app/__init__.py": "",
+    "src/app/routers/__init__.py": "",
+    "src/app/routers/events.py": (
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/v1/events", tags=["events"])\n\n'
+        '@router.get("/{event_id}")\ndef get_event(event_id: str):\n    return {}\n'
+    ),
+    "src/app/routers/internal.py": (
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(tags=["internal"])\n\n'
+        '@router.get("/internal/tick")\ndef tick():\n    return {}\n'
+    ),
+    "src/app/main.py": (
+        "from fastapi import FastAPI\n"
+        "from .routers import events, internal\n\n"
+        "app = FastAPI()\n"
+        "routers = (internal.router, events.router)\n"
+        "for router in routers:\n"
+        "    app.include_router(router)\n"
+    ),
+}
+
+
+def test_api004_router_prefix_is_not_borrowed_across_modules(tmp_path: Path) -> None:
+    _write(tmp_path, _PER_MODULE_ROUTERS)
+    findings = check_v1_route_prefix(tmp_path, language="python")
+    assert [(f["route"], f["file"]) for f in findings] == [
+        ("/internal/tick", "src/app/routers/internal.py")
+    ]
+
+
+def test_api004_unprefixed_module_route_is_covered_by_route_exemption(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path, _PER_MODULE_ROUTERS)
+    cfg = _cfg(
+        narrowed_exemptions={
+            "API-004": [
+                NarrowedExemption(reason="stable tick", routes=("/internal/tick",))
+            ]
+        }
+    )
+    result = run_all_checks(tmp_path, language="python", evaluator_config=cfg)
+    api004 = [f for f in result.findings if f.get("rule_id") == "API-004"]
+    assert [(f["route"], f["severity"], f.get("exempted")) for f in api004] == [
+        ("/internal/tick", "INFO", True)
+    ]
+
+
+# api-kaianolevine-com's shape: unprefixed `router`s, each mounted under /v1
+# by include_router(<module>.router, prefix="/v1").
+@pytest.mark.parametrize(
+    "import_line, sets_ref",
+    [
+        ("from .routers import sets, tasks", "sets.router"),
+        ("from app.routers import sets, tasks", "sets.router"),
+        ("import app.routers.sets as sets", "sets.router"),
+        ("from .routers.sets import router as sets_router", "sets_router"),
+    ],
+)
+def test_api004_include_prefix_applies_only_to_the_included_module(
+    tmp_path: Path, import_line: str, sets_ref: str
+) -> None:
+    route = '@router.get("/{name}")\ndef handler(name: str):\n    return {}\n'
+    _write(
+        tmp_path,
+        {
+            "src/app/__init__.py": "",
+            "src/app/routers/__init__.py": "",
+            "src/app/routers/sets.py": (
+                "from fastapi import APIRouter\nrouter = APIRouter()\n\n"
+                + route.replace("{name}", "sets")
+            ),
+            "src/app/routers/tasks.py": (
+                "from fastapi import APIRouter\nrouter = APIRouter()\n\n"
+                + route.replace("{name}", "tasks")
+            ),
+            "src/app/main.py": (
+                f"from fastapi import FastAPI\n{import_line}\n\n"
+                "app = FastAPI()\n"
+                f'app.include_router({sets_ref}, prefix="/v1")\n'
+            ),
+        },
+    )
+    findings = check_v1_route_prefix(tmp_path, language="python")
+    assert [f["route"] for f in findings] == ["/tasks"]
+
+
+def test_api004_include_prefix_for_a_local_router(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        {
+            "src/app/main.py": (
+                "from fastapi import APIRouter, FastAPI\n"
+                "app = FastAPI()\nrouter = APIRouter()\n\n"
+                '@router.get("/things")\ndef things():\n    return {}\n\n'
+                'app.include_router(router, prefix="/v1")\n'
+            ),
+        },
+    )
+    assert check_v1_route_prefix(tmp_path, language="python") == []
+
+
+# ── API-006: findings carry the models file ─────────────────────────────────
+
+_MODELS = """\
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Event(Base):
+    __tablename__ = "events"
+    id: Mapped[str] = mapped_column(primary_key=True)
+
+
+class Run(Base):
+    __tablename__ = "runs"
+    id: Mapped[str] = mapped_column(primary_key=True)
+
+
+class Note(Base):
+    __tablename__ = "notes"
+    id: Mapped[str] = mapped_column(primary_key=True)
+    owner_id: Mapped[str] = mapped_column()
+"""
+
+
+def test_api006_reports_one_finding_per_model_with_its_file(tmp_path: Path) -> None:
+    _write(tmp_path, {"src/app/models.py": _MODELS})
+    findings = check_owner_id_column(tmp_path)
+    assert [(f["finding"].split(":")[2], f["file"]) for f in findings] == [
+        ("Event", "src/app/models.py"),
+        ("Run", "src/app/models.py"),
+    ]
+
+
+def test_api006_path_exemption_covers_the_models_file(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        {
+            "src/app/models.py": _MODELS,
+            "src/app/other_models.py": (
+                "from .models import Base\n\n\n"
+                "class Tally(Base):\n"
+                '    __tablename__ = "tallies"\n'
+            ),
+        },
+    )
+    cfg = _cfg(
+        narrowed_exemptions={
+            "API-006": [
+                NarrowedExemption(reason="shared data", paths=("src/app/models.py",))
+            ]
+        }
+    )
+    result = run_all_checks(tmp_path, language="python", evaluator_config=cfg)
+    api006 = [f for f in result.findings if f.get("rule_id") == "API-006"]
+    by_file: dict[str, set[str]] = {}
+    for f in api006:
+        by_file.setdefault(f["file"], set()).add(f["severity"])
+    assert by_file == {
+        "src/app/models.py": {"INFO"},
+        "src/app/other_models.py": {"WARN"},
+    }
 
 
 # ── API-011: the raw-SQL runner ─────────────────────────────────────────────

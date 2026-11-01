@@ -443,9 +443,59 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
                 return left_norm
             return f"{left_norm}/{right_norm.lstrip('/')}"
 
+        # A router is identified by the module that defines it and its
+        # variable name there. Every router module may call its router
+        # ``router``; keyed by the bare name, one module's prefix would
+        # be taken for another's.
+        RouterKey = tuple[Path, str]
+
+        def _module_file(base: Path, dotted: str) -> Path | None:
+            """The source file of module ``dotted`` under ``base``, if any."""
+            if not dotted:
+                candidates = [base / "__init__.py"]
+            else:
+                target = base.joinpath(*dotted.split("."))
+                candidates = [target.with_suffix(".py"), target / "__init__.py"]
+            return next((c for c in candidates if c.is_file()), None)
+
+        def _imports(
+            py_file: Path, tree: ast.AST
+        ) -> tuple[dict[str, Path], dict[str, RouterKey]]:
+            """Local names this file binds to repo modules, and to a variable
+            of a repo module (``from .x import router as x_router``)."""
+            modules: dict[str, Path] = {}
+            names: dict[str, RouterKey] = {}
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.asname is None:
+                            continue
+                        mod = _module_file(src, alias.name)
+                        if mod is not None:
+                            modules[alias.asname] = mod
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level:
+                        base = py_file.parent
+                        for _ in range(node.level - 1):
+                            base = base.parent
+                    else:
+                        base = src
+                    dotted = node.module or ""
+                    for alias in node.names:
+                        local = alias.asname or alias.name
+                        sub = ".".join(x for x in (dotted, alias.name) if x)
+                        mod = _module_file(base, sub)
+                        if mod is not None:
+                            modules[local] = mod
+                            continue
+                        owner = _module_file(base, dotted)
+                        if owner is not None:
+                            names[local] = (owner, alias.name)
+            return modules, names
+
         py_files = list(src.rglob("*.py"))
-        local_prefixes: dict[str, str] = {}
-        include_prefixes: dict[str, str] = {}
+        local_prefixes: dict[RouterKey, str] = {}
+        include_prefixes: dict[RouterKey, str] = {}
 
         # Pass 1: collect APIRouter local prefixes and include_router mount prefixes.
         for py_file in py_files:
@@ -454,6 +504,7 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
                 tree = ast.parse(text)
             except Exception:
                 continue
+            module_aliases, name_aliases = _imports(py_file, tree)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
                     call = node.value
@@ -473,7 +524,7 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
                         continue
                     for target in node.targets:
                         if isinstance(target, ast.Name):
-                            local_prefixes[target.id] = prefix_val
+                            local_prefixes[(py_file, target.id)] = prefix_val
 
                 if isinstance(node, ast.Call):
                     if not (
@@ -483,9 +534,6 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
                         continue
                     if not node.args:
                         continue
-                    router_name = _router_var_name(node.args[0])
-                    if not router_name:
-                        continue
                     include_prefix: str | None = None
                     for kw in node.keywords:
                         if kw.arg == "prefix":
@@ -493,12 +541,28 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
                             break
                     if not include_prefix:
                         continue
-                    existing = include_prefixes.get(router_name)
+                    # Resolve the included router to the module defining it:
+                    # ``x.router`` through the import of ``x``, a bare name
+                    # through a ``from x import router`` or this file. An
+                    # include that cannot be resolved lends no prefix.
+                    arg = node.args[0]
+                    key: RouterKey | None = None
+                    if isinstance(arg, ast.Name):
+                        key = name_aliases.get(arg.id, (py_file, arg.id))
+                    elif isinstance(arg, ast.Attribute) and isinstance(
+                        arg.value, ast.Name
+                    ):
+                        mod = module_aliases.get(arg.value.id)
+                        if mod is not None:
+                            key = (mod, arg.attr)
+                    if key is None:
+                        continue
+                    existing = include_prefixes.get(key)
                     # Prefer a v1-bearing mount if multiple include_router calls exist.
                     if existing is None or (
                         "/v1" in include_prefix and "/v1" not in existing
                     ):
-                        include_prefixes[router_name] = include_prefix
+                        include_prefixes[key] = include_prefix
 
         # Pass 2: evaluate effective route path from include + local + decorator path.
         for py_file in py_files:
@@ -524,9 +588,9 @@ def check_v1_route_prefix(repo_path: Path, language: str = "python") -> list[Fin
                     route = _const_str(path_arg)
                     if route is None:
                         continue
-                    router_var = _router_var_name(dec.func.value)
-                    include_prefix = include_prefixes.get(router_var or "", "")
-                    local_prefix = local_prefixes.get(router_var or "", "")
+                    router_key = (py_file, _router_var_name(dec.func.value) or "")
+                    include_prefix = include_prefixes.get(router_key, "")
+                    local_prefix = local_prefixes.get(router_key, "")
                     effective_route = _join_paths(
                         _join_paths(include_prefix, local_prefix), route
                     )
@@ -647,6 +711,10 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
     Existing exemptions by class-name suffix (``_lookup``, ``_config``,
     ``_enum``) continue to apply. The SQLAlchemy declarative root
     (``Base``, ``DeclarativeBase``, ``Model``) is skipped.
+
+    One finding per model, each carrying its models file, so an
+    evaluator.yaml exemption naming ``paths:`` covers the models in
+    those files.
     """
     import ast
 
@@ -796,6 +864,7 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
                     "tables representing a relationship to a user. Suffix with "
                     "_lookup/_config/_enum for internal tables, or document in "
                     "evaluator.yaml.",
+                    file=rel,
                 )
             )
     return findings
