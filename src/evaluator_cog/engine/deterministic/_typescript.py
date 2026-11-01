@@ -79,6 +79,11 @@ def missing_event_fields(text: str) -> list[str]:
 
 
 def read(path: Path) -> str:
+    """The file's text, or "" when it cannot be read as UTF-8.
+
+    A check reading many files treats an unreadable one as empty rather
+    than failing the run over it.
+    """
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):

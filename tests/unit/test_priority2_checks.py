@@ -944,26 +944,44 @@ def test_api_008_accepts_depends(tmp_path: Path) -> None:
 
 
 def test_cd_010_typescript_accepts_sentry_node(tmp_path: Path) -> None:
-    """CD-010: TS service with @sentry/node + common-typescript-utils passes."""
+    """CD-010: TS service with @sentry/node and its own logger module passes."""
     from evaluator_cog.engine.deterministic import check_three_layer_observability
 
     src = tmp_path / "src"
     src.mkdir()
+    (src / "logger.ts").write_text("export const logger = console;\n")
     (src / "app.ts").write_text(
         'import * as Sentry from "@sentry/node";\n'
-        'import { createLogger } from "common-typescript-utils";\n'
+        'import { logger } from "./logger";\n'
         "Sentry.init({ dsn: process.env.SENTRY_DSN });\n"
-        'const logger = createLogger("app");\n'
     )
     (tmp_path / ".env.example").write_text("SENTRY_DSN=\n")
     (tmp_path / "package.json").write_text(
-        '{"dependencies": {"@sentry/node": "^10.0.0", "common-typescript-utils": "^1.0.0"}}'
+        '{"dependencies": {"@sentry/node": "^10.0.0"}}'
     )
     findings = check_three_layer_observability(
         tmp_path, cog_subtype=None, language="typescript"
     )
     layer_errors = [f for f in findings if "Layer" in f["finding"]]
     assert layer_errors == []
+
+
+def test_cd_010_typescript_flags_a_missing_logger_module(tmp_path: Path) -> None:
+    """CD-010: a TS service has no shared logger, so Layer 2 is its own
+    logger module (CD-009); without one, Layer 2 is missing."""
+    from evaluator_cog.engine.deterministic import check_three_layer_observability
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.ts").write_text('import * as Sentry from "@sentry/node";\n')
+    (tmp_path / ".env.example").write_text("SENTRY_DSN=\n")
+    (tmp_path / "package.json").write_text(
+        '{"dependencies": {"@sentry/node": "^10.0.0"}}'
+    )
+    findings = check_three_layer_observability(
+        tmp_path, cog_subtype=None, language="typescript"
+    )
+    assert any("Layer 2" in f["finding"] for f in findings)
 
 
 def test_cd_010_typescript_flags_missing_sentry(tmp_path: Path) -> None:

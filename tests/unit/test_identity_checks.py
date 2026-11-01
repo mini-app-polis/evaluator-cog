@@ -1078,30 +1078,30 @@ def test_cd029_flags_a_typescript_receiver_with_a_jwks_url_but_no_issuer(
     _write(
         tmp_path,
         "src/middleware/auth.ts",
-        'import { verifyClerkToken } from "common-typescript-utils";\n'
+        'import { verifyToken } from "@clerk/backend";\n'
         "const url = process.env.CLERK_JWKS_URL;\n"
-        "export const guard = (t: string) => verifyClerkToken(t, url!);\n",
+        "export const guard = (t: string) => verifyToken(t, { jwksUrl: url });\n",
     )
     findings = check_cd_029(tmp_path)
     _assert_well_formed(findings, "CD-029")
     clause2 = _clause(findings, "CD-029", 2)
     assert len(clause2) == 1
     assert "CLERK_JWKS_URL alone" in clause2[0]["finding"]
-    assert _clause(findings, "CD-029", 1) == []
 
 
-def test_cd029_passes_a_typescript_receiver_that_checks_the_issuer(
+def test_cd029_clause2_passes_a_typescript_receiver_that_checks_the_issuer(
     tmp_path: Path,
 ) -> None:
     _write(
         tmp_path,
         "src/middleware/auth.ts",
-        'import { verifyClerkToken } from "common-typescript-utils";\n'
+        'import { verifyToken } from "@clerk/backend";\n'
         "const url = process.env.CLERK_JWKS_URL;\n"
         "const iss = process.env.CLERK_ISSUER;\n"
-        "export const guard = (t: string) => verifyClerkToken(t, url!, iss);\n",
+        "export const guard = (t: string) =>\n"
+        "  verifyToken(t, { jwksUrl: url, issuer: iss });\n",
     )
-    assert check_cd_029(tmp_path) == []
+    assert _clause(check_cd_029(tmp_path), "CD-029", 2) == []
 
 
 def test_cd029_flags_a_remote_call_on_the_verification_path(tmp_path: Path) -> None:
@@ -1899,29 +1899,12 @@ def test_cd019_clause1_still_flags_a_wrapper_around_an_unnamed_client(
     assert clause1
 
 
-def test_cd029_clause1_reads_the_typescript_half_of_the_shared_library(
+def test_cd029_clause1_tells_a_typescript_service_to_defer(
     tmp_path: Path,
 ) -> None:
-    """`identity` is Python; a Hono service consumes common-typescript-utils.
-
-    deejaytools-api imports verifyClerkToken from the shared TS
-    package — it is delegating correctly — and was reported for
-    importing nothing from `identity`, which it cannot import at all.
-    """
-    (tmp_path / "package.json").write_text('{"name": "svc"}\n')
-    src = tmp_path / "apps/api/src/middleware"
-    src.mkdir(parents=True)
-    (src / "auth.ts").write_text(
-        'import { verifyClerkToken } from "common-typescript-utils";\n'
-        "export const guard = () => verifyClerkToken;\n"
-    )
-    assert _clause(check_cd_029(tmp_path), "CD-029", 1) == []
-
-
-def test_cd029_clause1_still_flags_local_typescript_verification(
-    tmp_path: Path,
-) -> None:
-    """A TS service that verifies locally is still reported — in TS terms."""
+    """`identity` is Python and there is no TypeScript equivalent, so a
+    service with no Python source fails clause 1 with advice it can act
+    on — a deferral — not an import it cannot make."""
     (tmp_path / "package.json").write_text('{"name": "svc"}\n')
     src = tmp_path / "apps/api/src/middleware"
     src.mkdir(parents=True)
@@ -1930,7 +1913,8 @@ def test_cd029_clause1_still_flags_local_typescript_verification(
     )
     clause1 = _clause(check_cd_029(tmp_path), "CD-029", 1)
     assert len(clause1) == 1
-    assert "common-typescript-utils" in clause1[0]["finding"]
+    assert "no Python source" in clause1[0]["finding"]
+    assert "deferral" in clause1[0]["suggestion"]
     assert "identity.chain" not in clause1[0]["finding"]
 
 
@@ -1939,7 +1923,7 @@ def test_cd029_clause1_still_flags_local_typescript_verification(
 # ---------------------------------------------------------------------------
 #
 # The function name alone is not enough to fire the clause. Matching on it
-# would report two comparisons CD-019 does not govern — a Prefect webhook
+# would report two comparisons CD-019 does not govern — a webhook
 # secret and a GitHub body signature — and prescribe a fix (call
 # identity.clerk or identity.apikey) that has no meaning for either.
 
@@ -1962,7 +1946,7 @@ def _api_repo(tmp_path: Path, rel: str, body: str) -> Path:
 
 
 def test_cd030_2_ignores_a_webhook_shared_secret(tmp_path: Path) -> None:
-    """X-Prefect-Token is not a Clerk session or a named machine key."""
+    """A webhook's shared secret is not a Clerk session or a named machine key."""
     repo = _api_repo(
         tmp_path,
         "src/pkg/routers/webhook.py",

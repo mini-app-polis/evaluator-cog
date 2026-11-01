@@ -689,8 +689,8 @@ def _stdlib_logging_is_primary(text: str) -> bool:
     — matching those is matching prose, not code.
 
     A stdlib logger built inside an ``except`` handler is a fallback for
-    a shared logger that was tried first (the Prefect run logger outside
-    a run, say), not the module's primary logger, so it does not count.
+    a shared logger that was tried first (one whose import failed, say),
+    not the module's primary logger, so it does not count.
     """
     try:
         tree = ast.parse(text)
@@ -1082,7 +1082,8 @@ def check_gha_not_trigger_relay(repo_path: Path) -> list[Finding]:
     """CD-006: GitHub Actions must not relay repository triggers into app code.
 
     Scans ``.github/workflows`` for workflows *triggered by*
-    ``repository_dispatch`` that start pipeline work (a Prefect deployment,
+    ``repository_dispatch`` that start pipeline work (a deployment on the
+    retired Prefect,
     a POST to ``/v1/trigger`` or ``/v1/<cog>/runs``, an SQS send, a Lambda
     invoke), scheduled jobs calling Prefect Cloud, and internal trigger HTTP
     paths. A workflow that *sends* a dispatch — to run another repository's
@@ -1363,8 +1364,8 @@ def check_three_layer_observability(
     Language-aware: Python services must start Sentry (the shared
     ``init_sentry``, or ``sentry_sdk`` directly) + common-python-utils;
     TypeScript services must use @sentry/node (or @sentry/react/@sentry/astro)
-    + common-typescript-utils. The stack is equivalent; only the package
-    names differ.
+    and log through their own logger module, since there is no shared
+    TypeScript library (XSTACK-001).
     """
     findings: list[Finding] = []
     src = repo_path / "src"
@@ -1422,12 +1423,10 @@ def check_three_layer_observability(
             "(import package name: mini_app_polis) and use it throughout."
         )
     else:
-        layer2_present = "common-typescript-utils" in src_text or (
-            "common-typescript-utils" in package_json_text
-        )
+        layer2_present = ts.logger_module(repo_path) is not None
         layer2_hint = (
-            "Import the shared logger from common-typescript-utils "
-            "(createLogger) and use it throughout."
+            "Add a logger module (a src/ file named logger) that emits the "
+            "standard event shape (CD-009), and log through it."
         )
     if not layer2_present:
         findings.append(

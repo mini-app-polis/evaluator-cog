@@ -89,6 +89,8 @@ class NarrowedExemption:
     routes: tuple[str, ...] = ()
 
     def covers(self, finding: dict) -> bool:
+        """True when the finding's ``file`` matches a ``paths`` glob or its
+        ``route`` matches a ``routes`` glob."""
         file = str(finding.get("file") or "").strip().removeprefix("./")
         route = str(finding.get("route") or "").strip()
         if file and any(
@@ -116,8 +118,8 @@ class DispositionResult:
       was missed rather than silently appearing at full severity.
     - `narrowed_exemptions`: per-repo exemptions for this rule that name
       `paths` or `routes`. They do not change the disposition; the caller
-      drops each finding one of them covers to INFO with its reason, and
-      every other finding takes the disposition as resolved.
+      drops each finding one of them covers, and every other finding
+      takes the disposition as resolved.
     """
 
     disposition: Disposition
@@ -733,7 +735,7 @@ def _map_legacy_type(legacy: str | None) -> str:
     key = str(legacy).strip()
     if key not in mapping:
         # Defaulting an unrecognised type to pipeline-cog grades the repo
-        # as a deployed Prefect worker and invents every finding that
+        # as a queue-driven Lambda and invents every finding that
         # follows from that. The default is kept so a run never dies on
         # one bad entry, but it is loud: a page of wrong findings is
         # worse than a warning nobody has to read.

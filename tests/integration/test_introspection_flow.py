@@ -345,10 +345,9 @@ def _introspect(*, completed: int = 4):
 
 
 def test_the_report_is_attributed_to_this_run() -> None:
-    """Without it RunReport falls back to get_run_id(), whose resolution
-    order is Prefect's — and with Prefect gone that always lands on
-    "local-run", joinable to nothing. The first pass shipped without this
-    and every introspection report said local-run."""
+    """Without it RunReport falls back to get_run_id(), which finds no run
+    to name inside the Lambda and answers "local-run", joinable to
+    nothing."""
     assert _introspect().report.run_id == "introspection-7.0.0-abc"
 
 

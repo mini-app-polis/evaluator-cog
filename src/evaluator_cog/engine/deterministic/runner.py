@@ -392,8 +392,8 @@ def run_all_checks(
             # missed rather than simply reappearing at full severity
             # with no account of why.
             deferral_expired_on = result.deferral_expired_on
-            # Exemptions naming `paths`/`routes`: the rule runs, and only
-            # the findings they cover are dropped to INFO.
+            # Exemptions naming `paths`/`routes`: the rule runs, and the
+            # findings they cover are dropped.
             narrowed_result = result if result.narrowed_exemptions else None
 
         try:
@@ -402,23 +402,17 @@ def run_all_checks(
             _elapsed = time.monotonic() - _started
             if progress is not None and _elapsed >= SLOW_CHECK_SECONDS:
                 progress(f"{rule_id} took {_elapsed:.1f}s")
+            # An exempted finding is not reported, like a whole-rule
+            # exemption: what the repo has decided does not apply is not a
+            # signal. Something to fix later is a deferral, not an exemption.
+            if narrowed_result is not None:
+                new_findings = [
+                    f
+                    for f in new_findings
+                    if narrowed_result.covering_exemption(f) is None
+                ]
             for f in new_findings:
-                covering = (
-                    narrowed_result.covering_exemption(f)
-                    if narrowed_result is not None
-                    else None
-                )
-                if covering is not None:
-                    f["severity"] = "INFO"
-                    f["exempted"] = True
-                    f["exemption_reason"] = covering.reason
-                    note = (
-                        f"exempted in evaluator.yaml: {covering.reason}"
-                        if covering.reason
-                        else "exempted in evaluator.yaml"
-                    )
-                    f["finding"] = f"{f.get('finding', '')} ({note})".strip()
-                elif is_deferred:
+                if is_deferred:
                     f["severity"] = "INFO"
                     f["deferred"] = True
                     if disposition_info_reason and "deferred_reason" not in f:
@@ -428,7 +422,7 @@ def run_all_checks(
                     f["downgraded"] = True
                     if disposition_info_reason and "downgrade_reason" not in f:
                         f["downgrade_reason"] = disposition_info_reason
-                if deferral_expired_on is not None and covering is None:
+                if deferral_expired_on is not None:
                     f["deferral_expired"] = True
                     f["deferral_expired_on"] = deferral_expired_on.isoformat()
                     f["finding"] = (
