@@ -45,15 +45,15 @@ def check_clerk_auth_dep(repo_path: Path, language: str = "python") -> list[Find
     else:
         pkg = repo_path / "package.json"
         pkg_text = pkg.read_text() if pkg.exists() else ""
-        if "@clerk" not in pkg_text and "common-typescript-utils" not in pkg_text:
+        if "@clerk" not in pkg_text:
             findings.append(
                 _finding(
                     "API-007",
                     "WARN",
                     "structural_conformance",
-                    "api-service (TypeScript) has no Clerk SDK or common-typescript-utils dep.",
-                    "Add @clerk/clerk-sdk-node or use verifyClerkToken from "
-                    "common-typescript-utils.",
+                    "api-service (TypeScript) has no Clerk SDK dependency.",
+                    "Add a Clerk SDK (@clerk/backend) and verify session tokens "
+                    "with it.",
                 )
             )
     return findings

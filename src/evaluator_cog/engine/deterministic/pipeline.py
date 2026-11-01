@@ -367,12 +367,13 @@ _PREFECT_REQUIREMENT = re.compile(
 
 
 def _declares_prefect(repo_path: Path) -> bool:
-    """True when prefect itself — not prefect-something — is a dependency."""
+    """True when the retired prefect itself — not prefect-something — is
+    still a dependency."""
     return _PREFECT_REQUIREMENT.search(_declared_dependency_text(repo_path)) is not None
 
 
 def check_pipe_016(repo_path: Path) -> list[Finding]:
-    """PIPE-016: the cog has left Prefect.
+    """PIPE-016: the cog has left the retired Prefect.
 
     The other half of the rule — the cog runs on Lambda behind its own
     queue — is declared in mini-app-polis/infra, not in the cog (ecosystem-standards ADR-0010),
@@ -580,7 +581,8 @@ _PREFECT_CLIENT_CALLS = ("create_flow_run", "run_deployment")
 
 
 def check_pipe_019(repo_path: Path) -> list[Finding]:
-    """PIPE-019: trigger cogs start work through the API, not Prefect or SQS."""
+    """PIPE-019: trigger cogs start work through the API, not through SQS
+    directly or the retired Prefect."""
     findings: list[Finding] = []
     text = production_python_text(repo_path) if (repo_path / "src").is_dir() else ""
 

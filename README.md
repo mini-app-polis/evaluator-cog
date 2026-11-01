@@ -116,8 +116,9 @@ deterministic engine implementation is expected.
 - An exemption with neither `paths:` nor `routes:` skips the rule. One that
   names either still runs it: a finding whose file matches a `paths` glob
   (`*` stays within a directory, `**` crosses them), or whose route matches a
-  `routes` entry, is reported at INFO with the reason, and every other finding
-  as normal. Checks that report per file or per route attach that location to
+  `routes` entry, is not reported, and every other finding is reported as
+  normal. Neither kind of exemption emits a finding; a rule the repo means to
+  satisfy later is a `deferrals:` entry instead. Checks that report per file or per route attach that location to
   the finding; a finding without one is never covered.
 
 ## Triggering an evaluation

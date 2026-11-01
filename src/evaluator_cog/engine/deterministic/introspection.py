@@ -138,8 +138,8 @@ def check_eval_003() -> list[Finding]:
             continue
 
         # Non-applicability gate — LLM checks emit a finding whose text
-        # explains why a rule doesn't apply (e.g. "Prefect run history is
-        # not applicable (this is an API service, not a pipeline)").
+        # explains why a rule doesn't apply (e.g. "Queue alarms are not
+        # applicable (this is an API service, not a pipeline)").
         # These are informational notes, not actionable violations; their
         # remediation is intentionally short or absent. Grading them for
         # remediation length produces false positives.

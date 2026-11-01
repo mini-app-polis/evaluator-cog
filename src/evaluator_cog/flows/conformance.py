@@ -1217,11 +1217,10 @@ def _run_standalone_conformance(
 def _run_suffix() -> str:
     """A suffix no two runs share.
 
-    Was the Prefect flow run id, falling back to a UTC timestamp. Both
-    ends of that are gone: there is no flow run to ask, and a timestamp
-    resolved to the second is not unique between two releases that land
-    together — which is exactly what the release trigger makes ordinary.
-    Two runs sharing a run_id merge their findings into one.
+    Random rather than a timestamp: a timestamp resolved to the second is
+    not unique between two releases that land together — which is exactly
+    what the release trigger makes ordinary. Two runs sharing a run_id
+    merge their findings into one.
     """
     return uuid.uuid4().hex[:12]
 
@@ -1712,9 +1711,9 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
     """
     # Attribute the coverage report to the run whose findings it
     # describes. Without this the report falls back to
-    # mini_app_polis.pipeline_status.get_run_id(), whose resolution order
-    # is Prefect's — so with Prefect gone every report this cog sent
-    # arrived as "local-run", joinable to nothing. The sweep sets this
+    # mini_app_polis.pipeline_status.get_run_id(), which finds no run to
+    # name inside this Lambda and answers "local-run", joinable to
+    # nothing. The sweep sets this
     # first because it owns the run; a per-repository invoke sets it here.
     if ctx.report is not None and not ctx.report.run_id:
         ctx.report.run_id = event.run_id
@@ -1950,11 +1949,10 @@ def run_introspection(
     ctx.catalog = None
 
     # Attribute the report to this run. Without it RunReport falls back to
-    # mini_app_polis.pipeline_status.get_run_id(), whose resolution order
-    # is Prefect's — and with Prefect gone that always lands on
-    # "local-run", joinable to nothing. The repository path sets this in
-    # handler and the sweep sets it before its loop; this is the third
-    # place that has to, and the first pass shipped without it.
+    # mini_app_polis.pipeline_status.get_run_id(), which finds no run to
+    # name inside this Lambda and answers "local-run", joinable to
+    # nothing. The repository path sets this in handler and the sweep
+    # sets it before its loop; this is the third place that has to.
     if ctx.report is not None:
         ctx.report.run_id = run_id
 

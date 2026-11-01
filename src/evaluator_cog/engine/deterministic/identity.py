@@ -2458,40 +2458,7 @@ def _verification_functions(
     return out
 
 
-# The TypeScript half of the shared verification surface. `identity` is a
-# Python package; a Hono service cannot import it, and asking one to is
-# advice that cannot be followed. common-typescript-utils exports
-# verifyClerkToken from auth.ts and is what a TypeScript service is meant
-# to consume instead.
-_TS_SHARED_AUTH_PACKAGE = "common-typescript-utils"
-_TS_VERIFY_SYMBOLS = ("verifyClerkToken", "ClerkPayload", "verifyToken")
 _TS_SOURCE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs")
-
-
-def _imports_shared_ts_auth(repo_path: Path) -> bool:
-    """True when any non-test TS/JS module imports the shared auth surface.
-
-    Read as text rather than parsed: this module has no TypeScript
-    parser, and the question is only whether the shared package is
-    imported for verification, which an import statement answers.
-    """
-    for path in repo_path.rglob("*"):
-        if path.suffix not in _TS_SOURCE_SUFFIXES or not path.is_file():
-            continue
-        parts = set(path.parts)
-        if "node_modules" in parts or "dist" in parts or ".git" in parts:
-            continue
-        if ".test." in path.name or ".spec." in path.name:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        if _TS_SHARED_AUTH_PACKAGE not in text:
-            continue
-        if any(symbol in text for symbol in _TS_VERIFY_SYMBOLS):
-            return True
-    return False
 
 
 #: Names that place a comparison on the Bearer path. CD-019 defines a
@@ -2578,7 +2545,7 @@ def _compares_a_bearer_credential(node: ast.Call, enclosing: ast.AST | None) -> 
     clauses of this check — a JWKS fetch has to look like an HTTP call to
     a JWKS URL, and a decode has to name an asymmetric algorithm. Matching
     every ``compare_digest`` would report two comparisons that CD-019 does
-    not govern: a Prefect webhook shared secret arriving in ``X-Prefect-Token``
+    not govern: a webhook shared secret arriving in the sender's own header
     and a GitHub signature over the raw request body. Neither is a Clerk
     session JWT or a named machine key, which is what CD-019's own
     description says a credential is, and the check's suggestion — call
@@ -2618,33 +2585,29 @@ def _cd029_clause1(
 ) -> list[Finding]:
     """(1) Session verification is consumed from the shared library.
 
-    The shared library has two halves. `identity` is Python; a
-    TypeScript service consumes `common-typescript-utils` instead. A
-    repo with no Python sources is not reported for importing nothing
-    from `identity` — advice it could not act on, against a service
-    that is already delegating correctly.
+    `identity` is Python and there is no TypeScript equivalent
+    (XSTACK-001). A service with no Python source cannot consume it, so
+    it fails this clause with advice it can act on: record a deferral
+    until the service is rewritten, as the rule's description says.
     """
     findings: list[Finding] = []
     modules, _names = _imported_modules(files)
     has_python = any(not f.is_test for f in files)
 
     if not has_python and repo_path is not None:
-        if not _imports_shared_ts_auth(repo_path):
-            findings.append(
-                _finding(
-                    check_id,
-                    _SEVERITY,
-                    _DIMENSION,
-                    f"CD-029 (1): the service imports no verification helper from "
-                    f"the shared TypeScript utilities "
-                    f"({_TS_SHARED_AUTH_PACKAGE}), so its session verification "
-                    f"is local.",
-                    f"Import verifyClerkToken from {_TS_SHARED_AUTH_PACKAGE} and "
-                    f"delete the in-repo equivalent, so session-JWT verification "
-                    f"is one implementation across the fleet rather than one per "
-                    f"service.",
-                )
+        findings.append(
+            _finding(
+                check_id,
+                _SEVERITY,
+                _DIMENSION,
+                "CD-029 (1): the service has no Python source, so it cannot "
+                "consume the shared identity library and its session "
+                "verification is local.",
+                "Record a CD-029 deferral in evaluator.yaml until the service is "
+                "rewritten in Python; there is no shared verifier in another "
+                "language.",
             )
+        )
         return findings
 
     if not any(m == "identity" or m.startswith("identity.") for m in modules):
@@ -2801,9 +2764,8 @@ def _cd029_clause2(
             f"but session verification needs CLERK_ISSUERS, or CLERK_ISSUER "
             f"together with CLERK_JWKS_URL, so the token's iss can be checked.",
             "Configure the issuer set at startup (CLERK_ISSUERS, or CLERK_ISSUER + "
-            "CLERK_JWKS_URL) and pass the issuer to the verifier — identity.clerk "
-            "in Python, verifyClerkToken's expectedIssuer argument in "
-            "common-typescript-utils.",
+            "CLERK_JWKS_URL) and pass the issuer to the verifier "
+            "(identity.clerk).",
         )
     ]
 

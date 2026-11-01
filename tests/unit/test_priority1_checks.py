@@ -466,7 +466,7 @@ jobs:
 
 def test_cd006_sending_a_dispatch_to_run_another_repos_tests_passes() -> None:
     """A deploy workflow that asks another repo to run its contract suite is
-    CI chaining. deejaytools-api's deployed.yml, 2026-09-29."""
+    CI chaining."""
     root = _root(
         {
             ".github/workflows/deployed.yml": """on: deployment_status
