@@ -1317,12 +1317,102 @@ def test_check_tailwind_and_shadcn_and_forms() -> None:
             "package.json": '{"dependencies":{"tailwindcss":"3","@radix-ui/react-slot":"1","react-hook-form":"7","zod":"3"}}\n',
             "tailwind.config.ts": "export default {}\n",
             "src/components/ui/button.tsx": "export const Button = () => null\n",
-            "src/app/page.tsx": "export const A = () => <form></form>\n",
+            "src/app/page.tsx": (
+                'import { useForm } from "react-hook-form"\n'
+                "export const A = () => { const f = useForm(); return <form></form> }\n"
+            ),
         }
     )
     assert check_tailwind(passing) == []
     assert check_shadcn(passing) == []
     assert check_react_hook_form_zod(passing) == []
+
+
+_FE005_PKG = '{"dependencies":{"react-hook-form":"7","zod":"3"}}\n'
+
+# deejaytools-com's shape after its form migration: the component owns the
+# form through useForm with a Zod resolver.
+_FE005_RHF_FORM = """\
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+
+const schema = z.object({ name: z.string().min(1) });
+
+export function TeamsSection() {
+  const form = useForm<z.infer<typeof schema>>({ resolver: zodResolver(schema) });
+  return (
+    <form onSubmit={form.handleSubmit(() => {})}>
+      <input {...form.register("name")} />
+    </form>
+  );
+}
+"""
+
+# The shape FE-005 forbids: per-field useState and a hand-rolled submit.
+_FE005_USESTATE_FORM = """\
+import { useState } from "react";
+
+export function FeedbackPage() {
+  const [name, setName] = useState("");
+  const [message, setMessage] = useState("");
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); }}>
+      <input value={name} onChange={(e) => setName(e.target.value)} />
+      <textarea value={message} onChange={(e) => setMessage(e.target.value)} />
+    </form>
+  );
+}
+"""
+
+
+def test_fe005_flags_each_form_component_without_use_form() -> None:
+    repo = _make_repo(
+        {
+            "package.json": _FE005_PKG,
+            "src/components/TeamsSection.tsx": _FE005_RHF_FORM,
+            "src/pages/FeedbackPage.tsx": _FE005_USESTATE_FORM,
+            "src/pages/Legacy.jsx": _FE005_USESTATE_FORM,
+        }
+    )
+    findings = check_react_hook_form_zod(repo)
+    assert sorted(f["file"] for f in findings) == [
+        "src/pages/FeedbackPage.tsx",
+        "src/pages/Legacy.jsx",
+    ]
+    assert all(f["rule_id"] == "FE-005" for f in findings)
+    assert all("useForm" in f["finding"] for f in findings)
+
+
+def test_fe005_accepts_use_form_context_and_ignores_non_form_elements() -> None:
+    repo = _make_repo(
+        {
+            "package.json": _FE005_PKG,
+            "src/components/Fields.tsx": (
+                'import { useFormContext } from "react-hook-form";\n'
+                "export const F = () => { const f = useFormContext(); "
+                "return <form>{f.formState.isDirty}</form> };\n"
+            ),
+            # <Form> (shadcn's FormProvider wrapper) and <formatted-*> are not
+            # <form> elements.
+            "src/components/Display.tsx": (
+                "export const D = () => <Form><formatted-date /></Form>;\n"
+            ),
+        }
+    )
+    assert check_react_hook_form_zod(repo) == []
+
+
+def test_fe005_exempts_test_files() -> None:
+    repo = _make_repo(
+        {
+            "package.json": _FE005_PKG,
+            "src/components/staff/PersonPicker.test.tsx": _FE005_USESTATE_FORM,
+            "src/components/Thing.spec.tsx": _FE005_USESTATE_FORM,
+            "src/__tests__/Harness.tsx": _FE005_USESTATE_FORM,
+        }
+    )
+    assert check_react_hook_form_zod(repo) == []
 
 
 def test_check_tailwind_accepts_tailwind_4_css_import() -> None:

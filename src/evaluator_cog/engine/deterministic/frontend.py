@@ -166,8 +166,33 @@ def check_shadcn(repo_path: Path) -> list[Finding]:
     return findings
 
 
+# A JSX ``<form>`` element (not ``<Form>``, ``<formatted>`` or the like).
+_FE005_FORM_RE = re.compile(r"<form[\s>/]")
+# The React Hook Form hook that manages a form: ``useForm`` in the component
+# that owns it, ``useFormContext`` in one rendered inside its FormProvider.
+_FE005_USE_FORM_RE = re.compile(r"\buseForm(?:Context)?\s*[<(]")
+_FE005_TEST_DIRS = frozenset({"__tests__", "test", "tests"})
+
+
+def _fe005_is_test_file(rel: Path) -> bool:
+    name = rel.name
+    return (
+        ".test." in name
+        or ".spec." in name
+        or any(part in _FE005_TEST_DIRS for part in rel.parts[:-1])
+    )
+
+
 def check_react_hook_form_zod(repo_path: Path) -> list[Finding]:
-    """FE-005: React Hook Form + Zod for forms and validation."""
+    """FE-005: React Hook Form + Zod for forms and validation.
+
+    Two checks. The repo must depend on react-hook-form and zod once any
+    form exists. And each component file (``.tsx``/``.jsx`` under
+    ``src/``, test files aside) that renders a ``<form>`` element must
+    manage it with React Hook Form — a ``useForm`` (or ``useFormContext``)
+    call — rather than per-field ``useState``; each one that does not is
+    reported with its ``file``.
+    """
     CHECK_ID = "FE-005"
     findings: list[Finding] = []
     pkg = repo_path / "package.json"
@@ -189,6 +214,30 @@ def check_react_hook_form_zod(repo_path: Path) -> list[Finding]:
                 "structural_conformance",
                 "Form components exist but react-hook-form and/or zod is missing.",
                 "Use React Hook Form + Zod for form handling and validation.",
+            )
+        )
+    components = sorted(list(src.rglob("*.tsx")) + list(src.rglob("*.jsx")))
+    for component in components:
+        rel = component.relative_to(repo_path)
+        if _fe005_is_test_file(rel):
+            continue
+        try:
+            text = component.read_text()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not _FE005_FORM_RE.search(text) or _FE005_USE_FORM_RE.search(text):
+            continue
+        findings.append(
+            _finding(
+                "FE-005",
+                "WARN",
+                "structural_conformance",
+                f"{rel}: renders a <form> element without a corresponding "
+                "useForm hook — all forms use React Hook Form.",
+                "Manage the form with useForm from react-hook-form, validated "
+                "by a Zod schema, rather than custom state (useState for each "
+                "field).",
+                file=rel,
             )
         )
     return findings
