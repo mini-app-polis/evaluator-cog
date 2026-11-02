@@ -865,6 +865,7 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
                     "_lookup/_config/_enum for internal tables, or document in "
                     "evaluator.yaml.",
                     file=rel,
+                    model=node.name,
                 )
             )
     return findings
