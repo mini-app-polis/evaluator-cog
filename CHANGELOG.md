@@ -1,3 +1,16 @@
+# [3.65.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.64.2...v3.65.0) (2026-11-02)
+
+
+### Bug Fixes
+
+* **deps:** bump the minor-and-patch group with 3 updates ([4865dbb](https://github.com/mini-app-polis/evaluator-cog/commit/4865dbb9f283b1d2b1488ddaed87bcae77f2d297))
+
+
+### Features
+
+* **api-006:** name the model on each finding ([e037616](https://github.com/mini-app-polis/evaluator-cog/commit/e037616e93f31e3313163a5b6f3751f96045605d))
+* **exemptions:** read models: and cover only the named models' findings ([14d5978](https://github.com/mini-app-polis/evaluator-cog/commit/14d5978a5070c623b27bb560933b35d7f9fbb3ab))
+
 ## [3.64.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.64.1...v3.64.2) (2026-11-01)
 
 
