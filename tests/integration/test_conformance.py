@@ -410,11 +410,19 @@ def test_fetch_catalog_schema_parses_v4_shape() -> None:
                     ],
                 },
             },
+            "layouts": {
+                "entries": [
+                    {"repo_type": "pipeline-cog", "path": "src/", "kind": "dir"}
+                ]
+            },
         },
     )
     with _patch_catalog(catalog):
         schema = _fetch_catalog_schema(ctx=RunContext())
 
+    assert schema["layouts"] == {
+        "entries": [{"repo_type": "pipeline-cog", "path": "src/", "kind": "dir"}]
+    }
     assert schema["repo_types"] == {"pipeline-cog", "api-service"}
     assert schema["statuses"] == {"requirement", "convention", "gap"}
     assert schema["traits"]["logger-primitive"]["exempts"] == ["CD-009"]

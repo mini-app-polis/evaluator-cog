@@ -521,11 +521,17 @@ def _fetch_catalog_schema(*, ctx: RunContext) -> dict:
         else {}
     )
 
+    # The written layout LAYOUT-001 and LAYOUT-002 check against; the runner
+    # skips both when it is absent.
+    raw_layouts = schema.get("layouts")
+    layouts: dict = dict(raw_layouts) if isinstance(raw_layouts, dict) else {}
+
     return {
         "traits": traits,
         "repo_types": repo_types,
         "statuses": statuses,
         "retired": retired,
+        "layouts": layouts,
     }
 
 
