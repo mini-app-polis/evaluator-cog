@@ -1,3 +1,12 @@
+## [3.65.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.65.0...v3.65.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **conformance:** pass catalog schema layouts through so LAYOUT-001 and LAYOUT-002 run ([1b41c98](https://github.com/mini-app-polis/evaluator-cog/commit/1b41c98450c43408a0a00633e0d13fe7383307de))
+* **deps:** bump miniapppolis-common-utils to 7.8.3 ([6e69686](https://github.com/mini-app-polis/evaluator-cog/commit/6e69686b9bf60e4d97d345b3ab06ba0e0a66d6c5))
+* **deps:** bump miniapppolis-common-utils to 7.9.0 ([4916302](https://github.com/mini-app-polis/evaluator-cog/commit/49163022126436994246cb3ce8d748a7ab45bc53))
+
 # [3.65.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.64.2...v3.65.0) (2026-11-02)
 
 
