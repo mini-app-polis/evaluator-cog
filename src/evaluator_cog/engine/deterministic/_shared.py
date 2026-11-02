@@ -63,6 +63,7 @@ def _finding(
     *,
     file: str | Path | None = None,
     route: str | None = None,
+    model: str | None = None,
 ) -> Finding:
     """Build a finding dict.
 
@@ -70,7 +71,9 @@ def _finding(
     check resolved) locate the finding. They are what an evaluator.yaml
     exemption's ``paths:`` and ``routes:`` match against, so a check that
     reports per file or per route should pass them; a finding without
-    them is never covered by a narrowed exemption.
+    them is never covered by a narrowed exemption. ``model`` names the
+    model (class) a per-model finding is about, so a finding says which of
+    the models in its file it concerns.
     """
     out: Finding = {
         "rule_id": rule_id,
@@ -84,6 +87,8 @@ def _finding(
         out["file"] = Path(file).as_posix()
     if route:
         out["route"] = route
+    if model:
+        out["model"] = model
     return out
 
 

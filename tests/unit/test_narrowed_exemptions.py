@@ -340,6 +340,16 @@ def test_api006_reports_one_finding_per_model_with_its_file(tmp_path: Path) -> N
     ]
 
 
+def test_api006_findings_name_their_model(tmp_path: Path) -> None:
+    _write(tmp_path, {"src/app/models.py": _MODELS})
+    findings = check_owner_id_column(tmp_path)
+    assert [(f["model"], f["file"]) for f in findings] == [
+        ("Event", "src/app/models.py"),
+        ("Run", "src/app/models.py"),
+    ]
+    assert all(f["severity"] == "WARN" for f in findings)
+
+
 def test_api006_path_exemption_covers_the_models_file(tmp_path: Path) -> None:
     _write(
         tmp_path,
