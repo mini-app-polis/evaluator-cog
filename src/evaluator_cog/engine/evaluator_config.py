@@ -76,21 +76,34 @@ def _glob_regex(pattern: str) -> re.Pattern[str]:
 
 @dataclass(frozen=True)
 class NarrowedExemption:
-    """An evaluator.yaml exemption that names the ``paths`` or ``routes``
-    it covers (index.yaml ``schema.evaluator_yaml.exemptions.fields``).
+    """An evaluator.yaml exemption that names the ``paths``, ``routes`` or
+    ``models`` it covers (index.yaml ``schema.evaluator_yaml.exemptions.fields``).
 
     The rule still runs. A finding whose ``file`` matches a ``paths`` glob,
-    or whose ``route`` matches a ``routes`` entry, is covered; a finding
-    that names neither is never covered.
+    or whose ``route`` matches a ``routes`` entry, is covered. ``models``
+    narrows further: with it, a finding is covered only when its ``model``
+    matches a ``models`` glob too, and with ``models`` alone that is enough.
+    A finding that names none of what the exemption names is never covered.
     """
 
     reason: str
     paths: tuple[str, ...] = ()
     routes: tuple[str, ...] = ()
+    models: tuple[str, ...] = ()
 
     def covers(self, finding: dict) -> bool:
-        """True when the finding's ``file`` matches a ``paths`` glob or its
-        ``route`` matches a ``routes`` glob."""
+        """True when the finding's location matches: its ``file`` a ``paths``
+        glob or its ``route`` a ``routes`` glob, and its ``model`` a
+        ``models`` glob when the exemption names models."""
+        if self.models:
+            model = str(finding.get("model") or "").strip()
+            if not model or not any(_glob_regex(m).match(model) for m in self.models):
+                return False
+            if not self.paths and not self.routes:
+                return True
+        return self._located(finding)
+
+    def _located(self, finding: dict) -> bool:
         file = str(finding.get("file") or "").strip().removeprefix("./")
         route = str(finding.get("route") or "").strip()
         if file and any(
@@ -575,14 +588,21 @@ def _parse_evaluator_yaml(
         reason = str(item.get("reason", "")).strip()
         if not rule_id:
             continue
-        if "paths" in item or "routes" in item:
+        if "paths" in item or "routes" in item or "models" in item:
             # Narrowed: the rule runs and only what is named is covered.
             # A malformed list narrows to nothing rather than widening to
             # the whole rule — a typo must not hide every finding.
             paths = _exemption_globs(item, "paths", rule_id, source)
             routes = _exemption_globs(item, "routes", rule_id, source)
+            models = _exemption_globs(item, "models", rule_id, source)
+            if "models" in item and not models:
+                # A malformed models list must not leave a paths/routes
+                # exemption wider than it was written.
+                paths, routes = (), ()
             narrowed_exemptions.setdefault(rule_id, []).append(
-                NarrowedExemption(reason=reason, paths=paths, routes=routes)
+                NarrowedExemption(
+                    reason=reason, paths=paths, routes=routes, models=models
+                )
             )
             continue
         exemption_ids.append(rule_id)
@@ -630,7 +650,7 @@ def _parse_evaluator_yaml(
 def _exemption_globs(
     item: dict, key: str, rule_id: str, source: str
 ) -> tuple[str, ...]:
-    """Read an exemption's `paths` or `routes`: a non-empty list of
+    """Read an exemption's `paths`, `routes` or `models`: a non-empty list of
     non-empty strings. Anything else is warned about and read as empty."""
     if key not in item:
         return ()

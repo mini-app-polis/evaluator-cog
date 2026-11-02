@@ -120,6 +120,9 @@ deterministic engine implementation is expected.
   normal. Neither kind of exemption emits a finding; a rule the repo means to
   satisfy later is a `deferrals:` entry instead. Checks that report per file or per route attach that location to
   the finding; a finding without one is never covered.
+- `models:` names the models (class names, globs allowed) an exemption
+  covers, for checks that report per model (API-006). Alone, it covers those
+  models in any file; with `paths:` or `routes:`, a finding must match both.
 
 ## Triggering an evaluation
 
