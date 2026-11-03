@@ -1,3 +1,10 @@
+## [3.66.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.66.1...v3.66.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* **checks:** DOC-004 follows imported variable-name constants and loops over a dict of them, and a dataclass named for settings is not a Settings class ([1ed9410](https://github.com/mini-app-polis/evaluator-cog/commit/1ed9410cdccf37c9bcb73a20e9c257d0c8d773c2))
+
 ## [3.66.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.66.0...v3.66.1) (2026-11-03)
 
 
