@@ -309,6 +309,10 @@ def _settings_declared_fields(
                 continue
             if not (node.name == "Settings" or node.name.endswith("Settings")):
                 continue
+            # A dataclass is plain data: nothing loads its fields from the
+            # environment or reads them as settings.<name>.
+            if any(_decorator_base_name(d) == "dataclass" for d in node.decorator_list):
+                continue
             for stmt in node.body:
                 if isinstance(stmt, ast.AnnAssign) and isinstance(
                     stmt.target, ast.Name

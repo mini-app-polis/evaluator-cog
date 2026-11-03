@@ -610,6 +610,87 @@ def test_doc004_resolves_module_constants_naming_a_variable(tmp_path: Path) -> N
     assert findings == []
 
 
+def test_doc004_resolves_constants_imported_from_the_repositorys_modules(
+    tmp_path: Path,
+) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "# STATE_FOLDER=\n# ROOT_FOLDER=\n",
+            "src/app/safety.py": "STATE_VAR = 'STATE_FOLDER'\n",
+            "src/app/backfill.py": (
+                "import os\n"
+                "from app.safety import STATE_VAR\n"
+                "from app.safety import STATE_VAR as STATE\n"
+                "ROOT_VAR = 'ROOT_FOLDER'\n"
+                "state = os.getenv(STATE_VAR)\n"
+                "again = os.getenv(STATE)\n"
+                "root = os.getenv(ROOT_VAR)\n"
+            ),
+        },
+    )
+    assert findings == []
+
+
+def test_doc004_follows_a_loop_over_a_constant_dict(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": (
+                "# INPUT_FOLDER=\n# OUTPUT_FOLDER=\n# STATE_FOLDER=\n# EXTRA=\n"
+            ),
+            "src/app/safety.py": "STATE_VAR = 'STATE_FOLDER'\n",
+            "src/app/intake.py": (
+                "import os\n"
+                "from app.safety import STATE_VAR\n"
+                "FOLDER_VARS = {'in': 'INPUT_FOLDER', 'out': 'OUTPUT_FOLDER',"
+                " 'state': STATE_VAR}\n"
+                "EXTRA_VARS = {'x': 'EXTRA'}\n"
+                "values = {r: os.getenv(v) for r, v in FOLDER_VARS.items()}\n"
+                "for var in EXTRA_VARS.values():\n"
+                "    os.getenv(var)\n"
+            ),
+        },
+    )
+    assert findings == []
+
+
+def test_doc004_a_loop_over_a_dicts_keys_reads_nothing(tmp_path: Path) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "# INPUT_FOLDER=\n",
+            "src/app/intake.py": (
+                "import os\n"
+                "FOLDER_VARS = {'INPUT_KEY': 'INPUT_FOLDER'}\n"
+                "for key in FOLDER_VARS:\n"
+                "    os.getenv(key)\n"
+            ),
+        },
+    )
+    assert len(findings) == 1
+    assert "lists INPUT_FOLDER" in findings[0]
+
+
+def test_doc004_a_dataclass_named_settings_is_not_read_from_the_environment(
+    tmp_path: Path,
+) -> None:
+    findings = _doc004(
+        tmp_path,
+        {
+            ".env.example": "",
+            "src/app/backfill.py": (
+                "from dataclasses import dataclass\n"
+                "@dataclass(frozen=True)\n"
+                "class BackfillSettings:\n"
+                "    root: str\n"
+                "    chunk_size: int\n"
+            ),
+        },
+    )
+    assert findings == []
+
+
 def test_doc004_a_parameter_shadowing_a_constant_is_still_a_wrapper(
     tmp_path: Path,
 ) -> None:

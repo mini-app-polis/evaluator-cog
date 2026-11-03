@@ -146,16 +146,21 @@ def _call_name(func: ast.expr) -> str | None:
     return None
 
 
-def _module_env_constants(tree: ast.AST) -> dict[str, frozenset[str]]:
+def _module_env_constants(
+    tree: ast.AST, known: dict[str, frozenset[str]] | None = None
+) -> dict[str, frozenset[str]]:
     """Module-level names bound to an environment variable name, or to several.
 
     ``FLAG_VAR = "DRY_RUN"`` binds one name; ``TOKEN_VARS = {"prd":
     "TOKEN_PRD", "dev": "TOKEN_DEV"}`` binds every value of a dict whose
     values are all such literals, for a read indexed into it
-    (``os.getenv(TOKEN_VARS[config])``). Anything else is left alone: a name
+    (``os.getenv(TOKEN_VARS[config])``). A value may also be another such
+    name, bound earlier in the module or in ``known`` (the names the module
+    imports): ``{"state": STATE_VAR}``. Anything else is left alone: a name
     built at runtime is not collected.
     """
     found: dict[str, frozenset[str]] = {}
+    known = known or {}
     if not isinstance(tree, ast.Module):
         return found
     for stmt in tree.body:
@@ -168,16 +173,87 @@ def _module_env_constants(tree: ast.AST) -> dict[str, frozenset[str]]:
         if not isinstance(target, ast.Name):
             continue
         literals = value.values if isinstance(value, ast.Dict) else [value]
-        names = [
-            v.value
-            for v in literals
-            if isinstance(v, ast.Constant)
-            and isinstance(v.value, str)
-            and _ENV_NAME_RE.match(v.value)
-        ]
-        if names and len(names) == len(literals):
+        names: list[str] = []
+        resolved = 0
+        for v in literals:
+            if (
+                isinstance(v, ast.Constant)
+                and isinstance(v.value, str)
+                and _ENV_NAME_RE.match(v.value)
+            ):
+                names.append(v.value)
+                resolved += 1
+            elif isinstance(v, ast.Name) and v.id in {**known, **found}:
+                names.extend({**known, **found}[v.id])
+                resolved += 1
+        if names and resolved == len(literals):
             found[target.id] = frozenset(names)
     return found
+
+
+def _module_name(path: Path) -> str:
+    """The file's dotted path, without its suffix: ``src/app/x.py`` → ``src.app.x``."""
+    parts = path.with_suffix("").parts
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _imported_env_constants(
+    tree: ast.AST, by_module: dict[str, dict[str, frozenset[str]]]
+) -> dict[str, frozenset[str]]:
+    """Names a module imports from another of the repository's modules that
+    are bound there to an environment variable name, under the local name:
+    ``from app.settings import FLAG_VAR as FLAG`` resolves ``FLAG``.
+
+    The importing module is matched by its dotted name's tail, so the import
+    resolves whatever directory the scan started from.
+    """
+    found: dict[str, frozenset[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        tail = "." + node.module
+        sources = [
+            constants
+            for name, constants in by_module.items()
+            if name == node.module or name.endswith(tail)
+        ]
+        for alias in node.names:
+            for constants in sources:
+                if alias.name in constants:
+                    found[alias.asname or alias.name] = constants[alias.name]
+                    break
+    return found
+
+
+def _loop_bindings(
+    target: ast.expr, iterable: ast.expr, constants: dict[str, frozenset[str]]
+) -> dict[str, frozenset[str]]:
+    """Loop names bound to a constant dict's values: ``for var in
+    VARS.values()`` binds ``var``, ``for role, var in VARS.items()`` binds
+    ``var``. Iterating the dict itself yields its keys, which are not names
+    of variables, so binds nothing."""
+    if not (
+        isinstance(iterable, ast.Call)
+        and isinstance(iterable.func, ast.Attribute)
+        and isinstance(iterable.func.value, ast.Name)
+        and iterable.func.value.id in constants
+        and not iterable.args
+    ):
+        return {}
+    names = constants[iterable.func.value.id]
+    method = iterable.func.attr
+    if method == "values" and isinstance(target, ast.Name):
+        return {target.id: names}
+    if (
+        method == "items"
+        and isinstance(target, ast.Tuple)
+        and len(target.elts) == 2
+        and isinstance(target.elts[1], ast.Name)
+    ):
+        return {target.elts[1].id: names}
+    return {}
 
 
 class _EnvReadVisitor(ast.NodeVisitor):
@@ -201,6 +277,45 @@ class _EnvReadVisitor(ast.NodeVisitor):
         self.reads: set[str] = set()
         self.new_wrappers: dict[str, int] = {}
         self._stack: list[tuple[str, list[str]]] = []
+        self._loops: list[dict[str, frozenset[str]]] = []
+
+    def _loop_names(self, name: str) -> frozenset[str] | None:
+        for scope in reversed(self._loops):
+            if name in scope:
+                return scope[name]
+        return None
+
+    def _visit_loop(self, node: ast.For | ast.AsyncFor) -> None:
+        self.visit(node.iter)
+        self._loops.append(_loop_bindings(node.target, node.iter, self.constants))
+        for stmt in [*node.body, *node.orelse]:
+            self.visit(stmt)
+        self._loops.pop()
+
+    visit_For = _visit_loop
+    visit_AsyncFor = _visit_loop
+
+    def _visit_comprehension(
+        self, node: ast.ListComp | ast.SetComp | ast.GeneratorExp | ast.DictComp
+    ) -> None:
+        pushed = 0
+        for gen in node.generators:
+            self.visit(gen.iter)
+            self._loops.append(_loop_bindings(gen.target, gen.iter, self.constants))
+            pushed += 1
+            for cond in gen.ifs:
+                self.visit(cond)
+        if isinstance(node, ast.DictComp):
+            self.visit(node.key)
+            self.visit(node.value)
+        else:
+            self.visit(node.elt)
+        del self._loops[len(self._loops) - pushed :]
+
+    visit_ListComp = _visit_comprehension
+    visit_SetComp = _visit_comprehension
+    visit_GeneratorExp = _visit_comprehension
+    visit_DictComp = _visit_comprehension
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         params = [a.arg for a in (*node.args.posonlyargs, *node.args.args)]
@@ -215,6 +330,8 @@ class _EnvReadVisitor(ast.NodeVisitor):
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
             if _ENV_NAME_RE.match(arg.value):
                 self.reads.add(arg.value)
+        elif isinstance(arg, ast.Name) and self._loop_names(arg.id) is not None:
+            self.reads.update(self._loop_names(arg.id) or ())
         elif isinstance(arg, ast.Name) and self._stack and arg.id in self._stack[-1][1]:
             name, params = self._stack[-1]
             index = params.index(arg.id)
@@ -249,12 +366,26 @@ class _EnvReadVisitor(ast.NodeVisitor):
 
 def _python_env_reads(trees: dict[Path, ast.AST]) -> dict[str, Path]:
     """Names read in Python, directly or through the repository's wrappers."""
+    # Twice: the second pass lets a module's constants be built from names
+    # it imports (``{"state": STATE_VAR}``), which the first pass resolved.
+    own = {path: _module_env_constants(tree) for path, tree in trees.items()}
+    for _ in range(2):
+        by_module = {_module_name(path): c for path, c in own.items()}
+        imported = {
+            path: _imported_env_constants(tree, by_module)
+            for path, tree in trees.items()
+        }
+        own = {
+            path: _module_env_constants(tree, imported[path])
+            for path, tree in trees.items()
+        }
+    constants = {path: {**imported[path], **own[path]} for path in trees}
     wrappers: dict[str, int] = {}
     while True:
         reads: dict[str, Path] = {}
         found: dict[str, int] = {}
         for path, tree in trees.items():
-            visitor = _EnvReadVisitor(wrappers, _module_env_constants(tree))
+            visitor = _EnvReadVisitor(wrappers, constants[path])
             visitor.visit(tree)
             for name in sorted(visitor.reads):
                 reads.setdefault(name, path)
