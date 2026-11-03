@@ -1,3 +1,11 @@
+# [3.66.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.65.2...v3.66.0) (2026-11-03)
+
+
+### Features
+
+* **checks:** API-006 accepts a ForeignKey to an identity table or a scoped parent, resolved transitively ([42f865c](https://github.com/mini-app-polis/evaluator-cog/commit/42f865c842e54caf4f4e9efcd5168348d29bfd29))
+* **checks:** scan nested manifests for XSTACK-003 and SEC-007, accept DOC-011 phrasings in API-008, follow Vite define in XSTACK-004, and drop the VER-002 check ([ec34f0d](https://github.com/mini-app-polis/evaluator-cog/commit/ec34f0dde5b78e13e81baa94f111b30b88c45a1d))
+
 ## [3.65.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.65.1...v3.65.2) (2026-11-03)
 
 
