@@ -659,6 +659,34 @@ def test_doc004_follows_script_wrappers_and_vite_config(tmp_path: Path) -> None:
     assert findings == []
 
 
+def test_doc004_follows_a_wrapper_around_a_wrapper(tmp_path: Path) -> None:
+    """k6's num(name) parses what env(name) reads from __ENV[name]: both
+    names are reads, listed or not."""
+    script = (
+        "function env(name, fallback) {\n"
+        "  const v = (__ENV[name] || '').trim();\n"
+        "  return v || fallback;\n"
+        "}\n"
+        "function num(name, fallback) {\n"
+        "  const raw = env(name);\n"
+        "  return raw === undefined ? fallback : Number(raw);\n"
+        "}\n"
+        "const cfg = { origin: env('LOAD_ORIGIN', 'x'), phones: num('LOAD_PHONES', 3) };\n"
+    )
+    listed = _doc004(
+        tmp_path / "listed",
+        {".env.example": "# LOAD_ORIGIN=\n# LOAD_PHONES=\n", "load/run.js": script},
+    )
+    assert listed == []
+    unlisted = _doc004(
+        tmp_path / "unlisted",
+        {".env.example": "# LOAD_ORIGIN=\n", "load/run.js": script},
+    )
+    assert unlisted == [
+        "load/run.js reads LOAD_PHONES, which .env.example does not list."
+    ]
+
+
 def test_doc004_flags_a_listed_name_nothing_reads(tmp_path: Path) -> None:
     findings = _doc004(
         tmp_path,
@@ -1403,6 +1431,22 @@ def test_fe005_accepts_use_form_context_and_ignores_non_form_elements() -> None:
     assert check_react_hook_form_zod(repo) == []
 
 
+def test_fe005_accepts_a_form_handed_down_by_its_owner() -> None:
+    """A component the owner passes its useForm result to manages no state
+    of its own: the form is React Hook Form's, held one level up."""
+    repo = _make_repo(
+        {
+            "package.json": _FE005_PKG,
+            "src/components/CheckinDialog.tsx": (
+                'import type { UseFormReturn } from "react-hook-form";\n'
+                "export default function D({ form }: { form: UseFormReturn<F> }) "
+                "{ return <form onSubmit={form.handleSubmit(go)} />; }\n"
+            ),
+        }
+    )
+    assert check_react_hook_form_zod(repo) == []
+
+
 def test_fe005_exempts_test_files() -> None:
     repo = _make_repo(
         {
@@ -1997,6 +2041,29 @@ def test_eval008_not_emitted_when_evaluator_yaml_present(tmp_path: Path) -> None
     _write_evaluator_yaml(tmp_path)
     result = run_all_checks(tmp_path, language="python", dod_type="new_cog")
     assert not any(f.get("rule_id") == "EVAL-008" for f in result.findings)
+
+
+def test_eval008_when_evaluator_yaml_does_not_parse(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# x\n")
+    _write_evaluator_yaml(
+        tmp_path,
+        "type: api-service\nexemptions:\n  - rule: API-006\n"
+        '    reason: "declare ForeignKey("users.id") here"\n',
+    )
+    result = run_all_checks(tmp_path, language="python", dod_type="new_cog")
+    eval008 = [f for f in result.findings if f.get("rule_id") == "EVAL-008"]
+    assert len(eval008) == 1
+    assert "does not parse at line 4" in eval008[0]["finding"]
+
+
+def test_eval008_when_evaluator_yaml_has_no_type(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# x\n")
+    _write_evaluator_yaml(tmp_path, "exemptions: []\n")
+    result = run_all_checks(tmp_path, language="python", dod_type="new_cog")
+    assert any(
+        f.get("rule_id") == "EVAL-008" and "declares no type" in f["finding"]
+        for f in result.findings
+    )
 
 
 def test_deferred_finding_has_info_and_flag(tmp_path: Path) -> None:

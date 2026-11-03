@@ -691,6 +691,11 @@ def check_response_envelope_presence(repo_path: Path) -> list[Finding]:
     return findings
 
 
+#: API-006's user column: ``user_id``, or one naming which user it holds —
+#: ``submitted_by_user_id``, ``user_a_id``.
+_USER_COLUMN = re.compile(r"^(?:[a-z0-9]+_)*user(?:_[a-z0-9]+)?_id$")
+
+
 def check_owner_id_column(repo_path: Path) -> list[Finding]:
     """API-006: Every table is authorization-scoped to a Clerk user.
 
@@ -704,9 +709,11 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
        class ends in ``Profile``/``Identity``/``User``).
 
     3. Relationship table — the row represents a relationship to a user,
-       using a ``user_id`` column that carries a ``ForeignKey`` to an
-       identity table. Detected by: ``user_id`` column with a ``ForeignKey``
-       argument in its ``mapped_column(...)`` / ``Column(...)`` call.
+       using a user column that carries a ``ForeignKey`` to an identity
+       table. A user column is ``user_id`` or one naming which user it
+       holds (``submitted_by_user_id``, ``user_a_id``). Detected by: such a
+       column with a ``ForeignKey`` argument in its ``mapped_column(...)`` /
+       ``Column(...)`` call.
 
     Existing exemptions by class-name suffix (``_lookup``, ``_config``,
     ``_enum``) continue to apply. The SQLAlchemy declarative root
@@ -832,8 +839,8 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
                         continue
                     if t.id == "owner_id":
                         has_owner_id = True
-                    elif t.id == "user_id" and value is not None:
-                        if _is_primary_key(value):
+                    elif _USER_COLUMN.match(t.id) and value is not None:
+                        if t.id == "user_id" and _is_primary_key(value):
                             user_id_is_pk = True
                         if _has_foreign_key(value):
                             user_id_has_fk = True
@@ -846,7 +853,8 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
                 node.name.endswith(s) for s in identity_class_suffixes
             ):
                 continue
-            # Pattern 3: relationship table — user_id carries a ForeignKey.
+            # Pattern 3: relationship table — a user column carries a
+            # ForeignKey.
             if user_id_has_fk:
                 continue
 
@@ -857,8 +865,8 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
                     "structural_conformance",
                     f"{rel}::{node.name}: SQLAlchemy model is not "
                     "authorization-scoped — no owner_id column, not an identity "
-                    "table (user_id primary key), and no user_id ForeignKey to "
-                    "an identity table.",
+                    "table (user_id primary key), and no user column with a "
+                    "ForeignKey to an identity table.",
                     "Add owner_id for ordinary tables; make user_id the primary "
                     "key for identity tables; or add a ForeignKey on user_id for "
                     "tables representing a relationship to a user. Suffix with "

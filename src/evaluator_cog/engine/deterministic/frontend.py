@@ -168,9 +168,10 @@ def check_shadcn(repo_path: Path) -> list[Finding]:
 
 # A JSX ``<form>`` element (not ``<Form>``, ``<formatted>`` or the like).
 _FE005_FORM_RE = re.compile(r"<form[\s>/]")
-# The React Hook Form hook that manages a form: ``useForm`` in the component
-# that owns it, ``useFormContext`` in one rendered inside its FormProvider.
-_FE005_USE_FORM_RE = re.compile(r"\buseForm(?:Context)?\s*[<(]")
+# The React Hook Form that manages a form: ``useForm`` in the component that
+# owns it, ``useFormContext`` in one rendered inside its FormProvider, or a
+# ``UseFormReturn`` prop in one its owner hands the form to.
+_FE005_USE_FORM_RE = re.compile(r"\buseForm(?:Context)?\s*[<(]|\bUseFormReturn\s*<")
 _FE005_TEST_DIRS = frozenset({"__tests__", "test", "tests"})
 
 
@@ -189,8 +190,9 @@ def check_react_hook_form_zod(repo_path: Path) -> list[Finding]:
     Two checks. The repo must depend on react-hook-form and zod once any
     form exists. And each component file (``.tsx``/``.jsx`` under
     ``src/``, test files aside) that renders a ``<form>`` element must
-    manage it with React Hook Form — a ``useForm`` (or ``useFormContext``)
-    call — rather than per-field ``useState``; each one that does not is
+    manage it with React Hook Form — a ``useForm`` or ``useFormContext``
+    call, or a ``UseFormReturn`` prop from the component that owns the form
+    — rather than per-field ``useState``; each one that does not is
     reported with its ``file``.
     """
     CHECK_ID = "FE-005"

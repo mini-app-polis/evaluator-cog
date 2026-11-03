@@ -288,7 +288,7 @@ def _script_env_reads(scripts: dict[Path, str]) -> dict[str, Path]:
     """
     reads: dict[str, Path] = {}
     defined: set[str] = set()
-    wrappers: set[str] = set()
+    functions: list[tuple[str, str, str]] = []
     for text in scripts.values():
         defined.update(_VITE_DEFINE_RE.findall(text))
         for match in _JS_FUNCTION_RE.finditer(text):
@@ -296,8 +296,25 @@ def _script_env_reads(scripts: dict[Path, str]) -> dict[str, Path]:
             param = match.group(2) or match.group(4)
             end = text.find("\n}", match.end())
             body = text[match.end() : end if end != -1 else match.end() + 600]
-            if re.search(r"env\[\s*" + re.escape(param) + r"\s*\]", body):
+            functions.append((name, param, body))
+    wrappers = {
+        name
+        for name, param, body in functions
+        # process.env[name], import.meta.env[name], or k6's __ENV[name].
+        if re.search(r"(?:env|__ENV)\[\s*" + re.escape(param) + r"\s*\]", body)
+    }
+    # A function that hands its parameter to a wrapper is one too:
+    # ``num(name)`` around ``env(name)`` around ``__ENV[name]``.
+    grew = True
+    while grew:
+        grew = False
+        for name, param, body in functions:
+            if name in wrappers or not wrappers:
+                continue
+            calls = "|".join(re.escape(w) for w in sorted(wrappers))
+            if re.search(rf"\b(?:{calls})\(\s*{re.escape(param)}\s*[,)]", body):
                 wrappers.add(name)
+                grew = True
     for path, text in scripts.items():
         found: list[str] = []
         for pattern in _JS_ENV_READ_RES:

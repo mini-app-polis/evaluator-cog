@@ -6,6 +6,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+import yaml
+
 from evaluator_cog.engine.deterministic._shared import (
     CheckResult,
     Finding,
@@ -220,6 +222,33 @@ def _type_to_dod(repo_type: str, language: str = "python") -> str | None:
 # in well under a tenth of a second; anything at this scale is either
 # doing network I/O or scanning quadratically.
 SLOW_CHECK_SECONDS = 2.0
+
+
+def _evaluator_yaml_problem(path: Path) -> tuple[str, str] | None:
+    """EVAL-008's finding for `path`, as (message, remedy), or None if it is
+    present, parses to a mapping and declares a type."""
+    if not path.exists():
+        return (
+            "evaluator.yaml is absent from repo root.",
+            "Add evaluator.yaml declaring type, traits, exemptions, and deferrals.",
+        )
+    try:
+        raw = yaml.safe_load(path.read_text())
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        where = getattr(exc, "problem_mark", None)
+        at = f" at line {where.line + 1}, column {where.column + 1}" if where else ""
+        return (
+            f"evaluator.yaml does not parse{at}, so this run used defaults: "
+            "none of its type, exemptions or layout_exceptions applied.",
+            "Fix the YAML; a double quote inside a double-quoted reason is the "
+            "usual cause.",
+        )
+    if not isinstance(raw, dict) or not raw.get("type"):
+        return (
+            "evaluator.yaml declares no type, so this run used defaults.",
+            "Declare type: as one of index.yaml's schema.repo_types.",
+        )
+    return None
 
 
 def run_all_checks(
@@ -984,17 +1013,15 @@ def run_all_checks(
     _run(check_cd_029, "CD-029")
     _run(check_cd_030, "CD-030")
 
-    # EVAL-008: check for evaluator.yaml presence
+    # EVAL-008: evaluator.yaml is present and readable. One that does not
+    # parse is as good as absent: the run falls back to defaults, so the
+    # repo type, exemptions and layout_exceptions all silently stop applying.
     _mark_checked("EVAL-008")
-    if not (repo_path / "evaluator.yaml").exists():
+    problem = _evaluator_yaml_problem(repo_path / "evaluator.yaml")
+    if problem is not None:
+        message, remedy = problem
         findings.append(
-            _finding(
-                "EVAL-008",
-                "WARN",
-                "structural_conformance",
-                "evaluator.yaml is absent from repo root.",
-                "Add evaluator.yaml declaring type, traits, exemptions, and deferrals.",
-            )
+            _finding("EVAL-008", "WARN", "structural_conformance", message, remedy)
         )
 
     if evaluator_config is not None:

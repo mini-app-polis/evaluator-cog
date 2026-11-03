@@ -340,6 +340,36 @@ def test_api006_reports_one_finding_per_model_with_its_file(tmp_path: Path) -> N
     ]
 
 
+def test_api006_accepts_a_named_user_column_with_a_foreign_key(tmp_path: Path) -> None:
+    """A row a person owns may name which user holds it; the ForeignKey is
+    what makes it a relationship to the identity table."""
+    models = (
+        _MODELS.split("\n\nclass Event")[0]
+        + """
+
+class Pair(Base):
+    __tablename__ = "pairs"
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_a_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id"))
+
+
+class Submission(Base):
+    __tablename__ = "submissions"
+    id: Mapped[str] = mapped_column(primary_key=True)
+    submitted_by_user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id"))
+
+
+class Audit(Base):
+    __tablename__ = "audits"
+    id: Mapped[str] = mapped_column(primary_key=True)
+    submitted_by_user_id: Mapped[str] = mapped_column(Text)
+    user_agent: Mapped[str] = mapped_column(Text, ForeignKey("agents.id"))
+"""
+    )
+    _write(tmp_path, {"src/app/models.py": models})
+    assert [f["model"] for f in check_owner_id_column(tmp_path)] == ["Audit"]
+
+
 def test_api006_findings_name_their_model(tmp_path: Path) -> None:
     _write(tmp_path, {"src/app/models.py": _MODELS})
     findings = check_owner_id_column(tmp_path)
