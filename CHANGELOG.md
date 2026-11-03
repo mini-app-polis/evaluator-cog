@@ -1,3 +1,11 @@
+## [3.65.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.65.1...v3.65.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* **checks:** report an unreadable evaluator.yaml, and follow form props, nested env wrappers and named user columns ([e97eb45](https://github.com/mini-app-polis/evaluator-cog/commit/e97eb45d319271eb63fa46646d14c9fde217c201))
+* **deps:** bump miniapppolis-common-utils to 7.9.1 ([c4f5487](https://github.com/mini-app-polis/evaluator-cog/commit/c4f54878e847435dce789dfb556d74a8ac1c7ae0))
+
 ## [3.65.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.65.0...v3.65.1) (2026-11-02)
 
 
