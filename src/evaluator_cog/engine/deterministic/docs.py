@@ -10,6 +10,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic._shared import (
+    PUBLIC_ROUTE_INTENT_MARKERS,
     Finding,
     _finding,
 )
@@ -865,12 +866,6 @@ def check_unauthenticated_routes_documented(repo_path: Path) -> list[Finding]:
 
     route_attrs = {"get", "post", "put", "delete", "patch"}
     exempt_paths = ("/health", "/metrics", "/docs", "/openapi.json", "/redoc")
-    public_markers = (
-        "intentionally public",
-        "no auth required",
-        "read-only public",
-        "public endpoint",
-    )
 
     for py_file in src.rglob("*.py"):
         try:
@@ -925,7 +920,9 @@ def check_unauthenticated_routes_documented(repo_path: Path) -> list[Finding]:
             # No auth — must have public-intent marker in description or docstring
             ds = ast.get_docstring(node) or ""
             combined = (description or "") + " " + ds
-            if not any(marker in combined.lower() for marker in public_markers):
+            if not any(
+                marker in combined.lower() for marker in PUBLIC_ROUTE_INTENT_MARKERS
+            ):
                 findings.append(
                     _finding(
                         "DOC-011",

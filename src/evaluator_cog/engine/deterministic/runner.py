@@ -166,7 +166,6 @@ from evaluator_cog.engine.deterministic.testing import (
     check_tests_split_by_layer,
 )
 from evaluator_cog.engine.deterministic.versioning import (
-    check_breaking_change_footer,
     check_conventional_commits,
     check_no_manual_changelog,
     check_release_commit_message,
@@ -498,7 +497,9 @@ def run_all_checks(
     _run(check_changelog, "DOC-003")
     _run(check_releaserc, "VER-003")
     _run(check_conventional_commits, "VER-001")
-    _run(check_breaking_change_footer, "VER-002")
+    # VER-002 has no check: the rule is not checkable, since a release tag
+    # points at semantic-release's own commit, which never carries the
+    # BREAKING CHANGE footer.
     _run(check_split_package_identity, "DOC-009")
     # DOC-016 / DOC-017 — code that names only what is its own, and says
     # what it does now. Every repo type; each reads src/ and tests/ only.
@@ -921,15 +922,11 @@ def run_all_checks(
 
     _run(check_releaserc_assets, "VER-008")
 
-    # XSTACK-003 pnpm — applies to api-service (TS) and react-app
-    if evaluator_config is not None:
-        _needs_pnpm = evaluator_config.is_react_app or (
-            evaluator_config.is_api_service and language == "typescript"
-        )
-    else:
-        _needs_pnpm = dod_type in ("new_hono_service", "new_react_app")
-
-    if _needs_pnpm:
+    # XSTACK-003 pnpm — every repo type in its applies_to, whatever the
+    # language: a Python service can still carry a nested package.json.
+    # resolve_dispatch() skips the repo types applies_to excludes; the
+    # legacy path has no catalog, so it gates on the same types itself.
+    if evaluator_config is not None or is_api_service or dod_type == "new_react_app":
         _run(check_pnpm_lockfile, "XSTACK-003")
 
     # ── Rules added with ecosystem-standards v5.x ────────────────────────

@@ -17,6 +17,7 @@ from evaluator_cog.engine.deterministic._shared import (
     _finding,
     _is_checker_self_source,
     _tracked_paths,
+    manifest_dirs,
 )
 from evaluator_cog.engine.deterministic._terraform import (
     dead_letter_queue_names,
@@ -1604,39 +1605,50 @@ def check_cd_010_react_app(repo_path: Path) -> list[Finding]:
 
 
 def check_pnpm_lockfile(repo_path: Path) -> list[Finding]:
-    """XSTACK-003: pnpm for all TypeScript projects."""
+    """XSTACK-003: pnpm for all TypeScript projects.
+
+    Reads every directory of the repo, hidden ones included, not only the
+    root: a nested package (``.railway/``, a ``web/`` app) installs from
+    its own lockfile. Each directory with a package.json needs a
+    pnpm-lock.yaml beside it, and an npm or yarn lockfile anywhere is a
+    finding. A repo with no package.json anywhere has no subject here.
+    """
     CHECK_ID = "XSTACK-003"
-    findings = []
-    if (repo_path / "package-lock.json").exists():
-        findings.append(
-            _finding(
-                "XSTACK-003",
-                "ERROR",
-                "structural_conformance",
-                "package-lock.json found — npm is not the approved package manager for TypeScript projects.",
-                "Migrate to pnpm: remove package-lock.json, run pnpm install, commit pnpm-lock.yaml.",
+    findings: list[Finding] = []
+    foreign_lockfiles = (("package-lock.json", "npm"), ("yarn.lock", "yarn"))
+    for directory in manifest_dirs(repo_path):
+        rel = directory.relative_to(repo_path)
+        where = "the repo root" if rel == Path(".") else f"{rel}/"
+        for lockfile, manager in foreign_lockfiles:
+            if (directory / lockfile).is_file():
+                path = lockfile if rel == Path(".") else f"{rel}/{lockfile}"
+                findings.append(
+                    _finding(
+                        CHECK_ID,
+                        "ERROR",
+                        "structural_conformance",
+                        f"{path} found — {manager} is not the approved package "
+                        "manager for TypeScript projects.",
+                        f"Migrate to pnpm: remove {path}, run pnpm install in "
+                        f"{where}, commit its pnpm-lock.yaml.",
+                        file=path,
+                    )
+                )
+        if (directory / "package.json").is_file() and not (
+            directory / "pnpm-lock.yaml"
+        ).is_file():
+            findings.append(
+                _finding(
+                    CHECK_ID,
+                    "WARN",
+                    "structural_conformance",
+                    f"package.json in {where} has no pnpm-lock.yaml beside it — "
+                    "pnpm may not be in use there.",
+                    f"Use pnpm as the package manager: run pnpm install in "
+                    f"{where} and commit its pnpm-lock.yaml.",
+                    file="package.json" if rel == Path(".") else f"{rel}/package.json",
+                )
             )
-        )
-    if (repo_path / "yarn.lock").exists():
-        findings.append(
-            _finding(
-                "XSTACK-003",
-                "ERROR",
-                "structural_conformance",
-                "yarn.lock found — yarn is not the approved package manager for TypeScript projects.",
-                "Migrate to pnpm: remove yarn.lock, run pnpm install, commit pnpm-lock.yaml.",
-            )
-        )
-    if not (repo_path / "pnpm-lock.yaml").exists():
-        findings.append(
-            _finding(
-                "XSTACK-003",
-                "WARN",
-                "structural_conformance",
-                "pnpm-lock.yaml not found — pnpm may not be in use.",
-                "Use pnpm as the package manager and commit pnpm-lock.yaml.",
-            )
-        )
     return findings
 
 
