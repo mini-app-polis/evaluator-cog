@@ -13,11 +13,75 @@ from evaluator_cog.engine.deterministic._shared import (
     declares_shared_library,
 )
 
+#: Vite config files, in the order Vite resolves them.
+_VITE_CONFIGS = ("vite.config.ts", "vite.config.js", "vite.config.mjs")
+
+#: import.meta.env names Vite itself provides, whatever envPrefix says.
+_VITE_BUILTIN_ENV = frozenset({"MODE", "BASE_URL", "PROD", "DEV", "SSR"})
+
+
+def _brace_block(text: str, open_index: int) -> str:
+    """The text between the ``{`` at ``open_index`` and its matching ``}``."""
+    depth = 0
+    for i in range(open_index, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_index + 1 : i]
+    return text[open_index + 1 :]
+
+
+def _vite_defined_env_names(config_text: str) -> set[str]:
+    """Env names a Vite config reads and maps into the bundle under ``define``.
+
+    A name counts when the ``define`` block reads it from ``process.env`` or
+    from a variable holding ``loadEnv(...)``'s result. Such a name reaches
+    the client by name rather than by envPrefix, so it keeps one name
+    everywhere.
+    """
+    sources = [r"process\.env"] + [
+        re.escape(m.group(1))
+        for m in re.finditer(
+            r"\b(?:const|let|var)\s+(\w+)\s*=\s*loadEnv\s*\(", config_text
+        )
+    ]
+    names: set[str] = set()
+    read_re = re.compile(
+        r"(?<![\w.])(?:"
+        + "|".join(sources)
+        + r")\s*(?:\.\s*([A-Za-z_]\w*)|\[\s*['\"]([A-Za-z_]\w*)['\"]\s*\])"
+    )
+    for m in re.finditer(r"\bdefine\s*:\s*\{", config_text):
+        block = _brace_block(config_text, m.end() - 1)
+        for read in read_re.finditer(block):
+            names.add(read.group(1) or read.group(2))
+    return names
+
+
+def _vite_extra_env_prefixes(config_text: str) -> list[str]:
+    """Prefixes other than VITE_ that a Vite config's envPrefix exposes."""
+    extra: list[str] = []
+    for m in re.finditer(
+        r"\benvPrefix\s*:\s*(\[[^\]]*\]|['\"][^'\"]*['\"])", config_text
+    ):
+        for prefix in re.findall(r"['\"]([^'\"]*)['\"]", m.group(1)):
+            if prefix != "VITE_" and prefix not in extra:
+                extra.append(prefix)
+    return extra
+
 
 def check_env_var_prefix(repo_path: Path) -> list[Finding]:
-    """XSTACK-004: Client-exposed env vars use PUBLIC_ or VITE_ prefix."""
+    """XSTACK-004: Client-exposed env vars use PUBLIC_ or VITE_ prefix.
+
+    In a Vite repo, an unprefixed ``import.meta.env`` name is flagged unless
+    Vite provides it or vite.config maps it into the bundle under
+    ``define`` — the one sanctioned way to expose a public value by name.
+    Widening ``envPrefix`` beyond VITE_ is flagged: it exposes every
+    variable carrying the added prefix, not one chosen name.
+    """
     CHECK_ID = "XSTACK-004"
-    import re
 
     findings: list[Finding] = []
     src = repo_path / "src"
@@ -28,20 +92,38 @@ def check_env_var_prefix(repo_path: Path) -> list[Finding]:
     has_astro = (repo_path / "astro.config.mjs").exists() or (
         repo_path / "astro.config.ts"
     ).exists()
-    has_vite = (
-        (repo_path / "vite.config.ts").exists()
-        or (repo_path / "vite.config.js").exists()
-        or (repo_path / "vite.config.mjs").exists()
+    vite_config = next(
+        (repo_path / n for n in _VITE_CONFIGS if (repo_path / n).is_file()), None
     )
 
     expected_prefix = None
     wrong_prefix = None
+    defined_names: set[str] = set()
     if has_astro:
         expected_prefix = "PUBLIC_"
         wrong_prefix = "VITE_"
-    elif has_vite:
+    elif vite_config is not None:
         expected_prefix = "VITE_"
         wrong_prefix = "PUBLIC_"
+        try:
+            config_text = vite_config.read_text()
+        except (OSError, UnicodeDecodeError):
+            config_text = ""
+        defined_names = _vite_defined_env_names(config_text)
+        for prefix in _vite_extra_env_prefixes(config_text):
+            findings.append(
+                _finding(
+                    CHECK_ID,
+                    "WARN",
+                    "structural_conformance",
+                    f"{vite_config.name}: envPrefix adds {prefix!r}, exposing "
+                    f"every {prefix}* variable to the client bundle.",
+                    "Keep envPrefix at VITE_. To ship one public value under "
+                    "its own name, read it in vite.config (loadEnv or "
+                    "process.env) and map it under `define`.",
+                    file=vite_config.name,
+                )
+            )
     else:
         return findings  # Not a frontend repo with client-side env vars
 
@@ -68,6 +150,27 @@ def check_env_var_prefix(repo_path: Path) -> list[Finding]:
                         "structural_conformance",
                         f"{rel}: env var {var} uses {wrong_prefix} prefix in a repo expecting {expected_prefix}.",
                         f"Rename to {expected_prefix}{var[len(wrong_prefix) :]}.",
+                    )
+                )
+            elif (
+                vite_config is not None
+                and not has_astro
+                and not var.startswith(expected_prefix)
+                and var not in _VITE_BUILTIN_ENV
+                and var not in defined_names
+            ):
+                findings.append(
+                    _finding(
+                        CHECK_ID,
+                        "WARN",
+                        "structural_conformance",
+                        f"{rel}: env var {var} has no VITE_ prefix and "
+                        f"{vite_config.name} does not map it under `define`, so "
+                        "it is undefined in the client bundle.",
+                        f"Rename to VITE_{var}, or read it in {vite_config.name} "
+                        "and map it under `define` if it is a public value that "
+                        "keeps one name.",
+                        file=rel,
                     )
                 )
     return findings

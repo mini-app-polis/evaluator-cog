@@ -98,7 +98,6 @@ jobs each clone a repository.
 | Rule | Blocker |
 |---|---|
 | VER-001 | Need git history (conventional commits on last 20) — requires full clone |
-| VER-002 | Need git history (BREAKING CHANGE on major tags) — requires full clone |
 | PRIN-008 | Need git history (fix commits touch tests) — requires full clone |
 | CD-004 | Needs GitHub API (verify pinned action tags exist); rate-limited |
 | EVAL-002 (table half), EVAL-006 | Need runtime SQL queries against `pipeline_evaluations` table. EVAL-002's source scan for hardcoded versions does run |

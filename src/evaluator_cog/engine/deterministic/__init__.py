@@ -170,7 +170,6 @@ from evaluator_cog.engine.deterministic.testing import (
     check_tests_split_by_layer,
 )
 from evaluator_cog.engine.deterministic.versioning import (
-    check_breaking_change_footer,
     check_conventional_commits,
     check_no_manual_changelog,
     check_release_commit_message,
@@ -213,7 +212,6 @@ __all__ = [
     "check_astro_runtime_queries",
     "check_async_sqlalchemy",
     "check_auth_header_parity",
-    "check_breaking_change_footer",
     "check_changelog",
     "check_doc_014",
     "check_doc_016",

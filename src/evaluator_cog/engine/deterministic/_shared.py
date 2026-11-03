@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,35 @@ def declares_shared_library(text: str, names: tuple[str, ...]) -> bool:
     """
     lowered = text.lower()
     return any(name in lowered for name in names)
+
+
+#: Phrases a route's description or docstring may carry to say it is public
+#: on purpose. DOC-011 asks for one; a route carrying one passes API-008 too.
+PUBLIC_ROUTE_INTENT_MARKERS = (
+    "intentionally public",
+    "no auth required",
+    "read-only public",
+    "public endpoint",
+)
+
+#: Directories a manifest scan never enters: installed packages and git's
+#: own store hold manifests the repository did not write.
+_MANIFEST_SCAN_SKIP_DIRS = frozenset({"node_modules", ".git"})
+
+
+def manifest_dirs(repo_path: Path) -> list[Path]:
+    """The repo root and every directory under it, hidden ones included.
+
+    Skips node_modules and .git. A nested package (``.railway/``, a
+    ``web/`` app) carries its own manifest and lockfile, and a scan of the
+    root alone never sees them. Sorted, so findings come out in a stable
+    order; symlinked directories are not followed.
+    """
+    dirs: list[Path] = []
+    for current, subdirs, _files in os.walk(repo_path):
+        subdirs[:] = sorted(d for d in subdirs if d not in _MANIFEST_SCAN_SKIP_DIRS)
+        dirs.append(Path(current))
+    return dirs
 
 
 @dataclass

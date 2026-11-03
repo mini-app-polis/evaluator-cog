@@ -40,6 +40,7 @@ from evaluator_cog.engine.deterministic._shared import (
     Finding,
     _finding,
     _tracked_paths,
+    manifest_dirs,
 )
 from evaluator_cog.engine.deterministic._terraform import (
     declares_terraform,
@@ -891,7 +892,9 @@ def _used_ecosystems(root: Path) -> list[str]:
     used: list[str] = []
     if (root / "uv.lock").is_file() or (root / "pyproject.toml").is_file():
         used.append("Python")
-    if _uses_javascript(root):
+    # A nested package (.railway/, a web/ app) is JavaScript the repo uses
+    # just as much as one at the root.
+    if any(_uses_javascript(directory) for directory in manifest_dirs(root)):
         used.append("JavaScript")
     workflows = root / ".github" / "workflows"
     if workflows.is_dir() and any(

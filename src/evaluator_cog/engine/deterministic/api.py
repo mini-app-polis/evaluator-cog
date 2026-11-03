@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic._shared import (
@@ -691,29 +692,47 @@ def check_response_envelope_presence(repo_path: Path) -> list[Finding]:
     return findings
 
 
-#: API-006's user column: ``user_id``, or one naming which user it holds —
-#: ``submitted_by_user_id``, ``user_a_id``.
-_USER_COLUMN = re.compile(r"^(?:[a-z0-9]+_)*user(?:_[a-z0-9]+)?_id$")
+#: The users table: a ForeignKey naming one of its columns scopes a row to a
+#: user even where no model in the repo maps the table.
+_USERS_TABLE = "users"
+
+
+@dataclass
+class _ApiModel:
+    """A SQLAlchemy model as API-006 reads it."""
+
+    name: str
+    rel: Path
+    table: str | None
+    #: Scoped on its own: an owner_id column, or an identity table.
+    direct: bool
+    #: Each ForeignKey's target: ("table", name) or ("class", name).
+    targets: list[tuple[str, str]]
 
 
 def check_owner_id_column(repo_path: Path) -> list[Finding]:
-    """API-006: Every table is authorization-scoped to a Clerk user.
+    """API-006: Every table is authorization-scoped to a principal.
 
-    Three patterns satisfy this:
+    Four patterns satisfy this:
 
     1. Direct ownership — the table has an ``owner_id`` column holding the
-       Clerk user ID of the row's owner. Majority case.
+       principal subject of the row's owner. Majority case.
 
     2. Identity table — the table IS the user; its primary key IS the user
        identifier. Detected by: primary-key column named ``user_id`` (or
        class ends in ``Profile``/``Identity``/``User``).
 
-    3. Relationship table — the row represents a relationship to a user,
-       using a user column that carries a ``ForeignKey`` to an identity
-       table. A user column is ``user_id`` or one naming which user it
-       holds (``submitted_by_user_id``, ``user_a_id``). Detected by: such a
-       column with a ``ForeignKey`` argument in its ``mapped_column(...)`` /
-       ``Column(...)`` call.
+    3. Relationship to a user — a column of any name whose
+       ``mapped_column(...)`` / ``Column(...)`` call carries a
+       ``ForeignKey(...)`` naming a column of an identity table: a model
+       satisfying pattern 2, or the ``users`` table.
+
+    4. Child table — a ``ForeignKey(...)`` naming a column of another
+       model's table, where that model is itself scoped by 1–4. Resolved
+       transitively; a cycle that never reaches 1–3 does not pass.
+
+    Foreign keys are read from the models only. A ``ForeignKey`` target is
+    a ``"table.column"`` string or a ``Model.column`` attribute.
 
     Existing exemptions by class-name suffix (``_lookup``, ``_config``,
     ``_enum``) continue to apply. The SQLAlchemy declarative root
@@ -742,8 +761,8 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
     # columns of their own.
     abstract_root_names = {"Base", "DeclarativeBase", "Model"}
 
-    def _column_call_kwargs(value: ast.AST) -> list[ast.keyword]:
-        """For a `mapped_column(...)` / `Column(...)` call, return its kwargs."""
+    def _column_call(value: ast.AST) -> ast.Call | None:
+        """The `mapped_column(...)` / `Column(...)` call, if `value` is one."""
         if isinstance(value, ast.Call):
             func = value.func
             func_name = None
@@ -752,40 +771,45 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
             elif isinstance(func, ast.Attribute):
                 func_name = func.attr
             if func_name in ("mapped_column", "Column"):
-                return list(value.keywords)
-        return []
+                return value
+        return None
 
-    def _column_call_positional_args(value: ast.AST) -> list[ast.AST]:
-        """For a column call, return its positional args (where FK can live)."""
-        if isinstance(value, ast.Call):
-            func = value.func
-            func_name = None
-            if isinstance(func, ast.Name):
-                func_name = func.id
-            elif isinstance(func, ast.Attribute):
-                func_name = func.attr
-            if func_name in ("mapped_column", "Column"):
-                return list(value.args)
-        return []
+    def _foreign_key_targets(value: ast.AST) -> list[tuple[str, str]]:
+        """What each ForeignKey(...) argument of a column call names.
 
-    def _has_foreign_key(value: ast.AST) -> bool:
-        """True if a column call contains a ForeignKey(...) argument."""
-        # ForeignKey can appear as a positional arg or as kwarg `foreign_keys=...`
-        for arg in _column_call_positional_args(value):
-            if isinstance(arg, ast.Call):
-                fn = arg.func
-                name = None
-                if isinstance(fn, ast.Name):
-                    name = fn.id
-                elif isinstance(fn, ast.Attribute):
-                    name = fn.attr
-                if name == "ForeignKey":
-                    return True
-        return False
+        ``("table", <name>)`` for a ``"table.column"`` string, ``("class",
+        <name>)`` for a ``Model.column`` attribute.
+        """
+        call = _column_call(value)
+        if call is None:
+            return []
+        targets: list[tuple[str, str]] = []
+        for arg in call.args:
+            if not isinstance(arg, ast.Call):
+                continue
+            fn = arg.func
+            name = None
+            if isinstance(fn, ast.Name):
+                name = fn.id
+            elif isinstance(fn, ast.Attribute):
+                name = fn.attr
+            if name != "ForeignKey" or not arg.args:
+                continue
+            ref = arg.args[0]
+            if isinstance(ref, ast.Constant) and isinstance(ref.value, str):
+                table = ref.value.rsplit(".", 1)[0].rsplit(".", 1)[-1]
+                if table:
+                    targets.append(("table", table))
+            elif isinstance(ref, ast.Attribute) and isinstance(ref.value, ast.Name):
+                targets.append(("class", ref.value.id))
+        return targets
 
     def _is_primary_key(value: ast.AST) -> bool:
         """True if a column call has primary_key=True."""
-        for kw in _column_call_kwargs(value):
+        call = _column_call(value)
+        if call is None:
+            return False
+        for kw in call.keywords:
             if (
                 kw.arg == "primary_key"
                 and isinstance(kw.value, ast.Constant)
@@ -794,6 +818,7 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
                 return True
         return False
 
+    models: list[_ApiModel] = []
     for py_file in src.rglob("*.py"):
         try:
             text = py_file.read_text()
@@ -817,65 +842,86 @@ def check_owner_id_column(repo_path: Path) -> list[Finding]:
                     base_names.append(b.attr)
             if not any(bn.endswith("Base") or "Declarative" in bn for bn in base_names):
                 continue
-            if any(node.name.endswith(s) for s in exempt_suffixes):
-                continue
 
             has_owner_id = False
             user_id_is_pk = False
-            user_id_has_fk = False
+            table: str | None = None
+            targets: list[tuple[str, str]] = []
 
             for stmt in node.body:
-                targets: list[ast.expr]
+                target_nodes: list[ast.expr]
                 if isinstance(stmt, ast.AnnAssign):
-                    targets = [stmt.target]
+                    target_nodes = [stmt.target]
                     value = stmt.value
                 elif isinstance(stmt, ast.Assign):
-                    targets = stmt.targets
+                    target_nodes = stmt.targets
                     value = stmt.value
                 else:
                     continue
-                for t in targets:
-                    if not isinstance(t, ast.Name):
+                for t in target_nodes:
+                    if not isinstance(t, ast.Name) or value is None:
+                        continue
+                    if t.id == "__tablename__":
+                        if isinstance(value, ast.Constant) and isinstance(
+                            value.value, str
+                        ):
+                            table = value.value
                         continue
                     if t.id == "owner_id":
                         has_owner_id = True
-                    elif _USER_COLUMN.match(t.id) and value is not None:
-                        if t.id == "user_id" and _is_primary_key(value):
-                            user_id_is_pk = True
-                        if _has_foreign_key(value):
-                            user_id_has_fk = True
+                    if t.id == "user_id" and _is_primary_key(value):
+                        user_id_is_pk = True
+                    targets.extend(_foreign_key_targets(value))
 
-            if has_owner_id:
-                continue
             # Pattern 2: identity table — user_id is PK, OR class-name suffix
             # indicates identity.
-            if user_id_is_pk or any(
+            is_identity = user_id_is_pk or any(
                 node.name.endswith(s) for s in identity_class_suffixes
-            ):
-                continue
-            # Pattern 3: relationship table — a user column carries a
-            # ForeignKey.
-            if user_id_has_fk:
-                continue
-
-            findings.append(
-                _finding(
-                    "API-006",
-                    "WARN",
-                    "structural_conformance",
-                    f"{rel}::{node.name}: SQLAlchemy model is not "
-                    "authorization-scoped — no owner_id column, not an identity "
-                    "table (user_id primary key), and no user column with a "
-                    "ForeignKey to an identity table.",
-                    "Add owner_id for ordinary tables; make user_id the primary "
-                    "key for identity tables; or add a ForeignKey on user_id for "
-                    "tables representing a relationship to a user. Suffix with "
-                    "_lookup/_config/_enum for internal tables, or document in "
-                    "evaluator.yaml.",
-                    file=rel,
-                    model=node.name,
-                )
             )
+            models.append(
+                _ApiModel(node.name, rel, table, has_owner_id or is_identity, targets)
+            )
+
+    # Patterns 3 and 4 as one fixed point: a ForeignKey to the users table,
+    # or to a model already scoped, scopes the model holding it. Pattern 3's
+    # identity tables are scoped by pattern 2, so they need no case of
+    # their own. A cycle with no way out never joins the set.
+    by_table = {m.table: m.name for m in models if m.table}
+    scoped = {m.name for m in models if m.direct}
+    changed = True
+    while changed:
+        changed = False
+        for m in models:
+            if m.name in scoped:
+                continue
+            for kind, name in m.targets:
+                parent = by_table.get(name) if kind == "table" else name
+                if (kind == "table" and name == _USERS_TABLE) or parent in scoped:
+                    scoped.add(m.name)
+                    changed = True
+                    break
+
+    for m in models:
+        if m.name in scoped or any(m.name.endswith(s) for s in exempt_suffixes):
+            continue
+        findings.append(
+            _finding(
+                "API-006",
+                "WARN",
+                "structural_conformance",
+                f"{m.rel}::{m.name}: SQLAlchemy model is not "
+                "authorization-scoped — no owner_id column, not an identity "
+                "table (user_id primary key), and no ForeignKey to an identity "
+                "table or to a table that is itself scoped.",
+                "Add owner_id for ordinary tables; make user_id the primary "
+                "key for identity tables; or declare the ForeignKey on the "
+                "model's column that ties each row to a user or to a scoped "
+                "parent table. Suffix with _lookup/_config/_enum for internal "
+                "tables, or document in evaluator.yaml.",
+                file=m.rel,
+                model=m.name,
+            )
+        )
     return findings
 
 

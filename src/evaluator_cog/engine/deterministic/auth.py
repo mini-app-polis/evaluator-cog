@@ -6,6 +6,7 @@ import ast
 from pathlib import Path
 
 from evaluator_cog.engine.deterministic._shared import (
+    PUBLIC_ROUTE_INTENT_MARKERS,
     PYTHON_SHARED_LIBRARY_NAMES,
     Finding,
     _finding,
@@ -69,10 +70,10 @@ def check_unauthenticated_routes(
       1. The function signature has a Depends(...) default (authed).
       2. The route path is on the built-in exempt list (/health,
          /metrics, /docs, /openapi.json, /redoc).
-      3. The decorator's description= or summary= kwarg contains the
-         phrase "intentionally public" (case-insensitive) — the route
+      3. The decorator's description= or summary= kwarg contains one of
+         DOC-011's public-intent phrases (case-insensitive) — the route
          explicitly documents its unauthenticated intent.
-      4. The handler's docstring contains "intentionally public".
+      4. The handler's docstring contains one of those phrases.
 
     Routes that lack auth and none of the above intent markers are
     flagged.
@@ -88,10 +89,13 @@ def check_unauthenticated_routes(
 
     route_attrs = {"get", "post", "put", "delete", "patch"}
     exempt_paths = ("/health", "/metrics", "/docs", "/openapi.json", "/redoc")
-    intent_marker = "intentionally public"
 
-    def _kwarg_contains(dec: ast.Call, kwarg_name: str, needle: str) -> bool:
-        """Return True if decorator's kwarg (string or concatenated) contains needle."""
+    def _has_marker(text: str) -> bool:
+        lowered = text.lower()
+        return any(marker in lowered for marker in PUBLIC_ROUTE_INTENT_MARKERS)
+
+    def _kwarg_contains(dec: ast.Call, kwarg_name: str) -> bool:
+        """Return True if decorator's kwarg (string or concatenated) has a marker."""
         for kw in dec.keywords:
             if kw.arg != kwarg_name:
                 continue
@@ -99,7 +103,7 @@ def check_unauthenticated_routes(
             if (
                 isinstance(kw.value, ast.Constant)
                 and isinstance(kw.value.value, str)
-                and needle in kw.value.value.lower()
+                and _has_marker(kw.value.value)
             ):
                 return True
             # Implicit-string-concatenation or parenthesized multi-line string:
@@ -107,8 +111,7 @@ def check_unauthenticated_routes(
             # as a single Constant in Python 3.12+, but may be a BinOp or
             # JoinedStr in other forms. Fall back to unparsing the node.
             try:
-                unparsed = ast.unparse(kw.value)
-                if needle in unparsed.lower():
+                if _has_marker(ast.unparse(kw.value)):
                     return True
             except Exception:
                 pass
@@ -160,14 +163,13 @@ def check_unauthenticated_routes(
                     break
             if has_depends:
                 continue
-            # "intentionally public" marker in decorator description/summary?
-            if _kwarg_contains(
-                route_dec, "description", intent_marker
-            ) or _kwarg_contains(route_dec, "summary", intent_marker):
+            # Public-intent marker in decorator description/summary?
+            if _kwarg_contains(route_dec, "description") or _kwarg_contains(
+                route_dec, "summary"
+            ):
                 continue
-            # "intentionally public" marker in function docstring?
-            doc = ast.get_docstring(node) or ""
-            if intent_marker in doc.lower():
+            # Public-intent marker in function docstring?
+            if _has_marker(ast.get_docstring(node) or ""):
                 continue
             findings.append(
                 _finding(
@@ -177,8 +179,8 @@ def check_unauthenticated_routes(
                     f"{rel}::{node.name}: route {route_path!r} has no Depends(...) auth.",
                     "Add Depends(verify_token) for protected routes, or document the "
                     "intentional public access in the route's decorator "
-                    "description=/summary= or docstring with the phrase "
-                    "'intentionally public'.",
+                    "description=/summary= or docstring with a phrase such as "
+                    "'intentionally public' or 'no auth required'.",
                     file=rel,
                     route=route_path,
                 )
