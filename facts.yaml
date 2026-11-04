@@ -1,0 +1,17 @@
+# The figures this repository owns, computed into facts.json by `facts
+# generate` (common-python-utils) and checked in CI by `facts check`.
+# Facts are generated, never edited by hand.
+repo: evaluator-cog
+facts:
+  deterministic_rules:
+    description: Rules the deterministic engine registers a check for, each counted once
+    # The same registrations EVAL-007 reads: a CHECK_ID constant, a _run()
+    # call, or a _mark_checked() reference.
+    matches:
+      file: src/evaluator_cog/engine/deterministic/*.py
+      pattern: '"([A-Z]+-(?:GAP-)?[0-9A-Z]+)"'
+      within:
+        - 'CHECK_ID\s*=\s*"[^"]+"'
+        - '_run\([^,]+,\s*"[^"]+"'
+        - '_mark_checked\([^)]*\)'
+      distinct: true
