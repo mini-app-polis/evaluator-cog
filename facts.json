@@ -1,0 +1,11 @@
+{
+  "repo": "evaluator-cog",
+  "facts": {
+    "deterministic_rules": {
+      "value": 134,
+      "description": "Rules the deterministic engine registers a check for, each counted once",
+      "source": "matches: src/evaluator_cog/engine/deterministic/*.py /\"([A-Z]+-(?:GAP-)?[0-9A-Z]+)\"/ within /CHECK_ID\\s*=\\s*\"[^\"]+\"/, /_run\\([^,]+,\\s*\"[^\"]+\"/, /_mark_checked\\([^)]*\\)/ distinct",
+      "as_of": "2026-11-04"
+    }
+  }
+}
