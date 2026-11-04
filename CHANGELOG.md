@@ -1,3 +1,17 @@
+# [3.67.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.66.2...v3.67.0) (2026-11-04)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 7.12.0 ([c8afee0](https://github.com/mini-app-polis/evaluator-cog/commit/c8afee0e992be7ba80a3241595619cf052a16a5d))
+* **deps:** bump miniapppolis-common-utils to 7.13.0 ([d793e0a](https://github.com/mini-app-polis/evaluator-cog/commit/d793e0a7130c9d0b4fdc496e77776d4ae8a1d286))
+* **deps:** bump miniapppolis-common-utils to 7.14.0 ([247f143](https://github.com/mini-app-polis/evaluator-cog/commit/247f1438348a57d50822ca6a3c1cc2e91ee4e31a))
+
+
+### Features
+
+* publish the deterministic rule count in facts.json ([bfdf1af](https://github.com/mini-app-polis/evaluator-cog/commit/bfdf1af31c25f6be7fadfeb10f110c916e21f111))
+
 ## [3.66.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.66.1...v3.66.2) (2026-11-03)
 
 
