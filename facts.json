@@ -6,6 +6,12 @@
       "description": "Rules the deterministic engine registers a check for, each counted once",
       "source": "matches: src/evaluator_cog/engine/deterministic/*.py /\"([A-Z]+-(?:GAP-)?[0-9A-Z]+)\"/ within /CHECK_ID\\s*=\\s*\"[^\"]+\"/, /_run\\([^,]+,\\s*\"[^\"]+\"/, /_mark_checked\\([^)]*\\)/ distinct",
       "as_of": "2026-11-04"
+    },
+    "test_functions": {
+      "value": 1166,
+      "description": "Test functions in the test suites (def test_*, each parametrized function once)",
+      "source": "matches: tests/**/test_*.py /(?m)^\\s*(?:async\\s+)?def test_\\w+/",
+      "as_of": "2026-11-04"
     }
   }
 }

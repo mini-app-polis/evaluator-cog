@@ -15,3 +15,8 @@ facts:
         - '_run\([^,]+,\s*"[^"]+"'
         - '_mark_checked\([^)]*\)'
       distinct: true
+  test_functions:
+    description: Test functions in the test suites (def test_*, each parametrized function once)
+    matches:
+      file: tests/**/test_*.py
+      pattern: '(?m)^\s*(?:async\s+)?def test_\w+'
