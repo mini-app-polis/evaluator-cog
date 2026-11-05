@@ -1,3 +1,10 @@
+## [3.69.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.69.2...v3.69.3) (2026-11-05)
+
+
+### Bug Fixes
+
+* **deps:** bump oauthlib to 4.0.1 and miniapppolis-common-utils to 7.20.0 ([bfd34c9](https://github.com/mini-app-polis/evaluator-cog/commit/bfd34c91072bf31a49c341efba4b5e6d1fb4cf71))
+
 ## [3.69.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.69.1...v3.69.2) (2026-11-05)
 
 
