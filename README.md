@@ -194,7 +194,10 @@ which the source is downloaded from GitHub as a zipball;
 **Outputs:** Structured findings written to the `pipeline_evaluations` table
 via `POST /v1/evaluations` on api-kaianolevine-com. Each finding includes
 `repo`, `run_id`, `severity`, `dimension`, `finding`, `suggestion`,
-`standards_version`, and `source`.
+`standards_version`, `evaluator_version` and `source`, and what was graded:
+`repo_version` (the ref read, a release tag on a release-triggered
+evaluation) and `repo_commit` (the commit the zipball's folder names), on
+every row for the repository, findings, `SUCCESS` and `STATUS` alike.
 
 ## Running locally
 

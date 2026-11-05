@@ -543,6 +543,10 @@ def test_run_standalone_deterministic_calls_load_evaluator_config(
         flow_name="deterministic-conformance",
         source="conformance_deterministic",
         standards_version="2.5.0",
+        # Outside handler() no repository is being evaluated, so neither is
+        # known; every post still names both.
+        repo_version=None,
+        repo_commit=None,
     )
 
 

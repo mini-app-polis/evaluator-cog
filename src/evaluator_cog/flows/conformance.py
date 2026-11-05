@@ -289,6 +289,15 @@ class RunContext:
     #: whatever was current when it booted.
     catalog: dict | None = None
 
+    #: The version of the application being evaluated: the ref read (a
+    #: release tag on a release-triggered evaluation) and the commit the
+    #: download turned out to be. Every row posted while it is evaluated
+    #: carries both, so a finding, and the clean evaluation that closes it,
+    #: say which release they are about. Set by :func:`handler` per
+    #: repository; ``repo_commit`` stays None when the download failed.
+    repo_version: str | None = None
+    repo_commit: str | None = None
+
     @classmethod
     def for_run(cls, flow_name: str = "conformance-check") -> RunContext:
         """A context whose coverage report will be sent when the run ends.
@@ -338,6 +347,8 @@ def _post_tracked(
     how a total outage came to be logged as success three times in one
     run.
     """
+    kwargs.setdefault("repo_version", ctx.repo_version)
+    kwargs.setdefault("repo_commit", ctx.repo_commit)
     result = post_findings(**kwargs)
     ctx.tally.merge(result)
     if result.posted:
@@ -811,6 +822,16 @@ def _fetch_zipball(
     return None
 
 
+#: A zipball's top-level folder is ``<owner>-<repo>-<commit>``.
+_ZIPBALL_COMMIT = re.compile(r"-([0-9a-f]{7,40})$")
+
+
+def zipball_commit(folder: str) -> str | None:
+    """The commit a GitHub zipball's top-level folder name ends in, or None."""
+    match = _ZIPBALL_COMMIT.search(folder)
+    return match.group(1) if match else None
+
+
 def _download_repo(
     repo_id: str,
     tmp_dir: str,
@@ -870,6 +891,9 @@ def _download_repo(
                 None,
             )
             if top_level:
+                # What the ref resolved to, from the folder GitHub named
+                # after it: no second API call to ask.
+                ctx.repo_commit = zipball_commit(top_level.name)
                 if dest.exists():
                     shutil.rmtree(dest)
                 top_level.rename(dest)
@@ -1745,122 +1769,132 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
     if not service_ids:
         return result
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        root = _download_repo(event.repo, tmp_dir, event.ref, event.org, ctx=ctx)
-        if root is None:
-            # One failed download hides every service inside it. The row
-            # goes against each of them rather than against the repository.
-            for service_id in service_ids:
-                log.warning(
-                    "%s: skipping %s — could not download %s@%s",
-                    event.mode,
-                    service_id,
-                    event.repo,
-                    event.ref,
-                )
-                _report_issue("repo_download_failed", service_id, ctx=ctx)
-                # A 404 and an unreachable GitHub are both "not
-                # evaluated", and only the first is evidence the registry
-                # is wrong. _download_repo records a 404 on the context;
-                # anything else it could not tell apart from a bad day.
-                not_found = any(
-                    entry.get("label") == f"{event.org}/{event.repo}"
-                    for entry in ctx.unresolved_downloads
-                )
-                reason = (
-                    _NOT_FOUND_REASON_FMT.format(
-                        org=event.org, repo=event.repo, ref=event.ref
+    # Every row for this repository names the ref it read; the download
+    # fills in the commit.
+    ctx.repo_version = event.ref
+    ctx.repo_commit = None
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = _download_repo(event.repo, tmp_dir, event.ref, event.org, ctx=ctx)
+            if root is None:
+                # One failed download hides every service inside it. The row
+                # goes against each of them rather than against the repository.
+                for service_id in service_ids:
+                    log.warning(
+                        "%s: skipping %s — could not download %s@%s",
+                        event.mode,
+                        service_id,
+                        event.repo,
+                        event.ref,
                     )
-                    if not_found
-                    else (
-                        f"the repository could not be downloaded "
-                        f"({event.repo}@{event.ref})"
+                    _report_issue("repo_download_failed", service_id, ctx=ctx)
+                    # A 404 and an unreachable GitHub are both "not
+                    # evaluated", and only the first is evidence the registry
+                    # is wrong. _download_repo records a 404 on the context;
+                    # anything else it could not tell apart from a bad day.
+                    not_found = any(
+                        entry.get("label") == f"{event.org}/{event.repo}"
+                        for entry in ctx.unresolved_downloads
                     )
-                )
-                _post_not_evaluated(
-                    service_id,
-                    reason,
-                    ctx=ctx,
-                    run_id=event.run_id,
-                    flow_name=flow_name,
-                    source=source,
-                    standards_version=standards_version,
-                )
-                result.not_evaluated.append(service_id)
-            return result
-
-        findings_by_service: dict[str, list[dict[str, Any]]] = {}
-
-        for service in event.services:
-            service_id = str(service.get("id") or "")
-            if not service_id:
-                continue
-
-            log.info("%s: processing %s", event.mode, service_id)
-
-            try:
-                if run_llm:
-                    _run_standalone_conformance(
-                        service,
-                        root,
-                        standards_version,
-                        event.run_id,
-                        rule_applies_to=rule_applies_to,
-                        rule_catalog=rule_catalog,
-                        catalog_schema=catalog_schema,
+                    reason = (
+                        _NOT_FOUND_REASON_FMT.format(
+                            org=event.org, repo=event.repo, ref=event.ref
+                        )
+                        if not_found
+                        else (
+                            f"the repository could not be downloaded "
+                            f"({event.repo}@{event.ref})"
+                        )
+                    )
+                    _post_not_evaluated(
+                        service_id,
+                        reason,
                         ctx=ctx,
+                        run_id=event.run_id,
+                        flow_name=flow_name,
+                        source=source,
+                        standards_version=standards_version,
+                    )
+                    result.not_evaluated.append(service_id)
+                return result
+
+            findings_by_service: dict[str, list[dict[str, Any]]] = {}
+
+            for service in event.services:
+                service_id = str(service.get("id") or "")
+                if not service_id:
+                    continue
+
+                log.info("%s: processing %s", event.mode, service_id)
+
+                try:
+                    if run_llm:
+                        _run_standalone_conformance(
+                            service,
+                            root,
+                            standards_version,
+                            event.run_id,
+                            rule_applies_to=rule_applies_to,
+                            rule_catalog=rule_catalog,
+                            catalog_schema=catalog_schema,
+                            ctx=ctx,
+                        )
+                        result.evaluated.append(service_id)
+                    else:
+                        computed = _evaluate_service_deterministic(
+                            service,
+                            root,
+                            standards_version,
+                            event.run_id,
+                            rule_catalog=rule_catalog,
+                            catalog_schema=catalog_schema,
+                            ctx=ctx,
+                        )
+                        if computed is None:
+                            # It reported its own failure; nothing left to say.
+                            result.not_evaluated.append(service_id)
+                        else:
+                            findings_by_service[service_id] = computed
+                except Exception as exc:
+                    # Anything around the checks rather than inside them —
+                    # loading evaluator.yaml, parsing check_exceptions. These
+                    # post a not-evaluated row too; logging alone would be the
+                    # same invisible absence by a different route.
+                    log.error(
+                        "%s: unhandled error processing %s — skipping: %s",
+                        event.mode,
+                        service_id,
+                        exc,
+                        exc_info=True,
+                    )
+                    _post_not_evaluated(
+                        service_id,
+                        f"processing raised before findings could be computed "
+                        f"({type(exc).__name__}: {exc})",
+                        ctx=ctx,
+                        run_id=event.run_id,
+                        flow_name=flow_name,
+                        source=source,
+                        standards_version=standards_version,
+                    )
+                    result.not_evaluated.append(service_id)
+
+            if not run_llm:
+                for service_id, service_findings in findings_by_service.items():
+                    _post_service_findings(
+                        service_id,
+                        service_findings,
+                        ctx=ctx,
+                        standards_version=standards_version,
+                        run_id=event.run_id,
+                        flow_name=flow_name,
                     )
                     result.evaluated.append(service_id)
-                else:
-                    computed = _evaluate_service_deterministic(
-                        service,
-                        root,
-                        standards_version,
-                        event.run_id,
-                        rule_catalog=rule_catalog,
-                        catalog_schema=catalog_schema,
-                        ctx=ctx,
-                    )
-                    if computed is None:
-                        # It reported its own failure; nothing left to say.
-                        result.not_evaluated.append(service_id)
-                    else:
-                        findings_by_service[service_id] = computed
-            except Exception as exc:
-                # Anything around the checks rather than inside them —
-                # loading evaluator.yaml, parsing check_exceptions. These
-                # post a not-evaluated row too; logging alone would be the
-                # same invisible absence by a different route.
-                log.error(
-                    "%s: unhandled error processing %s — skipping: %s",
-                    event.mode,
-                    service_id,
-                    exc,
-                    exc_info=True,
-                )
-                _post_not_evaluated(
-                    service_id,
-                    f"processing raised before findings could be computed "
-                    f"({type(exc).__name__}: {exc})",
-                    ctx=ctx,
-                    run_id=event.run_id,
-                    flow_name=flow_name,
-                    source=source,
-                    standards_version=standards_version,
-                )
-                result.not_evaluated.append(service_id)
-
-        if not run_llm:
-            for service_id, service_findings in findings_by_service.items():
-                _post_service_findings(
-                    service_id,
-                    service_findings,
-                    ctx=ctx,
-                    standards_version=standards_version,
-                    run_id=event.run_id,
-                    flow_name=flow_name,
-                )
-                result.evaluated.append(service_id)
+    finally:
+        # Rows posted after this repository (another in a sweep, introspection)
+        # are not about it.
+        ctx.repo_version = None
+        ctx.repo_commit = None
 
     return result
 

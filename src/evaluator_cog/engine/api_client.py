@@ -87,6 +87,8 @@ def post_findings(
     source: str,
     standards_version: str,
     direct_finding_text: str | None = None,
+    repo_version: str | None = None,
+    repo_commit: str | None = None,
 ) -> PostResult:
     """Post a list of findings to api-kaianolevine-com.
 
@@ -145,6 +147,12 @@ def post_findings(
             "source": source,
             "violation_id": violation_id,
         }
+        # What was graded: the ref read and its commit. Only when known, so
+        # a row with neither sends neither.
+        if repo_version:
+            payload["repo_version"] = repo_version
+        if repo_commit:
+            payload["repo_commit"] = repo_commit
         result.attempted += 1
         if sev != "SUCCESS":
             result.by_severity[sev] += 1
