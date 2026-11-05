@@ -289,9 +289,9 @@ class RunContext:
     #: whatever was current when it booted.
     catalog: dict | None = None
 
-    #: The version of the application being evaluated: the ref read (a
-    #: release tag on a release-triggered evaluation) and the commit the
-    #: download turned out to be. Every row posted while it is evaluated
+    #: The version of the application being evaluated: the release tag on
+    #: the commit read (:func:`release_tag`), or the ref read when no tag
+    #: points at it, and the commit the download turned out to be. Every row posted while it is evaluated
     #: carries both, so a finding, and the clean evaluation that closes it,
     #: say which release they are about. Set by :func:`handler` per
     #: repository; ``repo_commit`` stays None when the download failed.
@@ -832,6 +832,46 @@ def zipball_commit(folder: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _version_key(tag: str) -> tuple[int, ...]:
+    """A tag's numbers, for picking the highest of several on one commit."""
+    return tuple(int(n) for n in re.findall(r"\d+", tag))
+
+
+def release_tag(
+    org: str,
+    repo_id: str,
+    commit: str,
+    headers: dict[str, str],
+    timeout: float,
+) -> str | None:
+    """The release tag on ``commit``, or None. Never raises.
+
+    A release asks for its repository's default branch, not the tag it
+    just cut, so the ref alone says ``main``. The tag on the commit that
+    was read is the version: one call for the repository's tags, matched
+    on the commit (a prefix, as the zipball names it). Lightweight tags
+    only, which is what semantic-release cuts; an annotated tag names a
+    tag object, not the commit, and is not matched. A commit no tag points
+    at is not a release, and keeps its ref.
+    """
+    url = f"https://api.github.com/repos/{org}/{repo_id}/git/matching-refs/tags"
+    try:
+        response = httpx.get(url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+        refs = response.json()
+    except Exception as exc:  # noqa: BLE001 — the version is a label, not the work
+        log.warning("conformance: could not read %s's tags: %s", repo_id, exc)
+        return None
+    tags: list[str] = []
+    for ref in refs if isinstance(refs, list) else []:
+        target = ref.get("object") if isinstance(ref, dict) else None
+        if not isinstance(target, dict) or target.get("type") != "commit":
+            continue
+        if str(target.get("sha", "")).startswith(commit):
+            tags.append(str(ref.get("ref", "")).removeprefix("refs/tags/"))
+    return max(tags, key=_version_key) if tags else None
+
+
 def _download_repo(
     repo_id: str,
     tmp_dir: str,
@@ -894,6 +934,12 @@ def _download_repo(
                 # What the ref resolved to, from the folder GitHub named
                 # after it: no second API call to ask.
                 ctx.repo_commit = zipball_commit(top_level.name)
+                if ctx.repo_commit:
+                    # The release on that commit, when there is one: a
+                    # release asks for the branch, not its tag.
+                    tag = release_tag(org, repo_id, ctx.repo_commit, headers, timeout)
+                    if tag:
+                        ctx.repo_version = tag
                 if dest.exists():
                     shutil.rmtree(dest)
                 top_level.rename(dest)
