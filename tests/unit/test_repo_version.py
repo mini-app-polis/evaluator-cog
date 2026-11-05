@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -75,3 +75,54 @@ def test_the_version_is_cleared_once_the_repository_is_done() -> None:
     assert post.call_args.kwargs["repo_commit"] == "abc1234"
     assert ctx.repo_version is None
     assert ctx.repo_commit is None
+
+
+# -- the release tag on the commit read ---------------------------------------
+
+
+def _refs(*pairs: tuple[str, str, str]) -> list[dict]:
+    return [
+        {"ref": f"refs/tags/{name}", "object": {"type": kind, "sha": sha}}
+        for name, kind, sha in pairs
+    ]
+
+
+def _tag(refs, commit: str = "eb761c4"):
+    response = MagicMock()
+    response.json.return_value = refs
+    with patch.object(conf.httpx, "get", return_value=response) as get:
+        tag = conf.release_tag("mini-app-polis", "website", commit, {}, 5.0)
+    assert get.call_args.args[0] == (
+        "https://api.github.com/repos/mini-app-polis/website/git/matching-refs/tags"
+    )
+    return tag
+
+
+def test_the_tag_on_the_commit_is_its_version() -> None:
+    refs = _refs(
+        ("v2.1.2", "commit", "0000000aaaa"),
+        ("v2.1.3", "commit", "eb761c462614ed1502d6d237eb85795d1665f49f"),
+    )
+    assert _tag(refs) == "v2.1.3"
+
+
+def test_of_two_tags_on_one_commit_the_highest_is_its_version() -> None:
+    refs = _refs(
+        ("v2", "commit", "eb761c4abc"),
+        ("v2.10.0", "commit", "eb761c4abc"),
+        ("v2.9.0", "commit", "eb761c4abc"),
+    )
+    assert _tag(refs) == "v2.10.0"
+
+
+def test_a_commit_no_release_tags_has_no_tag() -> None:
+    assert _tag(_refs(("v2.1.2", "commit", "0000000aaaa"))) is None
+
+
+def test_an_annotated_tag_is_not_matched() -> None:
+    assert _tag(_refs(("v2.1.3", "tag", "eb761c4abc"))) is None
+
+
+def test_github_failing_leaves_the_version_alone() -> None:
+    with patch.object(conf.httpx, "get", side_effect=RuntimeError("down")):
+        assert conf.release_tag("o", "r", "eb761c4", {}, 5.0) is None
