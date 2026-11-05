@@ -1,3 +1,10 @@
+## [3.69.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.69.1...v3.69.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* **findings:** say why the release tag lookup is not retried ([28ff618](https://github.com/mini-app-polis/evaluator-cog/commit/28ff618d9c1d48ae0de594d574050e774a4a01d0))
+
 ## [3.69.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.69.0...v3.69.1) (2026-11-05)
 
 
