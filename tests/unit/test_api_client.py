@@ -237,3 +237,43 @@ def test_post_findings_counts_what_it_offered_by_severity(monkeypatch) -> None:
         )
 
     assert result.by_severity == {"WARN": 2, "INFO": 1}
+
+
+# ---------------------------------------------------------------------------
+# post_findings — the version of the application evaluated
+# ---------------------------------------------------------------------------
+
+
+def _posted_with(monkeypatch, **kwargs) -> dict:
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")
+    posted: list[dict] = []
+
+    def _fake_post(path: str, payload: dict) -> dict:
+        posted.append(payload)
+        return api_fakes.store(path, payload)
+
+    with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
+        m.from_env.return_value = api_fakes.api(post=_fake_post)
+        post_findings(
+            findings=[{"dimension": "x", "severity": "SUCCESS", "finding": "clean"}],
+            run_id="run-version",
+            repo="infra",
+            flow_name=None,
+            source="conformance_deterministic",
+            standards_version="6.20.0",
+            **kwargs,
+        )
+    (payload,) = posted
+    return payload
+
+
+def test_a_finding_names_the_application_version_and_commit(monkeypatch) -> None:
+    payload = _posted_with(monkeypatch, repo_version="v1.43.0", repo_commit="abc1234")
+    assert payload["repo_version"] == "v1.43.0"
+    assert payload["repo_commit"] == "abc1234"
+
+
+def test_a_finding_without_them_sends_neither(monkeypatch) -> None:
+    payload = _posted_with(monkeypatch)
+    assert "repo_version" not in payload
+    assert "repo_commit" not in payload
