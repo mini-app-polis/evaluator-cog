@@ -1,3 +1,10 @@
+## [3.69.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.69.0...v3.69.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **findings:** record the release tag on the evaluated commit as the application version ([feac9d0](https://github.com/mini-app-polis/evaluator-cog/commit/feac9d0ec59b43e64b91b434f2cb7147184d4bff))
+
 # [3.69.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.68.0...v3.69.0) (2026-11-05)
 
 
