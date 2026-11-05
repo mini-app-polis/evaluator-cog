@@ -855,6 +855,8 @@ def release_tag(
     at is not a release, and keeps its ref.
     """
     url = f"https://api.github.com/repos/{org}/{repo_id}/git/matching-refs/tags"
+    # no-retry: the tag only labels the rows; a failed read keeps the ref as
+    # the version, and the repository's next evaluation reads the tags again.
     try:
         response = httpx.get(url, headers=headers, timeout=timeout)
         response.raise_for_status()
