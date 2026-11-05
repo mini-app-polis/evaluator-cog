@@ -1,3 +1,19 @@
+# [3.68.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.67.0...v3.68.0) (2026-11-05)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 7.15.0 ([c0f099e](https://github.com/mini-app-polis/evaluator-cog/commit/c0f099e4fd1869d4f4487f719f4fd12462bc7290))
+* **deps:** bump miniapppolis-common-utils to 7.16.0 ([5e1bec3](https://github.com/mini-app-polis/evaluator-cog/commit/5e1bec3492b943bb831ee33f2ba78fecc9d4e976))
+* **deps:** bump miniapppolis-common-utils to 7.17.0 ([2cbf401](https://github.com/mini-app-polis/evaluator-cog/commit/2cbf401bb6c4e41fe0346f102112c6371b7824c9))
+* **deps:** bump miniapppolis-common-utils to 7.18.0 ([2c14b2b](https://github.com/mini-app-polis/evaluator-cog/commit/2c14b2bb6def0daabfccc83452128dcb229b1921))
+* **deps:** bump miniapppolis-common-utils to 7.18.1 ([00c9619](https://github.com/mini-app-polis/evaluator-cog/commit/00c9619311e00e78b261c042710c22fd05f743f6))
+
+
+### Features
+
+* **facts:** publish the test-function count ([b0cf2c4](https://github.com/mini-app-polis/evaluator-cog/commit/b0cf2c4c54811cc56ca41ed2c77210e53963977c))
+
 # [3.67.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.66.2...v3.67.0) (2026-11-04)
 
 
