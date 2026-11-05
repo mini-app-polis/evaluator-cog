@@ -1,3 +1,15 @@
+# [3.69.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.68.0...v3.69.0) (2026-11-05)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 7.19.0 ([7305f38](https://github.com/mini-app-polis/evaluator-cog/commit/7305f38bc31eb1885c42a79e72c795bd35b57259))
+
+
+### Features
+
+* **findings:** send the evaluated application's version and commit on every row ([937ac7e](https://github.com/mini-app-polis/evaluator-cog/commit/937ac7e2aebf470fcba922b48c626e6e7a502fd1))
+
 # [3.68.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.67.0...v3.68.0) (2026-11-05)
 
 
