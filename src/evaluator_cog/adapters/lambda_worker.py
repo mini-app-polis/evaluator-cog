@@ -71,9 +71,10 @@ DEADLINE_MARGIN_SECONDS = 30
 #: as in every cog so a Drive or Sheets call added later is covered.
 #:
 #: The value is googleapiclient's ``DEFAULT_HTTP_TIMEOUT_SEC``, held here
-#: rather than imported: the Lambda deploy strips the Google client stack
-#: from the zip, so importing it fails the worker at start. A test pins the
-#: two together, so a change upstream fails CI rather than drifting.
+#: rather than imported: evaluator-cog installs the Google client stack only
+#: for its tests, so it is not in the Lambda package and importing it fails
+#: the worker at start. A test pins the two together, so a change upstream
+#: fails CI rather than drifting.
 REQUEST_HEADROOM_SECONDS: float = 60.0
 
 

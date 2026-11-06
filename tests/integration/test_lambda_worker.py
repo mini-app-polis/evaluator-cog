@@ -369,8 +369,9 @@ def test_each_record_writes_one_timing_line(capsys: pytest.CaptureFixture[str]) 
 
 
 def test_request_headroom_is_googleapiclients_request_timeout() -> None:
-    """Held as a literal because the deploy strips googleapiclient; pinned
-    here, where the full dependency set is installed, so it cannot drift."""
+    """Held as a literal because googleapiclient is a test dependency only, not
+    in the Lambda package; pinned here, where it is installed, so it cannot
+    drift."""
     from googleapiclient.http import DEFAULT_HTTP_TIMEOUT_SEC
 
     assert lw.REQUEST_HEADROOM_SECONDS == DEFAULT_HTTP_TIMEOUT_SEC
