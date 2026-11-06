@@ -60,13 +60,6 @@ jobs:
       handler: evaluator_cog.adapters.lambda_worker.lambda_handler
       architecture: arm64
       python-version: "3.11"
-      # The Google client stack, which evaluator-cog never imports but
-      # common-utils depends on unconditionally. The deploy imports every
-      # module in Lambda's image, so a strip that removes something used
-      # fails the build rather than a message.
-      strip: >-
-        googleapiclient google gspread google_auth_httplib2.py httplib2
-        oauth2client pyasn1 pyasn1_modules rsa uritemplate
       role-arn: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       region: ${{ vars.AWS_REGION }}
       function-name: ${{ vars.AWS_FUNCTION_NAME }}
