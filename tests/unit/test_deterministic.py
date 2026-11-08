@@ -341,6 +341,29 @@ def test_check_pyproject_respects_exceptions_for_subrules() -> None:
     assert "PY-002" in rule_ids
 
 
+@pytest.mark.parametrize(
+    ("requires_python", "flagged"),
+    [
+        ('requires-python = ">=3.11"', False),
+        ('requires-python = ">=3.12"', False),
+        ('requires-python = ">=3.14"', False),
+        ("requires-python = '>= 3.14'", False),
+        ('requires-python = ">=3.10"', True),
+        ('requires-python = "~=3.11"', True),
+        (None, True),
+    ],
+)
+def test_check_pyproject_py003_compares_the_requires_python_floor(
+    requires_python: str | None, flagged: bool
+) -> None:
+    lines = ["[project]", 'name = "my-cog"']
+    if requires_python is not None:
+        lines.append(requires_python)
+    repo = _make_repo({"pyproject.toml": "\n".join(lines) + "\n"})
+    rule_ids = [f["rule_id"] for f in check_pyproject(repo)]
+    assert ("PY-003" in rule_ids) is flagged
+
+
 def test_check_ci_missing_semantic_release() -> None:
     repo = _make_repo(
         {

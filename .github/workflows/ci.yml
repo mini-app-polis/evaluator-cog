@@ -29,6 +29,9 @@ jobs:
   test:
     uses: mini-app-polis/.github/.github/workflows/python-test.yml@v3
     with:
+      # The Lambda runtime's Python: infra's runtime for this function,
+      # and the deploy job's python-version below.
+      python-version: "3.14"
       # TEST-012. Without this input the shared workflow skips its
       # typecheck step and says nothing, which is how this repo went
       # untyped.
@@ -59,7 +62,7 @@ jobs:
       # whose architecture differs.
       handler: evaluator_cog.adapters.lambda_worker.lambda_handler
       architecture: arm64
-      python-version: "3.11"
+      python-version: "3.14"
       role-arn: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       region: ${{ vars.AWS_REGION }}
       function-name: ${{ vars.AWS_FUNCTION_NAME }}
