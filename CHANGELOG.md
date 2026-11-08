@@ -1,3 +1,19 @@
+# [3.70.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.69.6...v3.70.0) (2026-11-08)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 8.10.0 ([0ff73ae](https://github.com/mini-app-polis/evaluator-cog/commit/0ff73ae62ea64e00d66de8ddb04151465e980dda))
+* **deps:** bump miniapppolis-common-utils to 8.10.1 ([d3d3550](https://github.com/mini-app-polis/evaluator-cog/commit/d3d3550f23566d10035bc513ec2628fb7940f052))
+* **deps:** bump miniapppolis-common-utils to 8.8.0 ([7a380e2](https://github.com/mini-app-polis/evaluator-cog/commit/7a380e284118838b32244c68154be863247126eb))
+* **deps:** bump miniapppolis-common-utils to 8.9.0 ([98377a5](https://github.com/mini-app-polis/evaluator-cog/commit/98377a5953903464d3916109cd0671695ef071ac))
+* **py-003:** compare the requires-python floor instead of matching >=3.11 or >=3.12 ([5da400e](https://github.com/mini-app-polis/evaluator-cog/commit/5da400eed6001668f38423734d56818fb88dbe8a))
+
+
+### Features
+
+* run on Python 3.14 ([f17d03d](https://github.com/mini-app-polis/evaluator-cog/commit/f17d03d54361a8a2a39ce1d1d107d78b0584b5b2))
+
 ## [3.69.6](https://github.com/mini-app-polis/evaluator-cog/compare/v3.69.5...v3.69.6) (2026-11-07)
 
 
