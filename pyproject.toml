@@ -2,7 +2,7 @@
 name = "evaluator-cog"
 dynamic = ["version"]
 description = "Standalone pipeline evaluation flow for the Kaiano ecosystem."
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = [
     # 6.1.0 is the floor, not a preference: _deadline.py imports
     # mini_app_polis.deadline, which lands there. (Below 5.10.0, too,
@@ -76,7 +76,7 @@ known-first-party = ["evaluator_cog"]
 quote-style = "double"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 strict = false
 ignore_missing_imports = true
 
