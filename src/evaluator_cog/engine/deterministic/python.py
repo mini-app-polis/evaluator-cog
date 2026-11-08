@@ -237,6 +237,19 @@ def check_version_source(repo_path: Path) -> list[Finding]:
     return findings
 
 
+_REQUIRES_PYTHON_FLOOR = re.compile(
+    r"""^\s*requires-python\s*=\s*["']\s*>=\s*(\d+)\.(\d+)""", re.MULTILINE
+)
+
+
+def _requires_python_floor(content: str) -> tuple[int, int] | None:
+    """The `>=X.Y` lower bound of requires-python, or None when there is none."""
+    match = _REQUIRES_PYTHON_FLOOR.search(content)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
 def check_pyproject(
     repo_path: Path,
     exceptions: frozenset[str] | None = None,
@@ -288,11 +301,8 @@ def check_pyproject(
             )
         )
 
-    if (
-        "PY-003" not in _exc
-        and 'requires-python = ">=3.11"' not in content
-        and ">=3.12" not in content
-    ):
+    floor = _requires_python_floor(content)
+    if "PY-003" not in _exc and (floor is None or floor < (3, 11)):
         findings.append(
             _finding(
                 "PY-003",
