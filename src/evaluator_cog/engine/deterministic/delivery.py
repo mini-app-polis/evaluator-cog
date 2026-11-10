@@ -1675,21 +1675,31 @@ _SHARED_RELEASE_ACTIONS = (
 
 
 def check_cd_031(repo_path: Path) -> list[Finding]:
-    """CD-031: every release requests its own conformance evaluation.
+    """CD-031: every change requests its own conformance evaluation, after
+    CI and before the release.
 
     (1) A push-triggered workflow has a job calling the shared evaluate.yml.
-    (2) That job's ``needs:`` reaches, directly or transitively, the job
-    that ships the change — one that runs semantic-release (itself, or
-    through the shared release workflow or action), or, for a Terraform
-    root with no releases, one that runs ``terraform apply`` — so it
-    evaluates what shipped, not the tree before it.
+    (2) Where it runs:
+
+    - a repo-scope request (the default) runs after CI — its ``needs:``
+      reaches the ``test`` job — and before the release: it reaches no job
+      that runs semantic-release, so a change that cuts no release is still
+      graded;
+    - a fleet-scope request (``scope: fleet``: ecosystem-standards and
+      evaluator-cog) runs after the release, since the fleet must be graded
+      by the catalog or evaluator that release ships;
+    - a Terraform root, with no releases, evaluates after ``terraform
+      apply``.
     """
     from evaluator_cog.engine.deterministic._workflows import load_workflows
 
     CHECK_ID = "CD-031"
     findings: list[Finding] = []
     evaluate_jobs = []
+    terraform_root = False
     for wf in load_workflows(repo_path):
+        if any(step.run_invokes("terraform apply") for step in wf.steps):
+            terraform_root = True
         if "push" not in wf.triggers:
             continue
         by_id = {job.job_id: job for job in wf.jobs}
@@ -1706,20 +1716,20 @@ def check_cd_031(repo_path: Path) -> list[Finding]:
                 CHECK_ID,
                 "WARN",
                 "cd_readiness",
-                "No CI job calls the shared evaluate.yml, so a release of this "
+                "No CI job calls the shared evaluate.yml, so a change to this "
                 "repository never requests its own conformance evaluation — its "
                 "findings only move when a standards or evaluator release sweeps "
                 "the fleet.",
-                "Add an evaluate job after the release job: `needs: release`, "
-                "`if: github.ref == 'refs/heads/main' && github.event_name == "
+                "Add an evaluate job after CI: `needs: [test, security]`, "
+                "`if: github.ref == 'refs/heads/dev' && github.event_name == "
                 "'push'`, `uses: mini-app-polis/.github/.github/workflows/"
-                "evaluate.yml@v3`, with `secrets: api-key: "
+                "evaluate.yml@v3`, `with: ref: dev`, and `secrets: api-key: "
                 "${{ secrets.CI_VALIDATOR_API_KEY }}`.",
             )
         )
         return findings
 
-    def _releases(job_id: str, by_id: dict, seen: set[str]) -> bool:
+    def _ships(job_id: str, by_id: dict, seen: set[str]) -> bool:
         if job_id in seen:
             return False
         seen.add(job_id)
@@ -1738,27 +1748,63 @@ def check_cd_031(repo_path: Path) -> list[Finding]:
             for step in job.steps
         ):
             return True
-        return any(_releases(n, by_id, seen) for n in job.needs)
+        return any(_ships(n, by_id, seen) for n in job.needs)
 
-    for _wf, by_id, job in evaluate_jobs:
-        if any(_releases(n, by_id, set()) for n in job.needs):
-            return findings
-
-    wf, _by_id, job = evaluate_jobs[0]
-    findings.append(
-        _finding(
-            CHECK_ID,
-            "WARN",
-            "cd_readiness",
-            f"{wf.rel}::{job.job_id} calls evaluate.yml but does not run after the "
-            f"release — its needs ({', '.join(job.needs) or 'none'}) reach no job "
-            f"that runs semantic-release or terraform apply, so it can evaluate "
-            f"the tree before the change shipped.",
-            "Make the evaluate job depend on the release job (`needs: release`), "
-            "on the deploy job that itself needs the release, or — in a "
-            "Terraform root — on the apply job.",
+    def _reaches(target: str, job_id: str, by_id: dict, seen: set[str]) -> bool:
+        if job_id in seen:
+            return False
+        seen.add(job_id)
+        if job_id == target:
+            return True
+        job = by_id.get(job_id)
+        return job is not None and any(
+            _reaches(target, n, by_id, seen) for n in job.needs
         )
-    )
+
+    problems: list[tuple[str, str]] = []
+    for wf, by_id, job in evaluate_jobs:
+        where = f"{wf.rel}::{job.job_id}"
+        ships = any(_ships(n, by_id, set()) for n in job.needs)
+        if terraform_root or job.inputs.get("scope", "").strip() == "fleet":
+            if ships:
+                return findings
+            problems.append(
+                (
+                    f"{where} calls evaluate.yml but does not run after the "
+                    f"change ships — its needs ({', '.join(job.needs) or 'none'}) "
+                    "reach no job that runs semantic-release or terraform apply, "
+                    "so a fleet pass or a Terraform root is graded before the "
+                    "change is live.",
+                    "Make the evaluate job depend on the release (or the deploy "
+                    "that needs it), or — in a Terraform root — on the apply job.",
+                )
+            )
+            continue
+        after_ci = any(_reaches("test", n, by_id, set()) for n in job.needs)
+        if after_ci and not ships:
+            return findings
+        if ships:
+            problems.append(
+                (
+                    f"{where} calls evaluate.yml after the release, so a change "
+                    "that cuts no release (a docs or chore commit, say) is never "
+                    "graded and a finding it fixes stays open.",
+                    "Run the evaluate job after CI instead: `needs: [test, "
+                    "security]`, on pushes to dev, `with: ref: dev`.",
+                )
+            )
+        else:
+            problems.append(
+                (
+                    f"{where} calls evaluate.yml without waiting for CI — its "
+                    f"needs ({', '.join(job.needs) or 'none'}) do not reach the "
+                    "test job, so it can grade a change that fails CI.",
+                    "Make the evaluate job depend on CI: `needs: [test, security]`.",
+                )
+            )
+
+    finding, suggestion = problems[0]
+    findings.append(_finding(CHECK_ID, "WARN", "cd_readiness", finding, suggestion))
     return findings
 
 

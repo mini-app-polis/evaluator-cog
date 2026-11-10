@@ -92,6 +92,8 @@ class Job:
     #: Job ids this job waits for. ``needs:`` may be a string or a list.
     needs: list[str] = field(default_factory=list)
     steps: list[Step] = field(default_factory=list)
+    #: The inputs a reusable-workflow job passes (``with:``), as text.
+    inputs: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -186,6 +188,11 @@ def load_workflows(repo_path: Path) -> list[Workflow]:
                     uses=str(job_data.get("uses") or ""),
                     continue_on_error=job_coe,
                     needs=needs,
+                    inputs={
+                        str(k): str(v) for k, v in (job_data.get("with") or {}).items()
+                    }
+                    if isinstance(job_data.get("with"), dict)
+                    else {},
                 )
                 raw_steps = job_data.get("steps")
                 if isinstance(raw_steps, list):
