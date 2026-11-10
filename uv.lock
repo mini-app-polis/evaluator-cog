@@ -440,7 +440,7 @@ dependencies = [
     { name = "sentry-sdk" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "google-api-python-client" },
     { name = "mypy" },
@@ -454,20 +454,23 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.34,<2" },
-    { name = "google-api-python-client", marker = "extra == 'dev'", specifier = ">=2.177.0,<3.0.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "miniapppolis-common-utils", specifier = ">=8.0.0,<10" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8.0" },
     { name = "pydantic", specifier = ">=2.6,<3.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.2" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
-    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sentry-sdk", specifier = ">=2.0,<3.0" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "google-api-python-client", specifier = ">=2.177.0,<3.0.0" },
+    { name = "mypy", specifier = ">=1.11.2" },
+    { name = "pre-commit", specifier = ">=3.8.0" },
+    { name = "pytest", specifier = ">=8.3.2" },
+    { name = "pytest-cov", specifier = ">=5.0.0" },
+    { name = "respx", specifier = ">=0.21.0" },
+    { name = "ruff", specifier = ">=0.8.0" },
+]
 
 [[package]]
 name = "filelock"
@@ -705,16 +708,16 @@ wheels = [
 
 [[package]]
 name = "miniapppolis-common-utils"
-version = "9.1.0"
+version = "9.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/8f/c50c0229c7e608cf2c67a6ef6d40104dd0f12fc07b07dad03b6e7331e8c9/miniapppolis_common_utils-9.1.0.tar.gz", hash = "sha256:3df7e6fc3241d820451fa7938120ec5a5722018ecf0960f526a69c8df9696e62", size = 469965, upload-time = "2026-11-09T16:32:36.515Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/ab/14445ecadf42b161187b8a8662492dda1b18881880b393e733a94f9452a0/miniapppolis_common_utils-9.3.0.tar.gz", hash = "sha256:a6f486f12d9b19993dd08ee105da0c14fa18ba07c037b6968f55bf2f20fbfaa0", size = 471953, upload-time = "2026-11-09T19:57:39.419Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/3d/83a0327added8761b253249952fcd4662f2dcbdf1b032875a06ad0b74bcf/miniapppolis_common_utils-9.1.0-py3-none-any.whl", hash = "sha256:731fc92bc02f45210d69f70ec2baaded61e638804fe642348db0ed488ea164ab", size = 239356, upload-time = "2026-11-09T16:32:35.305Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/f1/60e1dd62974768d480174c760c962eba6f0681d6a0341a9e2795e6830bae/miniapppolis_common_utils-9.3.0-py3-none-any.whl", hash = "sha256:43f5a498c99dc7fb0636913875d30871580c23d61ac282ea88de0a1deca199b8", size = 240552, upload-time = "2026-11-09T19:57:37.593Z" },
 ]
 
 [[package]]
