@@ -1675,15 +1675,15 @@ _SHARED_RELEASE_ACTIONS = (
 
 
 def check_cd_031(repo_path: Path) -> list[Finding]:
-    """CD-031: every change requests its own conformance evaluation, after
-    CI and before the release.
+    """CD-031: every push to main requests its own conformance evaluation,
+    after CI and before the release.
 
     (1) A push-triggered workflow has a job calling the shared evaluate.yml.
     (2) Where it runs:
 
     - a repo-scope request (the default) runs after CI — its ``needs:``
       reaches the ``test`` job — and before the release: it reaches no job
-      that runs semantic-release, so a change that cuts no release is still
+      that runs semantic-release, so a push that cuts no release is still
       graded;
     - a fleet-scope request (``scope: fleet``: ecosystem-standards and
       evaluator-cog) runs after the release, since the fleet must be graded
@@ -1721,9 +1721,9 @@ def check_cd_031(repo_path: Path) -> list[Finding]:
                 "findings only move when a standards or evaluator release sweeps "
                 "the fleet.",
                 "Add an evaluate job after CI: `needs: [test, security]`, "
-                "`if: github.ref == 'refs/heads/dev' && github.event_name == "
+                "`if: github.ref == 'refs/heads/main' && github.event_name == "
                 "'push'`, `uses: mini-app-polis/.github/.github/workflows/"
-                "evaluate.yml@v3`, `with: ref: dev`, and `secrets: api-key: "
+                "evaluate.yml@v3`, and `secrets: api-key: "
                 "${{ secrets.CI_VALIDATOR_API_KEY }}`.",
             )
         )
@@ -1786,11 +1786,11 @@ def check_cd_031(repo_path: Path) -> list[Finding]:
         if ships:
             problems.append(
                 (
-                    f"{where} calls evaluate.yml after the release, so a change "
-                    "that cuts no release (a docs or chore commit, say) is never "
-                    "graded and a finding it fixes stays open.",
+                    f"{where} calls evaluate.yml after the release, so a push to "
+                    "main that cuts no release (docs or chore commits only) is "
+                    "never graded and a finding it fixes stays open.",
                     "Run the evaluate job after CI instead: `needs: [test, "
-                    "security]`, on pushes to dev, `with: ref: dev`.",
+                    "security]`, on pushes to main.",
                 )
             )
         else:
