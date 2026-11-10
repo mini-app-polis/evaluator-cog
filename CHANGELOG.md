@@ -1,3 +1,10 @@
+# [3.71.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.70.5...v3.71.0) (2026-11-10)
+
+
+### Features
+
+* **cd-031:** grade an evaluate job that runs after CI and before the release ([02caa76](https://github.com/mini-app-polis/evaluator-cog/commit/02caa76626659fddcab831d4884d05a9e4f7e4f7))
+
 ## [3.70.5](https://github.com/mini-app-polis/evaluator-cog/compare/v3.70.4...v3.70.5) (2026-11-10)
 
 
