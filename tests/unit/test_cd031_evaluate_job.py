@@ -1,5 +1,5 @@
-"""CD-031: every change requests its own conformance evaluation, after CI
-and before the release."""
+"""CD-031: every push to main requests its own conformance evaluation, after
+CI and before the release."""
 
 from __future__ import annotations
 
@@ -27,10 +27,10 @@ _RELEASE = """
 _EVALUATE = """
   evaluate:
     needs: {needs}
-    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     uses: mini-app-polis/.github/.github/workflows/evaluate.yml@v3
     with:
-      ref: dev{extra}
+      mode: deterministic{extra}
     secrets:
       api-key: ${{{{ secrets.CI_VALIDATOR_API_KEY }}}}
 """
