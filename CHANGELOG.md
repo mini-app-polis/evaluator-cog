@@ -1,3 +1,10 @@
+## [3.71.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.71.0...v3.71.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cd-031:** suggest the evaluation on pushes to main, after CI ([fe150ad](https://github.com/mini-app-polis/evaluator-cog/commit/fe150adf6a19a024db7ca03219c29c22889c8cac))
+
 # [3.71.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.70.5...v3.71.0) (2026-11-10)
 
 
