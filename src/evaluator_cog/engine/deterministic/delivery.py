@@ -205,6 +205,41 @@ def _current_pipeline_major() -> int | None:
     return None
 
 
+def repo_on_pipeline(repo_name: str) -> bool | None:
+    """Whether the pipeline config lists ``repo_name`` as moved onto the pipeline.
+
+    ``on_pipeline`` in pipeline.yaml names the repositories the move has
+    reached, or is ``all`` once it has reached every one. CD-041, CD-042 and
+    CD-043 grade only those: a repository the move has not reached would
+    fail all three by construction, and those findings say nothing the move's
+    own plan does not. A missing key lists nobody. None when the config
+    cannot be read, so the caller can say it could not tell.
+    """
+    try:
+        listed = _fetch_pipeline_config().get("on_pipeline")
+    except Exception:
+        return None
+    if isinstance(listed, str):
+        return listed.strip().lower() == "all"
+    if isinstance(listed, list):
+        return repo_name in {str(name).strip() for name in listed}
+    return False
+
+
+def pipeline_scope_unreadable_finding() -> Finding:
+    """The CHECKER finding for an ``on_pipeline`` list that could not be read."""
+    return _finding(
+        "CHECKER",
+        "WARN",
+        "structural_conformance",
+        f"CD-041, CD-042, CD-043: could not read on_pipeline from "
+        f"{_PIPELINE_CONFIG_URL}; the canonical-pipeline rules were not checked.",
+        "Investigate connectivity to raw.githubusercontent.com and the "
+        "pipeline.yaml in mini-app-polis/.github, then re-run the evaluation.",
+        file=_CI_REL,
+    )
+
+
 def check_cd_041(repo_path: Path, repo_type: str = "") -> list[Finding]:
     """CD-041: ci.yml is a thin caller of the canonical pipeline at its current major."""
     CHECK_ID = "CD-041"

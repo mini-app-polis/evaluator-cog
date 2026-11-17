@@ -76,6 +76,8 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_terraform_checked_in_ci,
     check_terraform_versions_pinned,
     check_three_layer_observability,
+    pipeline_scope_unreadable_finding,
+    repo_on_pipeline,
 )
 from evaluator_cog.engine.deterministic.dependencies import check_xstack_007
 from evaluator_cog.engine.deterministic.docs import (
@@ -265,6 +267,7 @@ def run_all_checks(
     rule_catalog: dict[str, dict] | None = None,
     catalog_schema: dict | None = None,
     progress: Callable[[str], None] | None = None,
+    repo_name: str = "",
 ) -> CheckResult:
     """Run deterministic checks against a repo and return combined findings.
 
@@ -1004,9 +1007,23 @@ def run_all_checks(
     # from mini-app-polis/.github), adds work only after it, and nothing
     # else deploys. The type tells mini-app-polis/.github, the pipeline's
     # source, and infrastructure's Cloudflare Pages projects apart.
-    _run(lambda p: check_cd_041(p, repo_type=_repo_type_for_checks), "CD-041")
-    _run(check_cd_042, "CD-042")
-    _run(lambda p: check_cd_043(p, repo_type=_repo_type_for_checks), "CD-043")
+    #
+    # They grade only the repositories pipeline.yaml lists in on_pipeline;
+    # the rest are still counted as checked, with nothing to report. When
+    # the list cannot be read, one CHECKER finding says so instead of a
+    # verdict on every repository.
+    _on_pipeline = repo_on_pipeline(repo_name)
+    if _on_pipeline:
+        _run(lambda p: check_cd_041(p, repo_type=_repo_type_for_checks), "CD-041")
+        _run(check_cd_042, "CD-042")
+        _run(lambda p: check_cd_043(p, repo_type=_repo_type_for_checks), "CD-043")
+    else:
+        _unscoped = (
+            [] if _on_pipeline is False else [pipeline_scope_unreadable_finding()]
+        )
+        _run(lambda _p: _unscoped, "CD-041")
+        _run(lambda _p: [], "CD-042")
+        _run(lambda _p: [], "CD-043")
 
     # structural_conformance — the identity contract. CD-019 is the
     # caller's side and needs the resolved repo type to tell a caller from
