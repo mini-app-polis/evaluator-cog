@@ -1,3 +1,16 @@
+# [3.72.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.71.8...v3.72.0) (2026-11-17)
+
+
+### Bug Fixes
+
+* **deps:** bump miniapppolis-common-utils to 9.14.1 ([da18a77](https://github.com/mini-app-polis/evaluator-cog/commit/da18a770472ccf8b9fdf0960414c6b5ced3cb35e))
+* **deps:** bump miniapppolis-common-utils to 9.14.2 ([a5e4d86](https://github.com/mini-app-polis/evaluator-cog/commit/a5e4d86c4d2fbfbbcb4b1815be8cdc0c8df0a012))
+
+
+### Features
+
+* **conformance:** evaluate a pinned sha with its release phase and check the canonical-pipeline rules ([96a25cf](https://github.com/mini-app-polis/evaluator-cog/commit/96a25cf95a9a8c59c45567e07da456473004dcc4))
+
 ## [3.71.9](https://github.com/mini-app-polis/evaluator-cog/compare/v3.71.8...v3.71.9) (2026-11-17)
 
 
