@@ -190,14 +190,19 @@ assessment.
 `evaluation.repository` names a repository and the services it carries, from
 which the source is downloaded from GitHub as a zipball;
 `evaluation.introspection` asks for the checks that belong to no repository.
+A repository message may also pin a commit `sha`, read instead of its `ref`
+with no release tag required, and a `phase`, `pre-release` or
+`post-release`, for where in the release the evaluation sits.
 
 **Outputs:** Structured findings written to the `pipeline_evaluations` table
 via `POST /v1/evaluations` on api-kaianolevine-com. Each finding includes
 `repo`, `run_id`, `severity`, `dimension`, `finding`, `suggestion`,
 `standards_version`, `evaluator_version` and `source`, and what was graded:
 `repo_version` (the release tag on the commit read, or the ref read
-when no release tag points at it) and `repo_commit` (the commit the zipball's folder names), on
-every row for the repository, findings, `SUCCESS` and `STATUS` alike.
+when no release tag points at it; only the tag when a `sha` was pinned) and
+`repo_commit` (the commit the zipball's folder names, or the pinned `sha`), and
+`phase` when one was named, on every row for the repository, findings,
+`SUCCESS` and `STATUS` alike.
 
 ## Running locally
 

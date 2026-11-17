@@ -30,14 +30,17 @@ accident.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from mini_app_polis import logger as logger_mod
 from mini_app_polis.api.contract import (
     EvaluationIntrospectionMessage,
-    EvaluationRepositoryMessage,
     EvaluationRepositoryPayload,
+    QueueMessage,
 )
 from mini_app_polis.lambda_worker import UnprocessableMessage, parse_message
 from mini_app_polis.pipeline_status import post_run_finding
+from pydantic import Field
 
 from evaluator_cog._version import __version__
 from evaluator_cog.flows.conformance import (
@@ -59,10 +62,29 @@ __all__ = ["UnprocessableMessage", "process_message"]
 
 log = logger_mod.get_logger()
 
+#: The release phases a repository message may name.
+_PHASES = frozenset({"pre-release", "post-release"})
 
-def _event_from(
-    payload: EvaluationRepositoryPayload, *, ctx: RunContext
-) -> EvaluationEvent:
+
+class RepositoryPayload(EvaluationRepositoryPayload):
+    """The shared payload plus the commit and release phase CI pinned.
+
+    The shared contract does not carry ``sha`` or ``phase`` yet, and would
+    drop them unread. Both optional, so a message without them is read
+    exactly as the shared model reads it.
+    """
+
+    sha: str | None = Field(default=None, description="The commit to evaluate.")
+    phase: str | None = Field(default=None, description="pre-release or post-release.")
+
+
+class RepositoryMessage(QueueMessage[RepositoryPayload]):
+    """``evaluation.repository``, read with :class:`RepositoryPayload`."""
+
+    type: Literal["evaluation.repository"] = "evaluation.repository"
+
+
+def _event_from(payload: RepositoryPayload, *, ctx: RunContext) -> EvaluationEvent:
     """One repository, as the API described it.
 
     No registry lookup: the event carries what CI already knew, and the
@@ -82,6 +104,10 @@ def _event_from(
     mode = payload.mode
     if mode not in {"deterministic", "llm"}:
         raise UnprocessableMessage(f"unknown mode {mode!r}")
+
+    phase = payload.phase or ""
+    if phase and phase not in _PHASES:
+        raise UnprocessableMessage(f"unknown phase {phase!r}")
 
     run_id = payload.run_id or ""
     if not run_id:
@@ -111,6 +137,8 @@ def _event_from(
         run_id=run_id,
         mode=mode,
         standards_version=payload.standards_version or "",
+        sha=(payload.sha or "").strip(),
+        phase=phase,
     )
 
 
@@ -120,11 +148,9 @@ def process_message(body: str) -> None:
     Shared with the Lambda entrypoint, which differs only in where the body
     comes from and who deletes it afterwards.
     """
-    message = parse_message(
-        body, EvaluationRepositoryMessage, EvaluationIntrospectionMessage
-    )
+    message = parse_message(body, RepositoryMessage, EvaluationIntrospectionMessage)
 
-    if isinstance(message, EvaluationRepositoryMessage):
+    if isinstance(message, RepositoryMessage):
         # Named before the context exists, because the report is created
         # with it. An unrecognised mode is still refused in _event_from —
         # this only decides what the run calls itself, and a bad value never
@@ -191,7 +217,7 @@ def _report_run(
     # sections below it say only what went wrong with the run.
     if isinstance(ctx.report, VersionedRunReport):
         kind = "LLM check" if event.mode == "llm" else "deterministic check"
-        ctx.report.check = f"{event.repo}@{event.ref} — {kind}"
+        ctx.report.check = f"{event.repo}@{event.sha[:7] or event.ref} — {kind}"
         ctx.report.found = dict(ctx.tally.by_severity)
     for service_id in result.not_evaluated:
         ctx.report.issue("not_evaluated", service_id)

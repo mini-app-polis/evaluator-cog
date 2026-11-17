@@ -18,14 +18,33 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+from typing import Literal
 
 from mini_app_polis import logger as logger_mod
 from mini_app_polis.api import KaianoApiClient as CommonPythonApiClient
 from mini_app_polis.api.contract import PipelineEvaluationCreate
+from pydantic import Field
 
 from evaluator_cog import __version__ as _EVALUATOR_VERSION
 
 log = logger_mod.get_logger()
+
+
+class FindingCreate(PipelineEvaluationCreate):
+    """``PipelineEvaluationCreate`` with the release phase it was graded in.
+
+    The shared contract does not carry ``phase`` yet, and refuses fields it
+    does not know. Optional and omitted when unset, so a row with no phase
+    is exactly the shared model's.
+    """
+
+    phase: Literal["pre-release", "post-release"] | None = Field(
+        default=None,
+        description=(
+            "pre-release or post-release when the release path asked for "
+            "the evaluation; null otherwise."
+        ),
+    )
 
 
 @dataclass
@@ -89,6 +108,7 @@ def post_findings(
     direct_finding_text: str | None = None,
     repo_version: str | None = None,
     repo_commit: str | None = None,
+    phase: str | None = None,
 ) -> PostResult:
     """Post a list of findings to api-kaianolevine-com.
 
@@ -153,15 +173,15 @@ def post_findings(
             payload["repo_version"] = repo_version
         if repo_commit:
             payload["repo_commit"] = repo_commit
+        if phase:
+            payload["phase"] = phase
         result.attempted += 1
         if sev != "SUCCESS":
             result.by_severity[sev] += 1
         try:
             # Validated here, so a finding the API would refuse fails before
             # it is sent and is counted the same way as a refusal.
-            stored = api_client.create_evaluation(
-                PipelineEvaluationCreate.model_validate(payload)
-            )
+            stored = api_client.create_evaluation(FindingCreate.model_validate(payload))
         except Exception as e:
             log.warning("pipeline evaluation: failed to POST finding: %s", e)
             result.failed += 1

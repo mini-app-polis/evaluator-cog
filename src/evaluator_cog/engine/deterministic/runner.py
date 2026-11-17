@@ -57,6 +57,9 @@ from evaluator_cog.engine.deterministic.delivery import (
     check_cd_010_infrastructure,
     check_cd_010_react_app,
     check_cd_031,
+    check_cd_041,
+    check_cd_042,
+    check_cd_043,
     check_ci,
     check_coverage_floor,
     check_gha_not_trigger_relay,
@@ -996,6 +999,14 @@ def run_all_checks(
 
     # cd_readiness — a release requests its own evaluation.
     _run(check_cd_031, "CD-031")
+
+    # The canonical pipeline: ci.yml calls it at the current major (read
+    # from mini-app-polis/.github), adds work only after it, and nothing
+    # else deploys. The type tells mini-app-polis/.github, the pipeline's
+    # source, and infrastructure's Cloudflare Pages projects apart.
+    _run(lambda p: check_cd_041(p, repo_type=_repo_type_for_checks), "CD-041")
+    _run(check_cd_042, "CD-042")
+    _run(lambda p: check_cd_043(p, repo_type=_repo_type_for_checks), "CD-043")
 
     # structural_conformance — the identity contract. CD-019 is the
     # caller's side and needs the resolved repo type to tell a caller from
