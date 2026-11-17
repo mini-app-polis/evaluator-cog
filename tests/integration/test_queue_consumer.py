@@ -134,6 +134,34 @@ def test_a_supplied_run_id_is_used_unchanged() -> None:
     assert handler.call_args.args[0].run_id == "conformance-7.0.0-fleet"
 
 
+def test_a_pinned_sha_and_phase_reach_the_evaluation() -> None:
+    """The release path names the commit it built and where it stands."""
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    with (
+        patch.object(q, "handler", return_value=_evaluated()) as handler,
+        patch.object(q, "_assert_findings_were_delivered"),
+        patch.object(q, "_get_standards_version", return_value="7.0.0"),
+    ):
+        q.process_message(
+            _body(repo="watcher-cog", ref="main", sha=sha, phase="pre-release")
+        )
+
+    event = handler.call_args.args[0]
+    assert (event.ref, event.sha, event.phase) == ("main", sha, "pre-release")
+
+
+def test_a_message_without_sha_or_phase_is_read_as_before() -> None:
+    with (
+        patch.object(q, "handler", return_value=_evaluated()) as handler,
+        patch.object(q, "_assert_findings_were_delivered"),
+        patch.object(q, "_get_standards_version", return_value="7.0.0"),
+    ):
+        q.process_message(_body())
+
+    event = handler.call_args.args[0]
+    assert (event.ref, event.sha, event.phase) == ("v1.2.3", "", "")
+
+
 # ── messages this consumer cannot handle ─────────────────────────────────
 #
 # Left for the redrive policy rather than dropped. Something produced them
@@ -150,6 +178,7 @@ def test_a_supplied_run_id_is_used_unchanged() -> None:
         (_body(kind="deejay.transcribe"), "unknown message type"),
         (_body(repo="", mode="deterministic"), "names no repo"),
         (_body(repo="x", mode="guess"), "unknown mode"),
+        (_body(repo="x", phase="mid-release"), "unknown phase"),
     ],
 )
 def test_unhandleable_messages_are_refused_not_guessed_at(body: str, why: str) -> None:

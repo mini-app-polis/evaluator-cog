@@ -31,3 +31,18 @@ def _production_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     non-production path set ENVIRONMENT themselves.
     """
     monkeypatch.setenv("ENVIRONMENT", "production")
+
+
+@pytest.fixture(autouse=True)
+def _pipeline_config_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Serve CD-041's pipeline.yaml from memory instead of GitHub.
+
+    Every run_all_checks call reads ``current_major`` for CD-041. Tests
+    that care about the value set their own; the rest get a fixed one so
+    the suite never reaches raw.githubusercontent.com.
+    """
+    from evaluator_cog.engine.deterministic import delivery
+
+    monkeypatch.setattr(
+        delivery, "_fetch_pipeline_config", lambda: {"current_major": 1}
+    )

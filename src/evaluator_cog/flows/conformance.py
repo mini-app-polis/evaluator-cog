@@ -295,8 +295,18 @@ class RunContext:
     #: carries both, so a finding, and the clean evaluation that closes it,
     #: say which release they are about. Set by :func:`handler` per
     #: repository; ``repo_commit`` stays None when the download failed.
+    #:
+    #: An evaluation pinned to a commit sha has no ref to fall back on, so
+    #: its ``repo_version`` is the release tag on that commit or None, and
+    #: its ``repo_commit`` is the sha it was asked for, download or not.
     repo_version: str | None = None
     repo_commit: str | None = None
+
+    #: Where in the release this evaluation sits: ``pre-release`` (the
+    #: commit about to be released) or ``post-release`` (the release just
+    #: published). None for an evaluation asked for outside the release
+    #: path. Set by :func:`handler` per repository and posted on every row.
+    phase: str | None = None
 
     @classmethod
     def for_run(cls, flow_name: str = "conformance-check") -> RunContext:
@@ -349,6 +359,7 @@ def _post_tracked(
     """
     kwargs.setdefault("repo_version", ctx.repo_version)
     kwargs.setdefault("repo_commit", ctx.repo_commit)
+    kwargs.setdefault("phase", ctx.phase)
     result = post_findings(**kwargs)
     ctx.tally.merge(result)
     if result.posted:
@@ -1755,6 +1766,14 @@ class EvaluationEvent:
     #: all of them. The dispatcher resolves it once so the pass is
     #: internally consistent.
     standards_version: str = ""
+    #: The commit to evaluate, when the caller pinned one. Read instead of
+    #: ``ref``, so the evaluation grades exactly the commit CI built rather
+    #: than wherever the branch has moved to since. No release tag is
+    #: needed: a pre-release commit has none yet.
+    sha: str = ""
+    #: ``pre-release`` or ``post-release`` when the release path asked;
+    #: empty otherwise. Recorded on every finding; changes nothing graded.
+    phase: str = ""
 
 
 @dataclass
@@ -1818,12 +1837,20 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
         return result
 
     # Every row for this repository names the ref it read; the download
-    # fills in the commit.
-    ctx.repo_version = event.ref
-    ctx.repo_commit = None
+    # fills in the commit. A pinned sha is the commit, and its version is
+    # only the release tag the download finds on it — a sha is not a
+    # version, and a pre-release commit has no tag yet.
+    read = event.sha or event.ref
+    ctx.repo_version = None if event.sha else event.ref
+    ctx.repo_commit = event.sha or None
+    ctx.phase = event.phase or None
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            root = _download_repo(event.repo, tmp_dir, event.ref, event.org, ctx=ctx)
+            root = _download_repo(event.repo, tmp_dir, read, event.org, ctx=ctx)
+            if event.sha:
+                # The zipball names the commit abbreviated; the sha asked
+                # for is the whole of it.
+                ctx.repo_commit = event.sha
             if root is None:
                 # One failed download hides every service inside it. The row
                 # goes against each of them rather than against the repository.
@@ -1833,7 +1860,7 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                         event.mode,
                         service_id,
                         event.repo,
-                        event.ref,
+                        read,
                     )
                     _report_issue("repo_download_failed", service_id, ctx=ctx)
                     # A 404 and an unreachable GitHub are both "not
@@ -1846,12 +1873,12 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
                     )
                     reason = (
                         _NOT_FOUND_REASON_FMT.format(
-                            org=event.org, repo=event.repo, ref=event.ref
+                            org=event.org, repo=event.repo, ref=read
                         )
                         if not_found
                         else (
                             f"the repository could not be downloaded "
-                            f"({event.repo}@{event.ref})"
+                            f"({event.repo}@{read})"
                         )
                     )
                     _post_not_evaluated(
@@ -1943,6 +1970,7 @@ def handler(event: EvaluationEvent, *, log: Any, ctx: RunContext) -> EvaluationR
         # are not about it.
         ctx.repo_version = None
         ctx.repo_commit = None
+        ctx.phase = None
 
     return result
 

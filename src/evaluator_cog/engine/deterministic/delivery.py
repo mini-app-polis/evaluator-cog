@@ -26,6 +26,7 @@ from evaluator_cog.engine.deterministic._terraform import (
     terraform_resources,
     terraform_root,
 )
+from evaluator_cog.engine.deterministic._workflows import load_workflows
 
 #: CD-026's canonical job names.
 #:
@@ -119,6 +120,9 @@ def check_canonical_ci_job_names(repo_path: Path) -> list[Finding]:
     jobs = workflow.get("jobs")
     if not isinstance(jobs, dict):
         return findings
+    # A caller of the canonical pipeline is CD-041's and CD-042's subject.
+    if _calls_pipeline(jobs):
+        return findings
 
     for name in jobs:
         if name not in _CANONICAL_CI_JOBS:
@@ -133,6 +137,324 @@ def check_canonical_ci_job_names(repo_path: Path) -> list[Finding]:
                     f"update any `needs:` that reference it.",
                 )
             )
+    return findings
+
+
+# --- CD-041..CD-043: the canonical pipeline ----------------------------------
+
+#: Where the canonical pipeline's changing settings live. ``current_major`` is
+#: read from here on every evaluation and never written into this module, so
+#: moving the fleet to a new major changes one file in mini-app-polis/.github.
+_PIPELINE_CONFIG_URL = (
+    "https://raw.githubusercontent.com/mini-app-polis/.github/main/pipeline.yaml"
+)
+#: The pipeline as a consumer calls it, before the ``@v<major>`` ref.
+_PIPELINE_REMOTE = "mini-app-polis/.github/.github/workflows/pipeline.yml"
+#: The pipeline as mini-app-polis/.github, its source, calls itself.
+_PIPELINE_LOCAL = "./.github/workflows/pipeline.yml"
+#: A job calling one of mini-app-polis/.github's reusable workflows.
+_SHARED_WORKFLOW_PREFIX = "mini-app-polis/.github/.github/workflows/"
+_CI_REL = ".github/workflows/ci.yml"
+#: The repo type of mini-app-polis/.github, the pipeline's source.
+_PIPELINE_SOURCE_TYPE = "shared-workflows"
+_PIPELINE_CALL = re.compile(r"(?:^|/)\.github/workflows/pipeline\.yml(?:@|$)")
+
+
+def _calls_pipeline(jobs: dict) -> bool:
+    """True when ``jobs.pipeline`` calls ``pipeline.yml``, at any ref."""
+    job = jobs.get("pipeline")
+    return isinstance(job, dict) and bool(
+        _PIPELINE_CALL.search(str(job.get("uses") or "").strip())
+    )
+
+
+def _fetch_pipeline_config() -> dict:
+    """``pipeline.yaml`` from mini-app-polis/.github on main. Raises on failure."""
+    import httpx
+    import yaml
+
+    r = httpx.get(_PIPELINE_CONFIG_URL, timeout=20.0, follow_redirects=True)
+    r.raise_for_status()
+    loaded = yaml.safe_load(r.text)
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _current_pipeline_major() -> int | None:
+    """The pipeline's ``current_major``, or None when it cannot be read.
+
+    "Could not tell" is never reported as "the repository is wrong": the
+    caller turns None into a CHECKER finding, not a CD-041 verdict.
+    """
+    try:
+        value = _fetch_pipeline_config().get("current_major")
+    except Exception:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def check_cd_041(repo_path: Path, repo_type: str = "") -> list[Finding]:
+    """CD-041: ci.yml is a thin caller of the canonical pipeline at its current major."""
+    CHECK_ID = "CD-041"
+    dimension = "structural_conformance"
+    findings: list[Finding] = []
+    if not (repo_path / _CI_REL).is_file():
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                dimension,
+                "No .github/workflows/ci.yml: the repository does not call the "
+                "canonical pipeline.",
+                f"Add a ci.yml whose one job, `pipeline`, calls "
+                f"`{_PIPELINE_REMOTE}@v<current_major>` with the repository's "
+                f"profile and inputs.",
+                file=_CI_REL,
+            )
+        )
+        return findings
+    workflow = _ci_workflow(repo_path)
+    if workflow is None:
+        return findings
+    jobs = workflow.get("jobs")
+    job = jobs.get("pipeline") if isinstance(jobs, dict) else None
+    uses = str(job.get("uses") or "").strip() if isinstance(job, dict) else ""
+    is_source = repo_type == _PIPELINE_SOURCE_TYPE
+
+    if not (is_source and uses == _PIPELINE_LOCAL):
+        major = _current_pipeline_major()
+        if major is None:
+            findings.append(
+                _finding(
+                    "CHECKER",
+                    "WARN",
+                    dimension,
+                    f"{CHECK_ID}: could not read current_major from "
+                    f"{_PIPELINE_CONFIG_URL}; the pipeline pin was not checked.",
+                    "Investigate connectivity to raw.githubusercontent.com and "
+                    "the pipeline.yaml in mini-app-polis/.github, then re-run "
+                    "the evaluation.",
+                    file=_CI_REL,
+                )
+            )
+        elif uses != f"{_PIPELINE_REMOTE}@v{major}":
+            found = f"`{uses}`" if uses else "no `jobs.pipeline` calling a workflow"
+            expected = f"`{_PIPELINE_REMOTE}@v{major}`"
+            if is_source:
+                expected += f" or `{_PIPELINE_LOCAL}`"
+            findings.append(
+                _finding(
+                    CHECK_ID,
+                    "WARN",
+                    dimension,
+                    f"ci.yml is not a thin caller of the canonical pipeline at "
+                    f"its current major (v{major}): found {found}, expected "
+                    f"{expected}.",
+                    f"Replace the inline stages with one job, `pipeline`, that "
+                    f"calls {expected} and passes the repository's profile "
+                    f"and inputs.",
+                    file=_CI_REL,
+                )
+            )
+
+    if isinstance(job, dict) and "steps" in job:
+        findings.append(
+            _finding(
+                CHECK_ID,
+                "WARN",
+                dimension,
+                "ci.yml's `pipeline` job declares `steps:`; a caller of the "
+                "pipeline passes `with:` and `secrets:` only.",
+                "Remove the steps from the `pipeline` job and pass what they "
+                "configured as pipeline inputs.",
+                file=_CI_REL,
+            )
+        )
+    return findings
+
+
+#: Triggers that start a stage outside the pipeline run (CD-042 (2)).
+_OUT_OF_RUN_TRIGGERS = ("deployment_status", "repository_dispatch")
+#: Triggers on which a file may only call shared workflows (CD-042 (3)).
+_COMMIT_TRIGGERS = frozenset({"push", "pull_request", "workflow_run"})
+
+
+def check_cd_042(repo_path: Path) -> list[Finding]:
+    """CD-042: a repository adds to the pipeline only at its extension points."""
+    CHECK_ID = "CD-042"
+    dimension = "structural_conformance"
+    findings: list[Finding] = []
+    for wf in load_workflows(repo_path):
+        if wf.rel == _CI_REL:
+            for job in wf.jobs:
+                if job.job_id != "pipeline" and "pipeline" not in job.needs:
+                    findings.append(
+                        _finding(
+                            CHECK_ID,
+                            "WARN",
+                            dimension,
+                            f"{wf.rel} job `{job.job_id}` does not need "
+                            f"`pipeline`, so it runs beside the pipeline's "
+                            f"stages instead of after them.",
+                            f"Add `pipeline` to `{job.job_id}`'s `needs:`, or "
+                            f"move its work into the pipeline's inputs.",
+                            file=wf.rel,
+                        )
+                    )
+            continue
+        if wf.triggers == {"workflow_call"}:
+            continue
+        out_of_run = [t for t in _OUT_OF_RUN_TRIGGERS if t in wf.triggers]
+        if out_of_run:
+            findings.append(
+                _finding(
+                    CHECK_ID,
+                    "WARN",
+                    dimension,
+                    f"{wf.rel} runs on {', '.join(out_of_run)}, a separate run "
+                    f"outside the pipeline.",
+                    "Move the work into a ci.yml job that `needs: pipeline`, "
+                    "or into the pipeline's inputs.",
+                    file=wf.rel,
+                )
+            )
+        if wf.triggers & _COMMIT_TRIGGERS:
+            for job in wf.jobs:
+                if not job.uses.strip().startswith(_SHARED_WORKFLOW_PREFIX):
+                    findings.append(
+                        _finding(
+                            CHECK_ID,
+                            "WARN",
+                            dimension,
+                            f"{wf.rel} job `{job.job_id}` runs on a commit "
+                            f"trigger without calling a shared workflow in "
+                            f"mini-app-polis/.github.",
+                            f"Move `{job.job_id}` into ci.yml after the "
+                            f"`pipeline` job, or call the shared workflow "
+                            f"that does this work.",
+                            file=wf.rel,
+                        )
+                    )
+    return findings
+
+
+#: ``run:`` commands that deploy code (CD-043 (1)).
+_DEPLOY_COMMANDS = ("railway up", "railway redeploy", "wrangler pages deploy")
+_DEPLOY_HOOK_URL = re.compile(r"pages/webhooks/deploy_hooks", re.IGNORECASE)
+_DEPLOY_HOOK_NAME = re.compile(r"deploy[_-]?hook", re.IGNORECASE)
+_RAILWAY_GITHUB_SOURCE = re.compile(
+    r"""\bgithub\(\s*(["'`])(?P<repo>[^"'`]+)\1\s*,\s*\{(?P<opts>[^}]*)\}"""
+)
+_RAILWAY_SERVICE = re.compile(r"""\bservice\(\s*(["'`])(?P<name>[^"'`]+)\1""")
+
+
+def _posts_to_deploy_hook(run: str) -> bool:
+    """True for a ``run:`` that posts to a Cloudflare Pages deploy hook."""
+    if _DEPLOY_HOOK_URL.search(run):
+        return True
+    return bool(re.search(r"\b(curl|wget)\b", run) and _DEPLOY_HOOK_NAME.search(run))
+
+
+def check_cd_043(repo_path: Path, repo_type: str = "") -> list[Finding]:
+    """CD-043: code reaches an environment only through the pipeline's deploy stage."""
+    CHECK_ID = "CD-043"
+    dimension = "cd_readiness"
+    findings: list[Finding] = []
+
+    for wf in load_workflows(repo_path):
+        if wf.rel == _CI_REL:
+            continue
+        # mini-app-polis/.github's reusable workflows are the pipeline's own
+        # stages, lambda-deploy.yml among them.
+        if repo_type == _PIPELINE_SOURCE_TYPE and "workflow_call" in wf.triggers:
+            continue
+        for job in wf.jobs:
+            if "lambda-deploy.yml" in job.uses:
+                findings.append(
+                    _finding(
+                        CHECK_ID,
+                        "WARN",
+                        dimension,
+                        f"{wf.rel} job `{job.job_id}` calls lambda-deploy.yml "
+                        f"outside the pipeline run.",
+                        "Deploy only from the pipeline's deploy stage, after "
+                        "the commit is tested and released.",
+                        file=wf.rel,
+                    )
+                )
+            for step in job.steps:
+                if any(step.run_invokes(c) for c in _DEPLOY_COMMANDS) or (
+                    _posts_to_deploy_hook(step.run)
+                ):
+                    findings.append(
+                        _finding(
+                            CHECK_ID,
+                            "WARN",
+                            dimension,
+                            f"{step.location} deploys code outside the pipeline run.",
+                            "Remove the deploy from this workflow; the "
+                            "pipeline's deploy stage ships the commit.",
+                            file=wf.rel,
+                        )
+                    )
+
+    railway = repo_path / ".railway" / "railway.ts"
+    if railway.is_file():
+        rel = ".railway/railway.ts"
+        try:
+            text = railway.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        code = "\n".join(
+            line
+            for line in text.splitlines()
+            if not line.lstrip().startswith(("//", "*", "/*"))
+        )
+        for m in _RAILWAY_GITHUB_SOURCE.finditer(code):
+            if not re.search(r"\bbranch\s*:", m.group("opts")):
+                continue
+            services = list(_RAILWAY_SERVICE.finditer(code, 0, m.start()))
+            name = services[-1].group("name") if services else m.group("repo")
+            findings.append(
+                _finding(
+                    CHECK_ID,
+                    "WARN",
+                    dimension,
+                    f"{rel}: service `{name}` deploys every push to a branch "
+                    f"of {m.group('repo')} (`source: github(..., {{ branch }})`).",
+                    "Turn off the branch-triggered deploy so the service is "
+                    "deployed only by the pipeline's deploy stage.",
+                    file=rel,
+                )
+            )
+
+    if repo_type == "infrastructure":
+        resources = terraform_resources(repo_path, repo_type) or []
+        for project in of_type(resources, "cloudflare_pages_project"):
+            problems = []
+            if (project.attr("production_deployments_enabled") or "") == "true":
+                problems.append("production_deployments_enabled = true")
+            preview = project.attr("preview_deployment_setting")
+            if preview is not None and preview.strip() != '"none"':
+                problems.append(f"preview_deployment_setting = {preview}")
+            if problems:
+                findings.append(
+                    _finding(
+                        CHECK_ID,
+                        "WARN",
+                        dimension,
+                        f"cloudflare_pages_project.{project.name} in "
+                        f"{project.file} builds on push: {'; '.join(problems)}.",
+                        "Set production_deployments_enabled = false and "
+                        'preview_deployment_setting = "none" in source.config.',
+                        file=project.file,
+                    )
+                )
     return findings
 
 

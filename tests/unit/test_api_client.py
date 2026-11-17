@@ -277,3 +277,50 @@ def test_a_finding_without_them_sends_neither(monkeypatch) -> None:
     payload = _posted_with(monkeypatch)
     assert "repo_version" not in payload
     assert "repo_commit" not in payload
+
+
+# ---------------------------------------------------------------------------
+# post_findings — the release phase
+# ---------------------------------------------------------------------------
+
+
+def _posted_payload(monkeypatch, **kwargs) -> dict:
+    """Post one finding and return the payload that went out."""
+    monkeypatch.setenv("KAIANO_API_BASE_URL", "https://test")
+    posted: list[dict] = []
+
+    def _fake_post(path: str, payload: dict) -> dict:
+        posted.append(payload)
+        return api_fakes.store(path, payload)
+
+    with patch("evaluator_cog.engine.api_client.CommonPythonApiClient") as m:
+        m.from_env.return_value = api_fakes.api(post=_fake_post)
+        post_findings(
+            findings=[{"dimension": "x", "severity": "WARN", "finding": "f"}],
+            run_id="run-phase",
+            repo="test-repo",
+            flow_name=None,
+            source="conformance_deterministic",
+            standards_version="6.0.0",
+            **kwargs,
+        )
+    assert len(posted) == 1
+    return posted[0]
+
+
+def test_post_findings_sends_the_phase_sha_and_version(monkeypatch) -> None:
+    payload = _posted_payload(
+        monkeypatch,
+        phase="pre-release",
+        repo_commit="0123456789abcdef0123456789abcdef01234567",
+    )
+    assert payload["phase"] == "pre-release"
+    assert payload["repo_commit"] == "0123456789abcdef0123456789abcdef01234567"
+    assert "repo_version" not in payload
+
+
+def test_post_findings_without_a_phase_sends_none(monkeypatch) -> None:
+    """A row asked for outside the release path is the shared model's row."""
+    payload = _posted_payload(monkeypatch, repo_version="main")
+    assert "phase" not in payload
+    assert payload["repo_version"] == "main"
