@@ -1,3 +1,10 @@
+## [3.72.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.72.0...v3.72.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **deterministic:** name the pipeline config read's timeout ([a024991](https://github.com/mini-app-polis/evaluator-cog/commit/a024991e9fe850042e7ea3a06116c36ff853e514))
+
 # [3.72.0](https://github.com/mini-app-polis/evaluator-cog/compare/v3.71.8...v3.72.0) (2026-11-17)
 
 
