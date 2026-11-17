@@ -157,6 +157,9 @@ _SHARED_WORKFLOW_PREFIX = "mini-app-polis/.github/.github/workflows/"
 _CI_REL = ".github/workflows/ci.yml"
 #: The repo type of mini-app-polis/.github, the pipeline's source.
 _PIPELINE_SOURCE_TYPE = "shared-workflows"
+#: How long the pipeline config read may take: config.py's PRIN-009 read of
+#: GitHub, the precedent crossrepo.py also follows.
+_PIPELINE_CONFIG_TIMEOUT_SECONDS = 20.0
 _PIPELINE_CALL = re.compile(r"(?:^|/)\.github/workflows/pipeline\.yml(?:@|$)")
 
 
@@ -173,7 +176,11 @@ def _fetch_pipeline_config() -> dict:
     import httpx
     import yaml
 
-    r = httpx.get(_PIPELINE_CONFIG_URL, timeout=20.0, follow_redirects=True)
+    r = httpx.get(
+        _PIPELINE_CONFIG_URL,
+        timeout=_PIPELINE_CONFIG_TIMEOUT_SECONDS,
+        follow_redirects=True,
+    )
     r.raise_for_status()
     loaded = yaml.safe_load(r.text)
     return loaded if isinstance(loaded, dict) else {}
