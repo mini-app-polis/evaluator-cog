@@ -803,6 +803,13 @@ _SHARED_RELEASE_WORKFLOW = re.compile(
 _SHARED_RELEASE_ACTION = re.compile(
     r"mini-app-polis/\.github/\.github/actions/semantic-release@"
 )
+# mini-app-polis/.github itself calls its release workflow by local path, so
+# its own release exercises the release tooling it is about to publish. A
+# local call counts as the shared workflow only where that workflow runs the
+# shared semantic-release action held in the same repository.
+_LOCAL_RELEASE_WORKFLOW = re.compile(
+    r"uses:\s*['\"]?\./\.github/workflows/(release\.ya?ml)\b"
+)
 # An inline install of the release tooling, which VER-006 rules out:
 # `npm install`/`npm i` naming semantic-release or a plugin, on one logical
 # line (backslash continuations joined) ...
@@ -822,6 +829,22 @@ _RELEASERC_FILES = (
     ".releaserc.yml",
     ".releaserc",
 )
+
+
+def _calls_local_shared_release(repo_path: Path, content: str) -> bool:
+    """Whether ci.yml calls this repository's own copy of the shared release workflow."""
+    match = _LOCAL_RELEASE_WORKFLOW.search(content)
+    if not match:
+        return False
+    if not (
+        repo_path / ".github" / "actions" / "semantic-release" / "action.yml"
+    ).is_file():
+        return False
+    try:
+        workflow = (repo_path / ".github" / "workflows" / match.group(1)).read_text()
+    except OSError:
+        return False
+    return "/.github/actions/semantic-release" in workflow
 
 
 def _inline_release_install(content: str) -> bool:
@@ -878,7 +901,9 @@ def check_ci(
     # The shared release workflow runs semantic-release itself, after a
     # checkout with fetch-depth: 0, so a caller satisfies VER-003 and VER-005
     # without either appearing in its own ci.yml.
-    calls_shared_workflow = bool(_SHARED_RELEASE_WORKFLOW.search(content))
+    calls_shared_workflow = bool(
+        _SHARED_RELEASE_WORKFLOW.search(content)
+    ) or _calls_local_shared_release(repo_path, content)
     uses_shared_tooling = calls_shared_workflow or bool(
         _SHARED_RELEASE_ACTION.search(content)
     )

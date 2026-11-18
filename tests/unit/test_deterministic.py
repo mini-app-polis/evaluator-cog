@@ -419,7 +419,7 @@ jobs:
 
 def _ci(tmp_path: Path, content: str, releaserc: str | None = None) -> list[str]:
     ci = tmp_path / ".github" / "workflows"
-    ci.mkdir(parents=True)
+    ci.mkdir(parents=True, exist_ok=True)
     (ci / "ci.yml").write_text(content)
     if releaserc is not None:
         (tmp_path / ".releaserc.json").write_text(releaserc)
@@ -432,6 +432,48 @@ def test_check_ci_passes_the_shared_release_workflow(tmp_path: Path) -> None:
     assert "VER-003" not in rule_ids
     assert "VER-005" not in rule_ids
     assert "VER-006" not in rule_ids
+
+
+_LOCAL_RELEASE_CI = """\
+jobs:
+  release:
+    needs: [test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    uses: ./.github/workflows/release.yml
+"""
+
+
+def _local_release_workflow(tmp_path: Path, with_shared_action: bool) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True, exist_ok=True)
+    (workflows / "release.yml").write_text(
+        "on:\n  workflow_call:\njobs:\n  release:\n    steps:\n"
+        "      - uses: $/.github/actions/semantic-release\n"
+    )
+    if with_shared_action:
+        action = tmp_path / ".github" / "actions" / "semantic-release"
+        action.mkdir(parents=True)
+        (action / "action.yml").write_text("name: semantic-release\n")
+
+
+def test_check_ci_passes_the_pipeline_repos_local_release_workflow(
+    tmp_path: Path,
+) -> None:
+    """mini-app-polis/.github calls its own release.yml, which runs the shared action it holds."""
+    _local_release_workflow(tmp_path, with_shared_action=True)
+    rule_ids = _ci(tmp_path, _LOCAL_RELEASE_CI)
+    assert "VER-003" not in rule_ids
+    assert "VER-005" not in rule_ids
+    assert "VER-006" not in rule_ids
+
+
+def test_check_ci_flags_a_local_release_workflow_without_the_shared_action(
+    tmp_path: Path,
+) -> None:
+    """A repository's own release.yml is not the shared workflow unless it holds the shared action."""
+    _local_release_workflow(tmp_path, with_shared_action=False)
+    rule_ids = _ci(tmp_path, _LOCAL_RELEASE_CI)
+    assert "VER-003" in rule_ids
 
 
 def test_check_ci_passes_the_shared_action_in_a_job_of_its_own(tmp_path: Path) -> None:
