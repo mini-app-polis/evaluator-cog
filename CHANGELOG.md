@@ -1,3 +1,10 @@
+## [3.72.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.72.1...v3.72.2) (2026-11-18)
+
+
+### Bug Fixes
+
+* **deterministic:** grade the canonical-pipeline rules only on repositories the move has reached ([5e7bdd1](https://github.com/mini-app-polis/evaluator-cog/commit/5e7bdd1fc24d2e8bdf0ab3a46382098eb0fcb254))
+
 ## [3.72.1](https://github.com/mini-app-polis/evaluator-cog/compare/v3.72.0...v3.72.1) (2026-11-17)
 
 
