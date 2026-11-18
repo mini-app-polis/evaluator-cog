@@ -1,3 +1,10 @@
+## [3.72.3](https://github.com/mini-app-polis/evaluator-cog/compare/v3.72.2...v3.72.3) (2026-11-18)
+
+
+### Bug Fixes
+
+* **deterministic:** count the pipeline repository's local release workflow as the shared one ([9170e77](https://github.com/mini-app-polis/evaluator-cog/commit/9170e77ef697abe1bf085791aa88aa4230133128))
+
 ## [3.72.2](https://github.com/mini-app-polis/evaluator-cog/compare/v3.72.1...v3.72.2) (2026-11-18)
 
 
