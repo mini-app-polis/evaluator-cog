@@ -525,6 +525,7 @@ def test_run_standalone_deterministic_calls_load_evaluator_config(
         "evaluator_config": cfg,
         "rule_catalog": None,
         "catalog_schema": None,
+        "repo_name": "svc-test",
     }
     # run_all_checks returns empty findings, so _run_standalone_deterministic
     # substitutes a STATUS SUCCESS finding before posting.

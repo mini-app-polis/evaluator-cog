@@ -1051,6 +1051,7 @@ def run_conformance_check(
             evaluator_config=evaluator_config,
             rule_catalog=rule_catalog,
             catalog_schema=catalog_schema,
+            repo_name=repo_id,
         )
         deterministic_findings = result.findings
         checked_rule_ids = result.checked_rule_ids
@@ -1488,6 +1489,7 @@ def _evaluate_service_deterministic(
             rule_catalog=rule_catalog,
             catalog_schema=catalog_schema,
             progress=lambda note: log.info("deterministic: %s: %s", repo_id, note),
+            repo_name=repo_id,
         )
     except Exception as exc:
         log.warning("deterministic: run_all_checks failed for %s: %s", repo_id, exc)

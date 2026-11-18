@@ -317,3 +317,67 @@ def test_cd_043_flags_a_pages_project_that_builds_on_push(tmp_path: Path) -> Non
 def test_cd_043_accepts_a_pages_project_with_builds_off(tmp_path: Path) -> None:
     repo = _write(tmp_path, "pages.tf", _PAGES.format(prod="false", preview="none"))
     assert check_cd_043(repo, repo_type="infrastructure") == []
+
+
+# --- rollout scope: only repositories on_pipeline names are graded ------------
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({"on_pipeline": ["watcher-cog"]}, True),
+        ({"on_pipeline": ["deejay-cog"]}, False),
+        ({"on_pipeline": "all"}, True),
+        ({"on_pipeline": []}, False),
+        ({}, False),
+    ],
+)
+def test_on_pipeline_names_the_repositories_graded(
+    monkeypatch: pytest.MonkeyPatch, config: dict, expected: bool
+) -> None:
+    monkeypatch.setattr(delivery, "_fetch_pipeline_config", lambda: config)
+    assert delivery.repo_on_pipeline("watcher-cog") is expected
+
+
+def test_an_unreadable_config_cannot_tell(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail() -> dict:
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(delivery, "_fetch_pipeline_config", fail)
+    assert delivery.repo_on_pipeline("watcher-cog") is None
+
+
+def _canonical_ids(repo: Path, name: str) -> set[str]:
+    from evaluator_cog.engine.deterministic.runner import run_all_checks
+
+    found = run_all_checks(repo, repo_name=name).findings
+    return {f["rule_id"] for f in found} & {"CD-041", "CD-042", "CD-043"}
+
+
+def test_a_repository_the_move_has_not_reached_is_not_graded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No ci.yml at all: CD-041's finding, were the repository graded.
+    monkeypatch.setattr(
+        delivery,
+        "_fetch_pipeline_config",
+        lambda: {"current_major": _MAJOR, "on_pipeline": ["watcher-cog"]},
+    )
+    assert _canonical_ids(tmp_path, "deejay-cog") == set()
+    assert _canonical_ids(tmp_path, "watcher-cog") == {"CD-041"}
+
+
+def test_an_unreadable_scope_runs_cd_041_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail() -> dict:
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(delivery, "_fetch_pipeline_config", fail)
+    from evaluator_cog.engine.deterministic.runner import run_all_checks
+
+    found = run_all_checks(tmp_path, repo_name="deejay-cog").findings
+    assert not {f["rule_id"] for f in found} & {"CD-042", "CD-043"}
+    assert any(f["rule_id"] == "CHECKER" and "CD-041" in f["finding"] for f in found), [
+        f["rule_id"] for f in found
+    ]
